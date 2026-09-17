@@ -1,0 +1,105 @@
+/*-------------------------------------------------------------------------
+ * Copyright (c) Anonymous.  All rights reserved.
+ *
+ * blackboxdb_gateway_core/src/processor/session.rs
+ *
+ *-------------------------------------------------------------------------
+ */
+
+use bson::RawArray;
+
+use crate::{
+    context::{map_transaction_error, ConnectionContext, LogicalSessionId, RequestContext},
+    error::{BlackboxDBError, Result},
+    postgres::PgDataClient,
+    requests::RequestType,
+    responses::Response,
+};
+
+fn parse_logical_session_ids(sessions_field: &RawArray) -> Result<Vec<LogicalSessionId>> {
+    let mut logical_session_ids = Vec::new();
+    for session in sessions_field {
+        let session_doc = session?
+            .as_document()
+            .ok_or_else(|| BlackboxDBError::bad_value("Session should be a document".to_owned()))?;
+
+        let lsid = LogicalSessionId::from(
+            session_doc
+                .get_binary("id")
+                .map_err(BlackboxDBError::parse_failure())?
+                .bytes,
+        );
+
+        logical_session_ids.push(lsid);
+    }
+    Ok(logical_session_ids)
+}
+
+async fn terminate_sessions(
+    request_context: &RequestContext<'_>,
+    connection_context: &ConnectionContext,
+    pg_data_client: &impl PgDataClient,
+    sessions_field: &RawArray,
+) -> Result<()> {
+    let logical_session_ids = parse_logical_session_ids(sessions_field)?;
+    let caller = connection_context.auth_state.principal()?;
+    let transaction_store = connection_context.service_context.transaction_store();
+    let is_replica_cluster = connection_context
+        .dynamic_configuration()
+        .is_replica_cluster();
+    let activity_id = request_context.activity_id;
+
+    for lsid in &logical_session_ids {
+        // Remove all cursors for the session
+        let cursor_ids = connection_context
+            .service_context
+            .cursor_store()
+            .invalidate_cursors_by_session(lsid);
+
+        if !cursor_ids.is_empty() {
+            if let Err(e) = pg_data_client
+                .execute_kill_cursors(request_context, connection_context, &cursor_ids)
+                .await
+            {
+                tracing::warn!("Error killing cursors for session {:?}: {}", lsid, e);
+            }
+        }
+
+        // Best effort to remove any transaction for the session
+        let _ = transaction_store
+            .remove_transaction_by_session(lsid, caller)
+            .await
+            .map_err(|e| map_transaction_error(e, is_replica_cluster, activity_id))?;
+    }
+
+    Ok(())
+}
+
+pub async fn end_or_kill_sessions(
+    request_context: &RequestContext<'_>,
+    connection_context: &ConnectionContext,
+    pg_data_client: &impl PgDataClient,
+) -> Result<Response> {
+    let request = request_context.request();
+
+    let key = if request_context.request_type() == RequestType::KillSessions {
+        "killSessions"
+    } else {
+        "endSessions"
+    };
+
+    let sessions_field = request
+        .document()
+        .get_array(key)
+        .map_err(BlackboxDBError::parse_failure())?;
+
+    terminate_sessions(
+        request_context,
+        connection_context,
+        pg_data_client,
+        sessions_field,
+    )
+    .await?;
+
+    Ok(Response::ok())
+}

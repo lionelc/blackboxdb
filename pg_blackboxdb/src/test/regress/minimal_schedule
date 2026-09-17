@@ -1,0 +1,2 @@
+test: blackboxdb_test_helpers
+test: command_insert_one_basic_types

@@ -1,0 +1,113 @@
+/*-------------------------------------------------------------------------
+ * Copyright (c) Anonymous.  All rights reserved.
+ *
+ * blackboxdb_gateway_core/src/testing/telemetry.rs
+ *
+ * Shared telemetry test doubles for unit tests.
+ *
+ *-------------------------------------------------------------------------
+ */
+
+use std::sync::{Arc, Mutex};
+
+use either::Either;
+
+use crate::{
+    context::ConnectionContext,
+    error::BlackboxDBError,
+    protocol::header::Header,
+    requests::{request_tracker::RequestTracker, RequestObservation, RequestType},
+    responses::Response,
+    telemetry::TelemetryProvider,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordedTelemetryEvent {
+    activity_id: String,
+    collection: String,
+    user_agent: String,
+    request_type: Option<RequestType>,
+    is_error: bool,
+    error_code_name: Option<String>,
+    sub_status_code: i32,
+}
+
+impl RecordedTelemetryEvent {
+    pub fn activity_id(&self) -> &str {
+        &self.activity_id
+    }
+
+    pub fn collection(&self) -> &str {
+        &self.collection
+    }
+
+    pub fn user_agent(&self) -> &str {
+        &self.user_agent
+    }
+
+    pub fn request_type(&self) -> Option<RequestType> {
+        self.request_type
+    }
+
+    pub fn is_error(&self) -> bool {
+        self.is_error
+    }
+
+    pub fn error_code_name(&self) -> Option<&str> {
+        self.error_code_name.as_deref()
+    }
+
+    pub fn sub_status_code(&self) -> i32 {
+        self.sub_status_code
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct RecordingTelemetryProvider {
+    events: Arc<Mutex<Vec<RecordedTelemetryEvent>>>,
+}
+
+impl RecordingTelemetryProvider {
+    pub fn events(&self) -> Vec<RecordedTelemetryEvent> {
+        self.events
+            .lock()
+            .expect("telemetry events lock should not be poisoned")
+            .clone()
+    }
+}
+
+impl TelemetryProvider for RecordingTelemetryProvider {
+    fn emit_request_event(
+        &self,
+        _: &ConnectionContext,
+        _: &Header,
+        request: Option<RequestObservation<'_, '_>>,
+        response: Either<&Response, (&BlackboxDBError, usize)>,
+        collection: &str,
+        _: &RequestTracker,
+        activity_id: &str,
+        user_agent: &str,
+    ) {
+        let (is_error, error_code_name, sub_status_code) = match response {
+            Either::Left(_) => (false, None, 0),
+            Either::Right((error, _)) => (
+                true,
+                Some(error.error_code().to_string()),
+                error.sub_status_code().unwrap_or(0),
+            ),
+        };
+
+        self.events
+            .lock()
+            .expect("telemetry events lock should not be poisoned")
+            .push(RecordedTelemetryEvent {
+                activity_id: activity_id.to_owned(),
+                collection: collection.to_owned(),
+                user_agent: user_agent.to_owned(),
+                request_type: request.map(RequestObservation::request_type),
+                is_error,
+                error_code_name,
+                sub_status_code,
+            });
+    }
+}

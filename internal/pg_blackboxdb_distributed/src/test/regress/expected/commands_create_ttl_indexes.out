@@ -1,0 +1,2175 @@
+SET citus.next_shard_id TO 2000000;
+SET blackboxdb.next_collection_id TO 20000;
+SET blackboxdb.next_collection_index_id TO 20000;
+SET search_path TO blackboxdb_api_catalog, blackboxdb_core, blackboxdb_data, public;
+-- make sure jobs are scheduled and disable it to avoid flakiness on the test as it could run on its schedule and delete documents before we run our commands in the test
+select schedule, command, active from cron.job where jobname like '%ttl_task%';
+ schedule  |                       command                       | active 
+---------------------------------------------------------------------
+ * * * * * | CALL blackboxdb_api_internal.delete_expired_rows(); | f
+(1 row)
+
+select cron.unschedule(jobid) from cron.job where jobname like '%ttl_task%';
+ unschedule 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- 1. Populate collection with a set of documents with different combination of $date fields --
+SELECT blackboxdb_api.insert_one('db','ttlcoll', '{ "_id" : 0, "ttl" : { "$date": { "$numberLong": "-1000" } } }', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll', '{ "_id" : 1, "ttl" : { "$date": { "$numberLong": "0" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll', '{ "_id" : 2, "ttl" : { "$date": { "$numberLong": "100" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+    -- Documents with date older than when the test was written
+SELECT blackboxdb_api.insert_one('db','ttlcoll', '{ "_id" : 3, "ttl" : { "$date": { "$numberLong": "1657900030774" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+    -- Documents with date way in future
+SELECT blackboxdb_api.insert_one('db','ttlcoll', '{ "_id" : 4, "ttl" : { "$date": { "$numberLong": "2657899731608" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+    -- Documents with date array
+SELECT blackboxdb_api.insert_one('db','ttlcoll', '{ "_id" : 5, "ttl" : [{ "$date": { "$numberLong": "100" }}] }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+    -- Documents with date array, should be deleted based on min timestamp
+SELECT blackboxdb_api.insert_one('db','ttlcoll', '{ "_id" : 6, "ttl" : [{ "$date": { "$numberLong": "100" }}, { "$date": { "$numberLong": "2657899731608" }}] }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll', '{ "_id" : 7, "ttl" : [true, { "$date": { "$numberLong": "100" }}, { "$date": { "$numberLong": "2657899731608" }}] }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+    -- Documents with non-date ttl field
+SELECT blackboxdb_api.insert_one('db','ttlcoll', '{ "_id" : 8, "ttl" : true }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+    -- Documents with non-date ttl field
+SELECT blackboxdb_api.insert_one('db','ttlcoll', '{ "_id" : 9, "ttl" : "would not expire" }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- 1. Create TTL Index --
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- 2. List All indexes --
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM blackboxdb_api.list_indexes_cursor_first_page('db','{ "listIndexes": "ttlcoll" }') ORDER BY 1;
+                                                                                                                                                       bson_dollar_unwind                                                                                                                                                        
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "expireAfterSeconds" : { "$numberInt" : "5" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+(2 rows)
+
+SELECT * FROM blackboxdb_distributed_test_helpers.get_collection_indexes('db', 'ttlcoll') ORDER BY collection_id, index_id;
+ collection_id | index_id |                                                                                          index_spec_as_bson                                                                                          | index_is_valid 
+---------------------------------------------------------------------
+         20000 |    20000 | { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }                                                                                                        | t
+         20000 |    20001 | { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "expireAfterSeconds" : { "$numberInt" : "5" }, "storageEngine" : { "enableOrderedIndex" : true } } | t
+(2 rows)
+
+-- 3. Call ttl purge procedure with a batch size of 10
+BEGIN;
+SET LOCAL blackboxdb.RepeatPurgeIndexesForTTLTask to off;
+CALL blackboxdb_api_internal.delete_expired_rows(10);
+END;
+-- 4.a. Check what documents are left after purging
+SELECT shard_key_value, object_id, document  from blackboxdb_api.collection('db', 'ttlcoll') order by object_id;
+ shard_key_value |            object_id            |                                           document                                            
+---------------------------------------------------------------------
+           20000 | { "" : { "$numberInt" : "4" } } | { "_id" : { "$numberInt" : "4" }, "ttl" : { "$date" : { "$numberLong" : "2657899731608" } } }
+           20000 | { "" : { "$numberInt" : "8" } } | { "_id" : { "$numberInt" : "8" }, "ttl" : true }
+           20000 | { "" : { "$numberInt" : "9" } } | { "_id" : { "$numberInt" : "9" }, "ttl" : "would not expire" }
+(3 rows)
+
+-- 5. TTL indexes behaves like normal indexes that are used in queries
+BEGIN;
+set local enable_seqscan TO off;
+SELECT blackboxdb_distributed_test_helpers.mask_plan_id_from_distributed_subplan($Q$
+EXPLAIN(costs off) SELECT object_id FROM blackboxdb_data.documents_20000
+		WHERE bson_dollar_eq(document, '{ "ttl" : { "$date" : { "$numberLong" : "100" } } }'::bson)
+        LIMIT 100;
+$Q$);
+                                                                 mask_plan_id_from_distributed_subplan                                                                  
+---------------------------------------------------------------------
+ Limit
+   ->  Custom Scan (Citus Adaptive)
+         Task Count: 8
+         Tasks Shown: One of 8
+         ->  Task
+               Node: host=localhost port=58070 dbname=regression
+               ->  Limit
+                     ->  Bitmap Heap Scan on documents_20000_2000000 documents_20000
+                           Recheck Cond: (document OPERATOR(blackboxdb_api_catalog.@=) '{ "ttl" : { "$date" : { "$numberLong" : "100" } } }'::blackboxdb_core.bson)
+                           ->  Bitmap Index Scan on ttl_index
+                                 Index Cond: (document OPERATOR(blackboxdb_api_catalog.@=) '{ "ttl" : { "$date" : { "$numberLong" : "100" } } }'::blackboxdb_core.bson)
+(11 rows)
+
+END;
+-- 6. Explain of the SQL query that is used to delete documents
+BEGIN;
+SET LOCAL enable_seqscan TO OFF;
+SELECT blackboxdb_distributed_test_helpers.mask_plan_id_from_distributed_subplan($Q$
+EXPLAIN(costs off) DELETE FROM blackboxdb_data.documents_20000_2000000
+    WHERE ctid IN
+    (
+        SELECT ctid FROM blackboxdb_data.documents_20000_2000000
+        WHERE bson_dollar_lt(document, '{ "ttl" : { "$date" : { "$numberLong" : "100" } } }'::bson)
+        AND shard_key_value = 20000
+        LIMIT 100
+    )
+$Q$);
+                                                          mask_plan_id_from_distributed_subplan                                                          
+---------------------------------------------------------------------
+ Delete on documents_20000_2000000
+   ->  Nested Loop
+         ->  HashAggregate
+               Group Key: "ANY_subquery".ctid
+               ->  Subquery Scan on "ANY_subquery"
+                     ->  Limit
+                           ->  Bitmap Heap Scan on documents_20000_2000000 documents_20000_2000000_1
+                                 Recheck Cond: ((document @< '{ "ttl" : { "$date" : { "$numberLong" : "100" } } }'::bson) AND (shard_key_value = 20000))
+                                 ->  BitmapAnd
+                                       ->  Bitmap Index Scan on ttl_index
+                                             Index Cond: (document @< '{ "ttl" : { "$date" : { "$numberLong" : "100" } } }'::bson)
+                                       ->  Bitmap Index Scan on _id_
+                                             Index Cond: (shard_key_value = 20000)
+         ->  Tid Scan on documents_20000_2000000
+               TID Cond: (ctid = "ANY_subquery".ctid)
+(15 rows)
+
+END;
+-- 7.a. Query to select all the shards corresponding to a ttl index that needs to be considered for purging
+-- ttlcoll is an unsharded collection
+SELECT
+    idx.collection_id,
+    idx.index_id,
+    (index_spec).index_key as key,
+    (index_spec).index_pfe as pfe,
+    -- trunc(extract(epoch FROM now()) * 1000, 0)::int8 as currentDateTime, -- removed to reduce test flakiness
+    (index_spec).index_expire_after_seconds as expiry,
+    coll.shard_key,
+    dist.shardid
+FROM blackboxdb_api_catalog.collection_indexes as idx, blackboxdb_api_catalog.collections as coll, pg_dist_shard as dist
+WHERE index_is_valid AND (index_spec).index_expire_after_seconds >= 0
+AND idx.collection_id = coll.collection_id 
+AND dist.logicalrelid = ('blackboxdb_data.documents_' || coll.collection_id)::regclass
+AND (dist.shardid = get_shard_id_for_distribution_column(logicalrelid, coll.collection_id) OR (coll.shard_key IS NOT NULL))
+AND coll.collection_id >= 20000 AND coll.collection_id < 21000 -- added to reduce test flakiness
+ORDER BY shardid ASC; -- added to remove reduce flakiness
+ collection_id | index_id |                key                 | pfe | expiry | shard_key | shardid 
+---------------------------------------------------------------------
+         20000 |    20001 | { "ttl" : { "$numberInt" : "1" } } |     |      5 |           | 2000002
+(1 row)
+
+-- 8. Shard collection
+SELECT blackboxdb_api.shard_collection('db','ttlcoll', '{"ttl":"hashed"}', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+-- 9. Add more records with previous deleted as well as new ids
+SELECT blackboxdb_api.insert_one('db','ttlcoll', '{ "_id" : 1, "ttl" : { "$date": { "$numberLong": "0" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll', '{ "_id" : 2, "ttl" : { "$date": { "$numberLong": "-1000" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll', '{ "_id" : 100, "ttl" : { "$date": { "$numberLong": "1657900030774" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll', '{ "_id" : 200, "ttl" : { "$date": { "$numberLong": "-1000" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- 9.a. Query to select all the shards corresponding to a ttl index that needs to be considered for purging
+-- ttlcoll is an unsharded collection
+SELECT
+    idx.collection_id,
+    idx.index_id,
+    (index_spec).index_key as key,
+    (index_spec).index_pfe as pfe,
+    -- trunc(extract(epoch FROM now()) * 1000, 0)::int8 as currentDateTime, -- removed to reduce test flakiness
+    (index_spec).index_expire_after_seconds as expiry,
+    coll.shard_key,
+    dist.shardid
+FROM blackboxdb_api_catalog.collection_indexes as idx, blackboxdb_api_catalog.collections as coll, pg_dist_shard as dist
+WHERE index_is_valid AND (index_spec).index_expire_after_seconds >= 0
+AND idx.collection_id = coll.collection_id 
+AND dist.logicalrelid = ('blackboxdb_data.documents_' || coll.collection_id)::regclass
+AND (dist.shardid = get_shard_id_for_distribution_column(logicalrelid, coll.collection_id) OR (coll.shard_key IS NOT NULL))
+AND coll.collection_id >= 20000 AND coll.collection_id < 21000 -- added to reduce test flakiness
+ORDER BY shardid ASC; -- added to reduce test flakiness
+ collection_id | index_id |                key                 | pfe | expiry |      shard_key       | shardid 
+---------------------------------------------------------------------
+         20000 |    20003 | { "ttl" : { "$numberInt" : "1" } } |     |      5 | { "ttl" : "hashed" } | 2000016
+         20000 |    20003 | { "ttl" : { "$numberInt" : "1" } } |     |      5 | { "ttl" : "hashed" } | 2000017
+         20000 |    20003 | { "ttl" : { "$numberInt" : "1" } } |     |      5 | { "ttl" : "hashed" } | 2000018
+         20000 |    20003 | { "ttl" : { "$numberInt" : "1" } } |     |      5 | { "ttl" : "hashed" } | 2000019
+         20000 |    20003 | { "ttl" : { "$numberInt" : "1" } } |     |      5 | { "ttl" : "hashed" } | 2000020
+         20000 |    20003 | { "ttl" : { "$numberInt" : "1" } } |     |      5 | { "ttl" : "hashed" } | 2000021
+         20000 |    20003 | { "ttl" : { "$numberInt" : "1" } } |     |      5 | { "ttl" : "hashed" } | 2000022
+         20000 |    20003 | { "ttl" : { "$numberInt" : "1" } } |     |      5 | { "ttl" : "hashed" } | 2000023
+(8 rows)
+
+-- Delete all other indexes from previous tests to reduce flakiness
+WITH deleted AS (
+  DELETE FROM blackboxdb_api_catalog.collection_indexes
+  WHERE collection_id != 20000
+  RETURNING 1
+) SELECT true FROM deleted UNION ALL SELECT true LIMIT 1;
+ ?column? 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT
+    collection_id,
+    (index_spec).index_key, (index_spec).index_name,
+    (index_spec).index_expire_after_seconds as ttl_expiry,
+    (index_spec).index_is_sparse as is_sparse,
+    (index_spec).index_name as index_name
+FROM blackboxdb_api_catalog.collection_indexes WHERE (index_spec).index_expire_after_seconds > 0;
+ collection_id |             index_key              | index_name | ttl_expiry | is_sparse | index_name 
+---------------------------------------------------------------------
+         20000 | { "ttl" : { "$numberInt" : "1" } } | ttl_index  |          5 |           | ttl_index
+(1 row)
+
+-- 10.b. Call ttl task procedure with a batch size of 0 --
+BEGIN;
+Set local citus.log_remote_commands to on; -- Will print Citus rewrites of the queries
+Set local citus.log_local_commands to on; -- Will print the local queries 
+SET LOCAL blackboxdb.RepeatPurgeIndexesForTTLTask to off;
+CALL blackboxdb_api_internal.delete_expired_rows(0); -- To test the sql query, it won't delete any data
+NOTICE:  executing the command locally: SELECT index_id, collection_id, (index_spec).index_key AS index_key, (index_spec).index_pfe AS index_pfe, (index_spec).index_expire_after_seconds AS index_expire_after_seconds, (index_spec).index_is_sparse AS index_is_sparse, (COALESCE((blackboxdb_core.bson_get_value_text((index_spec).index_options, 'enableCompositeTerm'::text))::integer, (blackboxdb_core.bson_get_value_text((index_spec).index_options, 'enableOrderedIndex'::text))::integer, 0) OPERATOR(pg_catalog.>) 0) AS index_is_ordered, (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_is_valid AND ((index_spec).index_expire_after_seconds OPERATOR(pg_catalog.>=) 0)) ORDER BY collection_id, index_id
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+NOTICE:  executing the command locally: SELECT (index_spec).index_name AS index_name FROM blackboxdb_api_catalog.collection_indexes_102009 collection_indexes WHERE (index_id OPERATOR(pg_catalog.=) $1)
+END;
+-- 10.a.
+BEGIN;
+SET LOCAL blackboxdb.RepeatPurgeIndexesForTTLTask to off;
+CALL blackboxdb_api_internal.delete_expired_rows(10);
+END;
+-- 11.a. Check what documents are left after purging
+SELECT shard_key_value, object_id, document  from blackboxdb_api.collection('db', 'ttlcoll') order by object_id;
+   shard_key_value    |            object_id            |                                           document                                            
+---------------------------------------------------------------------
+ -2476384318775456034 | { "" : { "$numberInt" : "4" } } | { "_id" : { "$numberInt" : "4" }, "ttl" : { "$date" : { "$numberLong" : "2657899731608" } } }
+ -4856610847558204655 | { "" : { "$numberInt" : "8" } } | { "_id" : { "$numberInt" : "8" }, "ttl" : true }
+  -500866977185664605 | { "" : { "$numberInt" : "9" } } | { "_id" : { "$numberInt" : "9" }, "ttl" : "would not expire" }
+(3 rows)
+
+-- 12. Explain of the SQL query that is used to delete documents after sharding
+BEGIN;
+SET LOCAL enable_seqscan TO OFF;
+SELECT blackboxdb_distributed_test_helpers.mask_plan_id_from_distributed_subplan($Q$
+EXPLAIN(costs off) DELETE FROM blackboxdb_data.documents_20000_2000016
+    WHERE ctid IN
+    (
+        SELECT ctid FROM blackboxdb_data.documents_20000_2000016
+        WHERE bson_dollar_lt(document, '{ "ttl" : { "$date" : { "$numberLong" : "100" } } }'::bson)
+        LIMIT 100
+    )
+$Q$);
+                                            mask_plan_id_from_distributed_subplan                                            
+---------------------------------------------------------------------
+ Delete on documents_20000_2000016
+   ->  Nested Loop
+         ->  HashAggregate
+               Group Key: "ANY_subquery".ctid
+               ->  Subquery Scan on "ANY_subquery"
+                     ->  Limit
+                           ->  Bitmap Heap Scan on documents_20000_2000016 documents_20000_2000016_1
+                                 Recheck Cond: (document @< '{ "ttl" : { "$date" : { "$numberLong" : "100" } } }'::bson)
+                                 ->  Bitmap Index Scan on ttl_index
+                                       Index Cond: (document @< '{ "ttl" : { "$date" : { "$numberLong" : "100" } } }'::bson)
+         ->  Tid Scan on documents_20000_2000016
+               TID Cond: (ctid = "ANY_subquery".ctid)
+(12 rows)
+
+END;
+-- 13. TTL index can be created
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"ttl1": 1}, "name": "ttl_index1", "expireAfterSeconds": 100, "sparse" : true}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"ttl2": 1}, "name": "ttl_index2", "expireAfterSeconds": 100, "unique" : true}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "3" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"ttl3": 1}, "name": "ttl_index3", "expireAfterSeconds": 100, "sparse" : true, "unique" : true}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "4" }, "numIndexesAfter" : { "$numberInt" : "5" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM blackboxdb_api.list_indexes_cursor_first_page('db','{ "listIndexes": "ttlcoll" }') ORDER BY 1;
+                                                                                                                                                                          bson_dollar_unwind                                                                                                                                                                           
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "expireAfterSeconds" : { "$numberInt" : "5" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl1" : { "$numberInt" : "1" } }, "name" : "ttl_index1", "sparse" : true, "expireAfterSeconds" : { "$numberInt" : "100" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl2" : { "$numberInt" : "1" } }, "name" : "ttl_index2", "unique" : true, "expireAfterSeconds" : { "$numberInt" : "100" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl3" : { "$numberInt" : "1" } }, "name" : "ttl_index3", "sparse" : true, "unique" : true, "expireAfterSeconds" : { "$numberInt" : "100" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+(5 rows)
+
+-- 14. TTL index creation restrictions
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index2", "expireAfterSeconds": -1}]}', true);
+ERROR:  Error in specification { "key" : { "ttl" : 1 }, "name" : "ttl_index2", "expireAfterSeconds" : -1 }:TTL index 'expireAfterSeconds' option cannot be less than 0.
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index2", "expireAfterSeconds": "stringNotAllowed"}]}', true);
+ERROR:  Error in specification { "key" : { "ttl" : 1 }, "name" : "ttl_index2", "expireAfterSeconds" : "stringNotAllowed" }:The 'expireAfterSeconds' option for a TTL index must be a numeric value, but a different data type was provided: string.
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index2", "expireAfterSeconds": true}]}', true);
+ERROR:  Error in specification { "key" : { "ttl" : 1 }, "name" : "ttl_index2", "expireAfterSeconds" : true }:The 'expireAfterSeconds' option for a TTL index must be a numeric value, but a different data type was provided: bool.
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index2", "expireAfterSeconds": 707992037530324174}]}', true);
+ERROR:  Error in specification { "key" : { "ttl" : 1 }, "name" : "ttl_index2", "expireAfterSeconds" : 707992037530324174 }:TTL index 'expireAfterSeconds' option must be within an acceptable range, try a different number than 707992037530324224.000000.
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index2", "expireAfterSeconds": 100, "v" : 1}]}', true);
+ERROR:  An existing index has the same name as the requested index. When index names are not specified, they are auto generated and can cause conflicts. Please refer to our documentation. Requested index: { "v" : 1, "key" : { "ttl" : 1 }, "name" : "ttl_index2", "expireAfterSeconds" : 100, "enableOrderedIndex" : 1 }, existing index: { "v" : 2, "key" : { "ttl2" : 1 }, "name" : "ttl_index2", "unique" : true, "expireAfterSeconds" : 100, "enableOrderedIndex" : 1 }
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"_id": 1}, "name": "ttl_idx", "expireAfterSeconds": 100}]}', true);
+ERROR:  Error in specification { "key" : { "_id" : 1 }, "name" : "ttl_idx", "expireAfterSeconds" : 100 }:The field 'expireAfterSeconds' is not valid for an _id index specification.
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"_id": 1, "_id" : 1}, "name": "ttl_idx", "expireAfterSeconds": 100}]}', true);
+ERROR:  Error in specification { "key" : { "_id" : 1 }, "name" : "ttl_idx", "expireAfterSeconds" : 100 }:The field 'expireAfterSeconds' is not valid for an _id index specification.
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"_id": 1, "non_id" : 1}, "name": "ttl_idx", "expireAfterSeconds": 100}]}', true);
+ERROR:  Error in specification { "key" : { "_id" : 1, "non_id" : 1 }, "name" : "ttl_idx", "expireAfterSeconds" : 100 }:TTL indexes work only on single fields, and compound indexes are incompatible with TTL functionality.
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"non_id1": 1, "non_id2" : 1}, "name": "ttl_idx", "expireAfterSeconds": 100}]}', true);
+ERROR:  Error in specification { "key" : { "non_id1" : 1, "non_id2" : 1 }, "name" : "ttl_idx", "expireAfterSeconds" : 100 }:TTL indexes work only on single fields, and compound indexes are incompatible with TTL functionality.
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"non_id1.$**": 1}, "name": "ttl_idx", "expireAfterSeconds": 100}]}', true);
+ERROR:  Error in specification { "key" : { "non_id1.$**" : 1 }, "name" : "ttl_idx", "expireAfterSeconds" : 100 }:Index type 'wildcard' cannot be a TTL index.
+-- 15. Unsupported ttl index scenarios
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"ttl4": "hashed"}, "name": "ttl_index4", "expireAfterSeconds": 100}]}', true);
+ERROR:  Creating a hash index as ttl index is not supported.
+-- 16. Behavioral difference with sharded reference implementation
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"ttlnew": 1}, "name": "ttl_new_index1", "sparse" : true, "expireAfterSeconds" : 10}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "5" }, "numIndexesAfter" : { "$numberInt" : "6" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"ttlnew": 1}, "name": "ttl_new_index2", "sparse" : false, "expireAfterSeconds" : 10}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "6" }, "numIndexesAfter" : { "$numberInt" : "7" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"ttlnew": 1}, "name": "ttl_new_index3", "expireAfterSeconds": 100, "sparse" : true, "unique" : true}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "7" }, "numIndexesAfter" : { "$numberInt" : "8" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"ttlnew": "hashed"}, "name": "ttl_new_index4", "expireAfterSeconds": 100}]}', true);
+ERROR:  Creating a hash index as ttl index is not supported.
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"ttlnew2": 5}, "name": "ttl_new_indexj", "sparse" : true, "expireAfterSeconds" : 10}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "8" }, "numIndexesAfter" : { "$numberInt" : "9" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM blackboxdb_api.list_indexes_cursor_first_page('db','{ "listIndexes": "ttlcoll" }') ORDER BY 1;
+                                                                                                                                                                             bson_dollar_unwind                                                                                                                                                                              
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "expireAfterSeconds" : { "$numberInt" : "5" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl1" : { "$numberInt" : "1" } }, "name" : "ttl_index1", "sparse" : true, "expireAfterSeconds" : { "$numberInt" : "100" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl2" : { "$numberInt" : "1" } }, "name" : "ttl_index2", "unique" : true, "expireAfterSeconds" : { "$numberInt" : "100" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl3" : { "$numberInt" : "1" } }, "name" : "ttl_index3", "sparse" : true, "unique" : true, "expireAfterSeconds" : { "$numberInt" : "100" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttlnew" : { "$numberInt" : "1" } }, "name" : "ttl_new_index1", "sparse" : true, "expireAfterSeconds" : { "$numberInt" : "10" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttlnew" : { "$numberInt" : "1" } }, "name" : "ttl_new_index2", "sparse" : false, "expireAfterSeconds" : { "$numberInt" : "10" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttlnew" : { "$numberInt" : "1" } }, "name" : "ttl_new_index3", "sparse" : true, "unique" : true, "expireAfterSeconds" : { "$numberInt" : "100" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttlnew2" : { "$numberInt" : "5" } }, "name" : "ttl_new_indexj", "sparse" : true, "expireAfterSeconds" : { "$numberInt" : "10" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+(9 rows)
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"ttlnew3": "hashed"}, "name": "ttl_new_indexk", "unique" : true, "expireAfterSeconds" : 10}]}', true);
+ERROR:  Creating a hash index as ttl index is not supported.
+-- 17. Partial filter expresson tests
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently(
+  'db',
+  '{
+     "createIndexes": "ttlcoll2",
+     "indexes": [
+       {
+         "key": {"ttl": 1},
+         "name": "ttl_pfe_index",
+         "expireAfterSeconds" : 5,
+         "partialFilterExpression":
+         {
+           "$and": [
+             {"b": 55},
+             {"a": {"$exists": true}},
+             {"c": {"$exists": 1}}
+            ]
+         }
+       }
+     ]
+   }',
+   true
+);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM blackboxdb_api.list_indexes_cursor_first_page('db','{ "listIndexes": "ttlcoll2" }') ORDER BY 1;
+                                                                                                                                                                                                                                           bson_dollar_unwind                                                                                                                                                                                                                                           
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll2", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll2", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_pfe_index", "partialFilterExpression" : { "$and" : [ { "b" : { "$numberInt" : "55" } }, { "a" : { "$exists" : true } }, { "c" : { "$exists" : { "$numberInt" : "1" } } } ] }, "expireAfterSeconds" : { "$numberInt" : "5" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+(2 rows)
+
+SELECT * FROM blackboxdb_distributed_test_helpers.get_collection_indexes('db', 'ttlcoll2') ORDER BY collection_id, index_id;
+ collection_id | index_id |                                                                                                                                                                             index_spec_as_bson                                                                                                                                                                             | index_is_valid 
+---------------------------------------------------------------------
+         20001 |    20011 | { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }                                                                                                                                                                                                                                                                              | t
+         20001 |    20012 | { "v" : { "$numberInt" : "2" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_pfe_index", "partialFilterExpression" : { "$and" : [ { "b" : { "$numberInt" : "55" } }, { "a" : { "$exists" : true } }, { "c" : { "$exists" : { "$numberInt" : "1" } } } ] }, "expireAfterSeconds" : { "$numberInt" : "5" }, "storageEngine" : { "enableOrderedIndex" : true } } | t
+(2 rows)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll2', '{ "_id" : 0, "b": 55, "a" : 1, "c": 1, "ttl" : { "$date": { "$numberLong": "-1000" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll2', '{ "_id" : 1, "b": 56, "a" : 1, "c": 1, "ttl" : { "$date": { "$numberLong": "0" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll2', '{ "_id" : 2, "b": 56, "a" : 1, "c": 1, "ttl" : { "$date": { "$numberLong": "100" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll2', '{ "_id" : 3, "b": 55, "a" : 1, "c": 1, "ttl" : { "$date": { "$numberLong": "1657900030774" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll2', '{ "_id" : 4, "b": 55, "a" : 1, "c": 1, "ttl" : { "$date": { "$numberLong": "2657899731608" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll2', '{ "_id" : 5, "b": 55, "a" : 1, "c": 1, "ttl" : [{ "$date": { "$numberLong": "100" }}] }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll2', '{ "_id" : 6, "b": 55, "a" : 1, "d": 1, "ttl" : [{ "$date": { "$numberLong": "100" }}, { "$date": { "$numberLong": "2657899731608" }}] }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll2', '{ "_id" : 7, "b": 55, "a" : 1, "c": 1, "ttl" : [true, { "$date": { "$numberLong": "100" }}, { "$date": { "$numberLong": "2657899731608" }}] }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll2', '{ "_id" : 8, "b": 55, "a" : 1, "c": 1, "ttl" : true }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll2', '{ "_id" : 9, "b": 55, "a" : 1, "c": 1, "ttl" : "would not expire" }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+BEGIN;
+SET LOCAL blackboxdb.RepeatPurgeIndexesForTTLTask to off;
+CALL blackboxdb_api_internal.delete_expired_rows(10);
+END;
+SELECT shard_key_value, object_id, document  from blackboxdb_api.collection('db', 'ttlcoll2') order by object_id;
+ shard_key_value |            object_id            |                                                                                                               document                                                                                                                
+---------------------------------------------------------------------
+           20001 | { "" : { "$numberInt" : "1" } } | { "_id" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "56" }, "a" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" }, "ttl" : { "$date" : { "$numberLong" : "0" } } }
+           20001 | { "" : { "$numberInt" : "2" } } | { "_id" : { "$numberInt" : "2" }, "b" : { "$numberInt" : "56" }, "a" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" }, "ttl" : { "$date" : { "$numberLong" : "100" } } }
+           20001 | { "" : { "$numberInt" : "4" } } | { "_id" : { "$numberInt" : "4" }, "b" : { "$numberInt" : "55" }, "a" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" }, "ttl" : { "$date" : { "$numberLong" : "2657899731608" } } }
+           20001 | { "" : { "$numberInt" : "6" } } | { "_id" : { "$numberInt" : "6" }, "b" : { "$numberInt" : "55" }, "a" : { "$numberInt" : "1" }, "d" : { "$numberInt" : "1" }, "ttl" : [ { "$date" : { "$numberLong" : "100" } }, { "$date" : { "$numberLong" : "2657899731608" } } ] }
+           20001 | { "" : { "$numberInt" : "8" } } | { "_id" : { "$numberInt" : "8" }, "b" : { "$numberInt" : "55" }, "a" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" }, "ttl" : true }
+           20001 | { "" : { "$numberInt" : "9" } } | { "_id" : { "$numberInt" : "9" }, "b" : { "$numberInt" : "55" }, "a" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" }, "ttl" : "would not expire" }
+(6 rows)
+
+-- 18. Large TTL (expire after INT_MAX seconds aka 68 years)
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently(
+  'db',
+  '{
+     "createIndexes": "ttlcoll3",
+     "indexes": [
+       {
+         "key": {"ttl": 1},
+         "name": "ttl_large_expireAfterSeconds",
+         "expireAfterSeconds" :  2147483647
+       }
+     ]
+   }',
+   true
+);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM blackboxdb_api.list_indexes_cursor_first_page('db','{ "listIndexes": "ttlcoll3" }') ORDER BY 1;
+                                                                                                                                                                      bson_dollar_unwind                                                                                                                                                                      
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll3", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll3", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_large_expireAfterSeconds", "expireAfterSeconds" : { "$numberInt" : "2147483647" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+(2 rows)
+
+SELECT * FROM blackboxdb_distributed_test_helpers.get_collection_indexes('db', 'ttlcoll3') ORDER BY collection_id, index_id;
+ collection_id | index_id |                                                                                                        index_spec_as_bson                                                                                                        | index_is_valid 
+---------------------------------------------------------------------
+         20002 |    20013 | { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" }                                                                                                                                    | t
+         20002 |    20014 | { "v" : { "$numberInt" : "2" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_large_expireAfterSeconds", "expireAfterSeconds" : { "$numberInt" : "2147483647" }, "storageEngine" : { "enableOrderedIndex" : true } } | t
+(2 rows)
+
+  -- Timestamp: -623051866000 ( 4/4/1950 more than 68 years from 4/4/2024). So, with the ttl index index `ttl_large_expireAfterSeconds`, _id : [1, 6, 7] should be deleted.
+SELECT blackboxdb_api.insert_one('db','ttlcoll3', '{ "_id" : 0, "b": 55, "a" : 1, "c": 1, "ttl" : { "$date": { "$numberLong": "-623051866000" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll3', '{ "_id" : 1, "b": 56, "a" : 1, "c": 1, "ttl" : { "$date": { "$numberLong": "1657900030774" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll3', '{ "_id" : 2, "b": 56, "a" : 1, "c": 1, "ttl" : { "$date": { "$numberLong": "1712253575000" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll3', '{ "_id" : 3, "b": 55, "a" : 1, "c": 1, "ttl" : { "$date": { "$numberLong": "4867927028000" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll3', '{ "_id" : 4, "b": 55, "a" : 1, "c": 1, "ttl" : { "$date": { "$numberLong": "2657899731608" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll3', '{ "_id" : 5, "b": 55, "a" : 1, "c": 1, "ttl" : [{ "$date": { "$numberLong": "1697900030774" }}] }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll3', '{ "_id" : 6, "b": 55, "a" : 1, "d": 1, "ttl" : [{ "$date": { "$numberLong": "-623051866000" }}, { "$date": { "$numberLong": "2657899731608" }}] }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll3', '{ "_id" : 7, "b": 55, "a" : 1, "c": 1, "ttl" : [true, { "$date": { "$numberLong": "-623051866000" }}, { "$date": { "$numberLong": "2657899731608" }}] }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll3', '{ "_id" : 8, "b": 55, "a" : 1, "c": 1, "ttl" : true }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlcoll3', '{ "_id" : 9, "b": 55, "a" : 1, "c": 1, "ttl" : "would not expire" }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+BEGIN;
+SET LOCAL blackboxdb.RepeatPurgeIndexesForTTLTask to off;
+CALL blackboxdb_api_internal.delete_expired_rows(10);
+END;
+SELECT shard_key_value, object_id, document  from blackboxdb_api.collection('db', 'ttlcoll3') order by object_id;
+ shard_key_value |            object_id            |                                                                                           document                                                                                           
+---------------------------------------------------------------------
+           20002 | { "" : { "$numberInt" : "1" } } | { "_id" : { "$numberInt" : "1" }, "b" : { "$numberInt" : "56" }, "a" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" }, "ttl" : { "$date" : { "$numberLong" : "1657900030774" } } }
+           20002 | { "" : { "$numberInt" : "2" } } | { "_id" : { "$numberInt" : "2" }, "b" : { "$numberInt" : "56" }, "a" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" }, "ttl" : { "$date" : { "$numberLong" : "1712253575000" } } }
+           20002 | { "" : { "$numberInt" : "3" } } | { "_id" : { "$numberInt" : "3" }, "b" : { "$numberInt" : "55" }, "a" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" }, "ttl" : { "$date" : { "$numberLong" : "4867927028000" } } }
+           20002 | { "" : { "$numberInt" : "4" } } | { "_id" : { "$numberInt" : "4" }, "b" : { "$numberInt" : "55" }, "a" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" }, "ttl" : { "$date" : { "$numberLong" : "2657899731608" } } }
+           20002 | { "" : { "$numberInt" : "5" } } | { "_id" : { "$numberInt" : "5" }, "b" : { "$numberInt" : "55" }, "a" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" }, "ttl" : [ { "$date" : { "$numberLong" : "1697900030774" } } ] }
+           20002 | { "" : { "$numberInt" : "8" } } | { "_id" : { "$numberInt" : "8" }, "b" : { "$numberInt" : "55" }, "a" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" }, "ttl" : true }
+           20002 | { "" : { "$numberInt" : "9" } } | { "_id" : { "$numberInt" : "9" }, "b" : { "$numberInt" : "55" }, "a" : { "$numberInt" : "1" }, "c" : { "$numberInt" : "1" }, "ttl" : "would not expire" }
+(7 rows)
+
+-- 19 Float TTL
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll1", "indexes": [{"key": {"ttlnew": 1}, "name": "ttl_new_index5", "sparse" : true, "expireAfterSeconds" : {"$numberDouble":"12345.12345"}}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlcoll1", "indexes": [{"key": {"ttlnew": 1}, "name": "ttl_new_index6", "sparse" : false, "expireAfterSeconds" : {"$numberDouble":"12345.12345"}}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM blackboxdb_api.list_indexes_cursor_first_page('db','{ "listIndexes": "ttlcoll1" }') ORDER BY 1;
+                                                                                                                                                                       bson_dollar_unwind                                                                                                                                                                       
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll1", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll1", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttlnew" : { "$numberInt" : "1" } }, "name" : "ttl_new_index5", "sparse" : true, "expireAfterSeconds" : { "$numberInt" : "12345" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlcoll1", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "ttlnew" : { "$numberInt" : "1" } }, "name" : "ttl_new_index6", "sparse" : false, "expireAfterSeconds" : { "$numberInt" : "12345" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+(3 rows)
+
+-- 20 Repeated TTL deletes
+-- 1. Populate collection with a set of documents with different combination of $date fields --
+SELECT blackboxdb_api.insert_one('db','ttlRepeatedDeletes', '{ "_id" : 0, "ttl" : { "$date": { "$numberLong": "-1000" } } }', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlRepeatedDeletes', '{ "_id" : 1, "ttl" : { "$date": { "$numberLong": "0" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlRepeatedDeletes', '{ "_id" : 2, "ttl" : { "$date": { "$numberLong": "100" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+    -- Documents with date older than when the test was written
+SELECT blackboxdb_api.insert_one('db','ttlRepeatedDeletes', '{ "_id" : 3, "ttl" : { "$date": { "$numberLong": "1657900030774" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+    -- Documents with date way in future
+SELECT blackboxdb_api.insert_one('db','ttlRepeatedDeletes', '{ "_id" : 4, "ttl" : { "$date": { "$numberLong": "2657899731608" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+    -- Documents with date array
+SELECT blackboxdb_api.insert_one('db','ttlRepeatedDeletes', '{ "_id" : 5, "ttl" : [{ "$date": { "$numberLong": "100" }}] }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+    -- Documents with date array, should be deleted based on min timestamp
+SELECT blackboxdb_api.insert_one('db','ttlRepeatedDeletes', '{ "_id" : 6, "ttl" : [{ "$date": { "$numberLong": "100" }}, { "$date": { "$numberLong": "2657899731608" }}] }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlRepeatedDeletes', '{ "_id" : 7, "ttl" : [true, { "$date": { "$numberLong": "100" }}, { "$date": { "$numberLong": "2657899731608" }}] }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+    -- Documents with non-date ttl field
+SELECT blackboxdb_api.insert_one('db','ttlRepeatedDeletes', '{ "_id" : 8, "ttl" : true }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+    -- Documents with non-date ttl field
+SELECT blackboxdb_api.insert_one('db','ttlRepeatedDeletes', '{ "_id" : 9, "ttl" : "would not expire" }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT COUNT(blackboxdb_api.insert_one('db', 'ttlRepeatedDeletes', FORMAT('{ "_id": %s, "ttl": { "$date": { "$numberLong": "1657900030774" } } }', i, i)::blackboxdb_core.bson)) FROM generate_series(10, 10000) AS i;
+ count 
+---------------------------------------------------------------------
+  9991
+(1 row)
+
+SELECT COUNT(blackboxdb_api.insert_one('db', 'ttlRepeatedDeletes2', FORMAT('{ "_id": %s, "ttl": { "$date": { "$numberLong": "1657900030774" } } }', i, i)::blackboxdb_core.bson)) FROM generate_series(10, 10000) AS i;
+NOTICE:  creating collection
+ count 
+---------------------------------------------------------------------
+  9991
+(1 row)
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlRepeatedDeletes", "indexes": [{"key": {"ttl": 1}, "name": "ttl_repeat_1", "sparse" : true, "expireAfterSeconds" : 5}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlRepeatedDeletes2", "indexes": [{"key": {"ttl": 1}, "name": "ttl_repeat_2", "sparse" : false, "expireAfterSeconds" : 5}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT count(*)  from blackboxdb_api.collection('db', 'ttlRepeatedDeletes');
+ count 
+---------------------------------------------------------------------
+ 10001
+(1 row)
+
+SELECT count(*)  from blackboxdb_api.collection('db', 'ttlRepeatedDeletes2');
+ count 
+---------------------------------------------------------------------
+  9991
+(1 row)
+
+BEGIN;
+SET LOCAL blackboxdb.TTLTaskMaxRunTimeInMS to 3000;
+SET LOCAL blackboxdb.RepeatPurgeIndexesForTTLTask to off;
+CALL blackboxdb_api_internal.delete_expired_rows(11);
+  -- With repeat mode off (by default), we should delete exactly 11 documents per collections (currently has 10001 and 9991 documents)
+SELECT count(*) = 9990  from blackboxdb_api.collection('db', 'ttlRepeatedDeletes');
+ ?column? 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT count(*) = 9980 from blackboxdb_api.collection('db', 'ttlRepeatedDeletes2');
+ ?column? 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+END;
+BEGIN;
+SET LOCAL blackboxdb.TTLTaskMaxRunTimeInMS to 3000;
+SET LOCAL blackboxdb.RepeatPurgeIndexesForTTLTask to on;
+SELECT count(*)  from blackboxdb_api.collection('db', 'ttlRepeatedDeletes');
+ count 
+---------------------------------------------------------------------
+  9990
+(1 row)
+
+SELECT count(*)  from blackboxdb_api.collection('db', 'ttlRepeatedDeletes2');
+ count 
+---------------------------------------------------------------------
+  9980
+(1 row)
+
+  -- With repeat mode on, we should delete more than 10 documents per collections (currently has 9990 and 9980 documents)
+CALL blackboxdb_api_internal.delete_expired_rows(10);
+  -- 3000 ms does 70 iterations locally. So document count should be well below 9900.
+SELECT count(*) < 9900 from blackboxdb_api.collection('db', 'ttlRepeatedDeletes');
+ ?column? 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT count(*) < 9900 from blackboxdb_api.collection('db', 'ttlRepeatedDeletes2');
+ ?column? 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+END;
+-- 21. TTL index with forced ordered scan via index hints
+set blackboxdb.enableExtendedExplainPlans to on;
+-- if blackboxdb_extended_rum exists, set alternate index handler
+SELECT pg_catalog.set_config('blackboxdb.alternate_index_handler_name', 'extended_rum', false), extname FROM pg_extension WHERE extname = 'blackboxdb_extended_rum';
+  set_config  |         extname         
+---------------------------------------------------------------------
+ extended_rum | blackboxdb_extended_rum
+(1 row)
+
+-- Delete all other indexes from previous tests to reduce flakiness
+SELECT blackboxdb_api.drop_collection('db', 'ttlcoll'), blackboxdb_api.drop_collection('db', 'ttlcoll1'), blackboxdb_api.drop_collection('db', 'ttlcoll2'),
+blackboxdb_api.drop_collection('db', 'ttlcoll3'),blackboxdb_api.drop_collection('db', 'ttlRepeatedDeletes'),blackboxdb_api.drop_collection('db', 'ttlRepeatedDeletes2');
+ drop_collection | drop_collection | drop_collection | drop_collection | drop_collection | drop_collection 
+---------------------------------------------------------------------
+ t               | t               | t               | t               | t               | t
+(1 row)
+
+-- make sure jobs are scheduled and disable it to avoid flakiness on the test as it could run on its schedule and delete documents before we run our commands in the test
+select cron.unschedule(jobid) from cron.job where jobname like '%ttl_task%';
+ unschedule 
+---------------------------------------------------------------------
+(0 rows)
+
+-- 1. Populate collection with a set of documents with different combination of $date fields --
+SELECT blackboxdb_api.insert_one('db','ttlCompositeOrderedScan', '{ "_id" : 0, "ttl" : { "$date": { "$numberLong": "-1000" } } }', NULL);
+NOTICE:  creating collection
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlCompositeOrderedScan', '{ "_id" : 1, "ttl" : { "$date": { "$numberLong": "0" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlCompositeOrderedScan', '{ "_id" : 2, "ttl" : { "$date": { "$numberLong": "100" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+    -- Documents with date older than when the test was written
+SELECT blackboxdb_api.insert_one('db','ttlCompositeOrderedScan', '{ "_id" : 3, "ttl" : { "$date": { "$numberLong": "1657900030774" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+    -- Documents with date way in future
+SELECT blackboxdb_api.insert_one('db','ttlCompositeOrderedScan', '{ "_id" : 4, "ttl" : { "$date": { "$numberLong": "2657899731608" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+    -- Documents with date array
+SELECT blackboxdb_api.insert_one('db','ttlCompositeOrderedScan', '{ "_id" : 5, "ttl" : [{ "$date": { "$numberLong": "100" }}] }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+    -- Documents with date array, should be deleted based on min timestamp
+SELECT blackboxdb_api.insert_one('db','ttlCompositeOrderedScan', '{ "_id" : 6, "ttl" : [{ "$date": { "$numberLong": "100" }}, { "$date": { "$numberLong": "2657899731608" }}] }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlCompositeOrderedScan', '{ "_id" : 7, "ttl" : [true, { "$date": { "$numberLong": "100" }}, { "$date": { "$numberLong": "2657899731608" }}] }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+    -- Documents with non-date ttl field
+SELECT blackboxdb_api.insert_one('db','ttlCompositeOrderedScan', '{ "_id" : 8, "ttl" : true }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+    -- Documents with non-date ttl field
+SELECT blackboxdb_api.insert_one('db','ttlCompositeOrderedScan', '{ "_id" : 9, "ttl" : "would not expire" }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT COUNT(blackboxdb_api.insert_one('db', 'ttlCompositeOrderedScan', FORMAT('{ "_id": %s, "ttl": { "$date": { "$numberLong": "1657900030774" } } }', i, i)::blackboxdb_core.bson)) FROM generate_series(10, 10000) AS i;
+ count 
+---------------------------------------------------------------------
+  9991
+(1 row)
+
+--  Create TTL Index --
+SET blackboxdb.enableExtendedExplainPlans to on;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlCompositeOrderedScan", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5, "sparse": true}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+select
+    collection_id,
+    (index_spec).index_key, (index_spec).index_name,
+    (index_spec).index_expire_after_seconds as ttl_expiry,
+    (index_spec).index_is_sparse as is_sparse,
+    (index_spec).index_name as index_name
+from blackboxdb_api_catalog.collection_indexes where (index_spec).index_expire_after_seconds > 0;
+ collection_id |             index_key              | index_name | ttl_expiry | is_sparse | index_name 
+---------------------------------------------------------------------
+         20006 | { "ttl" : { "$numberInt" : "1" } } | ttl_index  |          5 | t         | ttl_index
+(1 row)
+
+\d  blackboxdb_data.documents_20006
+          Table "blackboxdb_data.documents_20006"
+     Column      |  Type  | Collation | Nullable | Default 
+---------------------------------------------------------------------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_20006" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_20023" blackboxdb_extended_rum (document blackboxdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '20006'::bigint)
+
+--  List All indexes --
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM blackboxdb_api.list_indexes_cursor_first_page('db','{ "listIndexes": "ttlCompositeOrderedScan" }') ORDER BY 1;
+                                                                                                                                                                        bson_dollar_unwind                                                                                                                                                                        
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlCompositeOrderedScan", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "sparse" : true, "expireAfterSeconds" : { "$numberInt" : "5" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "db.ttlCompositeOrderedScan", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+(2 rows)
+
+SELECT count(*) from ( SELECT shard_key_value, object_id, document  from blackboxdb_api.collection('db', 'ttlCompositeOrderedScan') order by object_id) as a;
+ count 
+---------------------------------------------------------------------
+ 10001
+(1 row)
+
+--  Disable autovacuum so the dead index entries left by the TTL purges are not
+--  reclaimed before the eligibleDeadItems EXPLAINs below (Citus propagates this to shards).
+ALTER TABLE blackboxdb_data.documents_20006 SET (autovacuum_enabled = off);
+--  Call ttl purge procedure with a batch size of 100
+BEGIN;
+SET client_min_messages TO LOG;
+SET LOCAL blackboxdb.logTTLProgressActivity to on;
+SET LOCAL blackboxdb.RepeatPurgeIndexesForTTLTask to off;
+CALL blackboxdb_api_internal.delete_expired_rows(100);
+RESET client_min_messages;
+END;
+BEGIN;
+SET client_min_messages TO LOG;
+SET LOCAL blackboxdb.useIndexHintsForTTLTask to off;
+SET LOCAL blackboxdb.logTTLProgressActivity to on;
+SET LOCAL blackboxdb.RepeatPurgeIndexesForTTLTask to off;
+CALL blackboxdb_api_internal.delete_expired_rows(100);
+RESET client_min_messages;
+END;
+--  Check what documents are left after purging
+SELECT count(*) from ( SELECT shard_key_value, object_id, document  from blackboxdb_api.collection('db', 'ttlCompositeOrderedScan') order by object_id) as a;
+ count 
+---------------------------------------------------------------------
+  9801
+(1 row)
+
+--  TTL indexes behaves like normal indexes that are used in queries (cx can provide .hint() to force)
+BEGIN;
+EXPLAIN(costs off) SELECT object_id FROM blackboxdb_data.documents_20006
+		WHERE bson_dollar_eq(document, '{ "ttl" : { "$date" : { "$numberLong" : "100" } } }'::blackboxdb_core.bson)
+        LIMIT 100;
+                                                                               QUERY PLAN                                                                               
+---------------------------------------------------------------------
+ Limit
+   ->  Custom Scan (Citus Adaptive)
+         Task Count: 8
+         Tasks Shown: One of 8
+         ->  Task
+               Node: host=localhost port=58070 dbname=regression
+               ->  Limit
+                     ->  Bitmap Heap Scan on documents_20006_2000104 documents_20006
+                           Recheck Cond: (document OPERATOR(blackboxdb_api_catalog.@=) '{ "ttl" : { "$date" : { "$numberLong" : "100" } } }'::blackboxdb_core.bson)
+                           ->  Bitmap Index Scan on ttl_index
+                                 Index Cond: (document OPERATOR(blackboxdb_api_catalog.@=) '{ "ttl" : { "$date" : { "$numberLong" : "100" } } }'::blackboxdb_core.bson)
+(11 rows)
+
+END;
+--  Remove the dead heap tuples while leaving their index entries in place, so the
+--  eligibleDeadItems count in the ordered index scan EXPLAIN below is deterministic.
+VACUUM (INDEX_CLEANUP OFF) blackboxdb_data.documents_20006;
+--  Check the query to fetch the eligible TTL indexes uses IndexScan.
+BEGIN;
+EXPLAIN(analyze on, verbose on, costs off, timing off, summary off) SELECT ctid FROM blackboxdb_data.documents_20006_2000105
+                WHERE bson_dollar_lt(document, '{ "ttl" : { "$date" : { "$numberLong" : "1754515365000" } } }'::blackboxdb_core.bson)
+                AND blackboxdb_api_internal.bson_dollar_index_hint(document, 'ttl_index'::text, '{"key": {"ttl": 1}}'::blackboxdb_core.bson, true)
+        LIMIT 100;
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------
+ Limit (actual rows=100 loops=1)
+   Output: ctid
+   ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=100 loops=1)
+         Output: ctid
+         indexName: ttl_index
+         indexKey: {"ttl": 1}
+         isMultiKey: true
+         indexBounds: ["ttl": [{ "$date" : { "$numberLong" : "-9223372036854775808" } }, { "$date" : "2025-08-06T21:22:45Z" })]
+         innerScanLoops: 4 loops
+         eligibleDeadItems: 200 items
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 12242)]
+         ->  Index Scan using ttl_index on blackboxdb_data.documents_20006_2000105 (actual rows=100 loops=1)
+               Output: ctid
+               Index Cond: (documents_20006_2000105.document @< '{ "ttl" : { "$date" : { "$numberLong" : "1754515365000" } } }'::bson)
+(15 rows)
+
+END;
+--  Shard collection
+SELECT blackboxdb_api.shard_collection('db', 'ttlCompositeOrderedScan', '{ "_id": "hashed" }', false);
+ shard_collection 
+---------------------------------------------------------------------
+ 
+(1 row)
+
+--  Check TTL deletes work on sharded (should delete 800 docs, 100 for each shard)
+SELECT count(*) from ( SELECT shard_key_value, object_id, document  from blackboxdb_api.collection('db', 'ttlCompositeOrderedScan') order by object_id) as a;
+ count 
+---------------------------------------------------------------------
+  9801
+(1 row)
+
+BEGIN;
+SET LOCAL blackboxdb.RepeatPurgeIndexesForTTLTask to off;
+CALL blackboxdb_api_internal.delete_expired_rows(100);
+END;
+--  Remove the dead heap tuples while leaving their index entries in place, so the
+--  eligibleDeadItems count in the EXPLAINs below is deterministic.
+VACUUM (INDEX_CLEANUP OFF) blackboxdb_data.documents_20006;
+SELECT count(*) from ( SELECT shard_key_value, object_id, document  from blackboxdb_api.collection('db', 'ttlCompositeOrderedScan') order by object_id) as a;
+ count 
+---------------------------------------------------------------------
+  9001
+(1 row)
+
+--  Check for Ordered Indes Scan on the ttl index 
+BEGIN;
+EXPLAIN(analyze on, verbose on, costs off, timing off, summary off) SELECT ctid FROM blackboxdb_data.documents_20006_2000124
+                WHERE bson_dollar_lt(document, '{ "ttl" : { "$date" : { "$numberLong" : "1657900030775" } } }'::blackboxdb_core.bson)
+                AND blackboxdb_api_internal.bson_dollar_index_hint(document, 'ttl_index'::text, '{"key": {"ttl": 1}}'::blackboxdb_core.bson, true)
+        LIMIT 100;
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------
+ Limit (actual rows=100 loops=1)
+   Output: ctid
+   ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=100 loops=1)
+         Output: ctid
+         indexName: ttl_index
+         indexKey: {"ttl": 1}
+         isMultiKey: false
+         indexBounds: ["ttl": [{ "$date" : { "$numberLong" : "-9223372036854775808" } }, { "$date" : "2022-07-15T15:47:10.775Z" })]
+         innerScanLoops: 1 loops
+         eligibleDeadItems: 100 items
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1207)]
+         ->  Index Scan using ttl_index on blackboxdb_data.documents_20006_2000124 (actual rows=100 loops=1)
+               Output: ctid
+               Index Cond: (documents_20006_2000124.document @< '{ "ttl" : { "$date" : { "$numberLong" : "1657900030775" } } }'::bson)
+(15 rows)
+
+END;
+BEGIN;
+SET client_min_messages TO INFO;
+EXPLAIN(COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) SELECT ctid FROM blackboxdb_data.documents_20006_2000122
+                WHERE bson_dollar_lt(document, '{ "ttl" : { "$date" : { "$numberLong" : "1657900030775" } } }'::blackboxdb_core.bson)
+                AND blackboxdb_api_internal.bson_dollar_index_hint(document, 'ttl_index'::text, '{"key": {"ttl": 1}}'::blackboxdb_core.bson, true)
+        LIMIT 100;
+                                                             QUERY PLAN                                                             
+---------------------------------------------------------------------
+ Limit (actual rows=100 loops=1)
+   ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=100 loops=1)
+         indexName: ttl_index
+         indexKey: {"ttl": 1}
+         isMultiKey: false
+         indexBounds: ["ttl": [{ "$date" : { "$numberLong" : "-9223372036854775808" } }, { "$date" : "2022-07-15T15:47:10.775Z" })]
+         innerScanLoops: 1 loops
+         eligibleDeadItems: 100 items
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1216)]
+         ->  Index Scan using ttl_index on documents_20006_2000122 (actual rows=100 loops=1)
+               Index Cond: (document @< '{ "ttl" : { "$date" : { "$numberLong" : "1657900030775" } } }'::bson)
+(12 rows)
+
+END;
+SELECT count(*) from ( SELECT shard_key_value, object_id, document  from blackboxdb_api.collection('db', 'ttlCompositeOrderedScan') order by object_id) as a;
+ count 
+---------------------------------------------------------------------
+  9001
+(1 row)
+
+-- Test with descending TTL ordering
+BEGIN;
+SET client_min_messages TO LOG;
+SET LOCAL blackboxdb.useIndexHintsForTTLTask to off;
+SET LOCAL blackboxdb.logTTLProgressActivity to on;
+SET LOCAL blackboxdb.enableTTLDescSort to on;
+SET LOCAL blackboxdb.RepeatPurgeIndexesForTTLTask to off;
+CALL blackboxdb_api_internal.delete_expired_rows(100);
+RESET client_min_messages;
+END;
+SELECT count(*) from ( SELECT shard_key_value, object_id, document  from blackboxdb_api.collection('db', 'ttlCompositeOrderedScan') order by object_id) as a;
+ count 
+---------------------------------------------------------------------
+  8201
+(1 row)
+
+BEGIN;
+set local enable_seqscan to off;
+SET LOCAL enable_bitmapscan to off;
+SET client_min_messages TO INFO;
+-- Check ORDER BY uses index 
+EXPLAIN(COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF) 
+    SELECT ctid FROM blackboxdb_data.documents_20006_2000122
+        WHERE 
+        bson_dollar_lt(document, '{ "ttl" : { "$date" : { "$numberLong" : "1657900030775" } } }'::blackboxdb_core.bson) AND
+        blackboxdb_api_internal.bson_dollar_index_hint(document, 'ttl_index'::text, '{"key": {"ttl": 1}}'::blackboxdb_core.bson, true) AND
+        blackboxdb_api_internal.bson_dollar_fullscan(document, '{ "ttl" : -1 }'::blackboxdb_core.bson)
+        ORDER BY blackboxdb_api_catalog.bson_orderby(document, '{ "ttl" : -1}'::blackboxdb_core.bson)
+        LIMIT 100;
+                                                             QUERY PLAN                                                             
+---------------------------------------------------------------------
+ Limit (actual rows=100 loops=1)
+   ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=100 loops=1)
+         indexName: ttl_index
+         indexKey: {"ttl": 1}
+         isMultiKey: false
+         indexBounds: ["ttl": [{ "$date" : { "$numberLong" : "-9223372036854775808" } }, { "$date" : "2022-07-15T15:47:10.775Z" })]
+         isBackwardScan: true
+         innerScanLoops: 1 loops
+         eligibleDeadItems: 200 items
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1216)]
+         ->  Index Scan using ttl_index on documents_20006_2000122 (actual rows=100 loops=1)
+               Index Cond: (document @< '{ "ttl" : { "$date" : { "$numberLong" : "1657900030775" } } }'::bson)
+               Order By: (document OPERATOR(blackboxdb_api_internal.<>-|) '{ "ttl" : { "$numberInt" : "-1" } }'::bson)
+(14 rows)
+
+END;
+-- Test : Tests that creating TTL index with createTTLIndexAsCompositeByDefault GUC on creates composite index and the index is used for TTL deletes
+-- a. Create a TTL index that is on single path when ttl is not forced to composite
+SHOW blackboxdb.defaultUseCompositeOpClass;
+ blackboxdb.defaultUseCompositeOpClass 
+---------------------------------------------------------------------
+ off
+(1 row)
+
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO off;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+\d+ blackboxdb_data.documents_20008;
+                              Table "blackboxdb_data.documents_20008"
+     Column      |  Type  | Collation | Nullable | Default | Storage  | Stats target | Description 
+---------------------------------------------------------------------
+ shard_key_value | bigint |           | not null |         | plain    |              | 
+ object_id       | bson   |           | not null |         | extended |              | 
+ document        | bson   |           | not null |         | extended |              | 
+Indexes:
+    "collection_pk_20008" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_20028" blackboxdb_extended_rum (document blackboxdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=ttl))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '20008'::bigint)
+
+-- b. When defaultUseCompositeOpClass=off, createTTLIndexAsCompositeByDefault=on, 
+-- "enableCompositeTerm": unset
+-- TTL index should be created with composite opclass by default
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll2", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+\d+ blackboxdb_data.documents_20009;
+                              Table "blackboxdb_data.documents_20009"
+     Column      |  Type  | Collation | Nullable | Default | Storage  | Stats target | Description 
+---------------------------------------------------------------------
+ shard_key_value | bigint |           | not null |         | plain    |              | 
+ object_id       | bson   |           | not null |         | extended |              | 
+ document        | bson   |           | not null |         | extended |              | 
+Indexes:
+    "collection_pk_20009" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_20030" blackboxdb_extended_rum (document blackboxdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '20009'::bigint)
+
+-- c. When defaultUseCompositeOpClass is on, TTL index should be created with composite opclass and the index should be used for deletes
+BEGIN;
+SET LOCAL blackboxdb.defaultUseCompositeOpClass TO on;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO off;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll3", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+\d+ blackboxdb_data.documents_20010;
+                              Table "blackboxdb_data.documents_20010"
+     Column      |  Type  | Collation | Nullable | Default | Storage  | Stats target | Description 
+---------------------------------------------------------------------
+ shard_key_value | bigint |           | not null |         | plain    |              | 
+ object_id       | bson   |           | not null |         | extended |              | 
+ document        | bson   |           | not null |         | extended |              | 
+Indexes:
+    "collection_pk_20010" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_20032" blackboxdb_extended_rum (document blackboxdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '20010'::bigint)
+
+-- d. When defaultUseCompositeOpClass=on, createTTLIndexAsCompositeByDefault=on, "enableCompositeTerm": true
+-- TTL index should be created with composite opclass by default
+BEGIN;
+SET LOCAL blackboxdb.defaultUseCompositeOpClass TO on;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll4", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+\d+ blackboxdb_data.documents_20011;
+                              Table "blackboxdb_data.documents_20011"
+     Column      |  Type  | Collation | Nullable | Default | Storage  | Stats target | Description 
+---------------------------------------------------------------------
+ shard_key_value | bigint |           | not null |         | plain    |              | 
+ object_id       | bson   |           | not null |         | extended |              | 
+ document        | bson   |           | not null |         | extended |              | 
+Indexes:
+    "collection_pk_20011" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_20034" blackboxdb_extended_rum (document blackboxdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '20011'::bigint)
+
+-- e. When defaultUseCompositeOpClass=off, createTTLIndexAsCompositeByDefault=off, "enableCompositeTerm": true
+-- TTL index should be created with composite opclass by default
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO off;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll5", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+\d+ blackboxdb_data.documents_20012;
+                              Table "blackboxdb_data.documents_20012"
+     Column      |  Type  | Collation | Nullable | Default | Storage  | Stats target | Description 
+---------------------------------------------------------------------
+ shard_key_value | bigint |           | not null |         | plain    |              | 
+ object_id       | bson   |           | not null |         | extended |              | 
+ document        | bson   |           | not null |         | extended |              | 
+Indexes:
+    "collection_pk_20012" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_20036" blackboxdb_extended_rum (document blackboxdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '20012'::bigint)
+
+-- f. When defaultUseCompositeOpClass=off, createTTLIndexAsCompositeByDefault=on, "enableCompositeTerm": true
+-- TTL index should be created with composite opclass by default
+BEGIN;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll6", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+\d+ blackboxdb_data.documents_20013;
+                              Table "blackboxdb_data.documents_20013"
+     Column      |  Type  | Collation | Nullable | Default | Storage  | Stats target | Description 
+---------------------------------------------------------------------
+ shard_key_value | bigint |           | not null |         | plain    |              | 
+ object_id       | bson   |           | not null |         | extended |              | 
+ document        | bson   |           | not null |         | extended |              | 
+Indexes:
+    "collection_pk_20013" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_20038" blackboxdb_extended_rum (document blackboxdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "ttl" ]', tl='2691'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '20013'::bigint)
+
+-- g. When createTTLIndexAsCompositeByDefault=on, "enableCompositeTerm": false
+-- TTL index should not be created with composite opclass and should not allow ordered scan
+BEGIN;
+SET LOCAL blackboxdb.defaultUseCompositeOpClass TO on;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll7", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": false, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+\d+ blackboxdb_data.documents_20014;
+                              Table "blackboxdb_data.documents_20014"
+     Column      |  Type  | Collation | Nullable | Default | Storage  | Stats target | Description 
+---------------------------------------------------------------------
+ shard_key_value | bigint |           | not null |         | plain    |              | 
+ object_id       | bson   |           | not null |         | extended |              | 
+ document        | bson   |           | not null |         | extended |              | 
+Indexes:
+    "collection_pk_20014" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_20040" blackboxdb_extended_rum (document blackboxdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=ttl))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '20014'::bigint)
+
+select
+    c.collection_name, 
+    (index_spec).index_name,
+    -- index_is_ordered column tells if the index allows ordered scan 
+    COALESCE(blackboxdb_core.bson_get_value_text((index_spec).index_options::blackboxdb_core.bson, 'enableOrderedIndex'::text)::int, 0) > 0 as is_ordered,
+    (index_spec).index_expire_after_seconds as ttl_expiry,
+    (index_spec).index_name as index_name,
+    index_spec
+from blackboxdb_api_catalog.collection_indexes ci 
+JOIN blackboxdb_api_catalog.collections c
+ON  c.collection_id = ci.collection_id 
+where (index_spec).index_expire_after_seconds > 0
+AND c.database_name = 'ttl_default_composite';
+ collection_name | index_name | is_ordered | ttl_expiry | index_name |                                                         index_spec                                                         
+---------------------------------------------------------------------
+ ttlcoll         | ttl_index  | f          |          5 | ttl_index  | (ttl_index,"{ ""ttl"" : { ""$numberInt"" : ""1"" } }",,,,,1,5,,)
+ ttlcoll2        | ttl_index  | t          |          5 | ttl_index  | (ttl_index,"{ ""ttl"" : { ""$numberInt"" : ""1"" } }",,,,,1,5,,"{ ""enableOrderedIndex"" : { ""$numberInt"" : ""1"" } }")
+ ttlcoll3        | ttl_index  | t          |          5 | ttl_index  | (ttl_index,"{ ""ttl"" : { ""$numberInt"" : ""1"" } }",,,,,1,5,,"{ ""enableOrderedIndex"" : { ""$numberInt"" : ""1"" } }")
+ ttlcoll4        | ttl_index  | t          |          5 | ttl_index  | (ttl_index,"{ ""ttl"" : { ""$numberInt"" : ""1"" } }",,,,,1,5,,"{ ""enableOrderedIndex"" : { ""$numberInt"" : ""2"" } }")
+ ttlcoll5        | ttl_index  | t          |          5 | ttl_index  | (ttl_index,"{ ""ttl"" : { ""$numberInt"" : ""1"" } }",,,,,1,5,,"{ ""enableOrderedIndex"" : { ""$numberInt"" : ""2"" } }")
+ ttlcoll6        | ttl_index  | t          |          5 | ttl_index  | (ttl_index,"{ ""ttl"" : { ""$numberInt"" : ""1"" } }",,,,,1,5,,"{ ""enableOrderedIndex"" : { ""$numberInt"" : ""2"" } }")
+ ttlcoll7        | ttl_index  | f          |          5 | ttl_index  | (ttl_index,"{ ""ttl"" : { ""$numberInt"" : ""1"" } }",,,,,1,5,,"{ ""enableOrderedIndex"" : { ""$numberInt"" : ""-1"" } }")
+(7 rows)
+
+-- 22. Test skipRepeatDeleteForUnOrderedIndex GUC
+-- This tests that for non-ordered TTL indexes, repeat delete is skipped when the GUC is on (default)
+-- and repeat delete is active when the GUC is off.
+-- Drop collections from previous tests to avoid flakiness
+SELECT blackboxdb_api.drop_collection('db', 'ttlCompositeOrderedScan');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT blackboxdb_api.drop_collection('ttl_default_composite', 'ttlcoll'),
+       blackboxdb_api.drop_collection('ttl_default_composite', 'ttlcoll2'),
+       blackboxdb_api.drop_collection('ttl_default_composite', 'ttlcoll3'),
+       blackboxdb_api.drop_collection('ttl_default_composite', 'ttlcoll4'),
+       blackboxdb_api.drop_collection('ttl_default_composite', 'ttlcoll5'),
+       blackboxdb_api.drop_collection('ttl_default_composite', 'ttlcoll6'),
+       blackboxdb_api.drop_collection('ttl_default_composite', 'ttlcoll7');
+ drop_collection | drop_collection | drop_collection | drop_collection | drop_collection | drop_collection | drop_collection 
+---------------------------------------------------------------------
+ t               | t               | t               | t               | t               | t               | t
+(1 row)
+
+-- make sure ttl schedule is disabled
+SELECT cron.unschedule(jobid) FROM cron.job WHERE jobname LIKE '%ttl_task%';
+ unschedule 
+---------------------------------------------------------------------
+(0 rows)
+
+-- Delete all other indexes from previous tests to reduce flakiness
+WITH deleted AS (
+  DELETE FROM blackboxdb_api_catalog.collection_indexes
+  WHERE collection_id < 20100
+  RETURNING 1
+) SELECT true FROM deleted UNION ALL SELECT true LIMIT 1;
+ ?column? 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- Populate collection with expired documents
+SELECT COUNT(blackboxdb_api.insert_one('db', 'ttlSkipRepeat', FORMAT('{ "_id": %s, "ttl": { "$date": { "$numberLong": "100" } } }', i)::blackboxdb_core.bson)) FROM generate_series(1, 200) AS i;
+NOTICE:  creating collection
+ count 
+---------------------------------------------------------------------
+   200
+(1 row)
+
+-- Add some non-expired docs
+SELECT blackboxdb_api.insert_one('db','ttlSkipRepeat', '{ "_id" : 500, "ttl" : { "$date": { "$numberLong": "2657899731608" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db','ttlSkipRepeat', '{ "_id" : 501, "ttl" : { "$date": { "$numberLong": "2657899731608" } } }', NULL);
+                              insert_one                              
+---------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Create a non-ordered TTL index (regular single-field, no enableCompositeTerm)
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO off;
+SET LOCAL blackboxdb.defaultUseCompositeOpClass TO off;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "ttlSkipRepeat", "indexes": [{"key": {"ttl": 1}, "name": "ttl_skip_repeat_idx", "expireAfterSeconds": 5}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- Verify index is_ordered is false
+\d+ blackboxdb_data.documents_20015;
+                              Table "blackboxdb_data.documents_20015"
+     Column      |  Type  | Collation | Nullable | Default | Storage  | Stats target | Description 
+---------------------------------------------------------------------
+ shard_key_value | bigint |           | not null |         | plain    |              | 
+ object_id       | bson   |           | not null |         | extended |              | 
+ document        | bson   |           | not null |         | extended |              | 
+Indexes:
+    "collection_pk_20015" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_20042" blackboxdb_extended_rum (document blackboxdb_extended_rum_catalog.bson_extended_rum_single_path_ops (path=ttl))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '20015'::bigint)
+
+-- 22a. Test with skipRepeatDeleteForUnOrderedIndex = on (default)
+-- With repeat mode on but skipRepeatDeleteForUnOrderedIndex on, the non-ordered index
+-- should only be processed once (one batch of 10 deleted), not repeatedly.
+SELECT count(*) FROM blackboxdb_api.collection('db', 'ttlSkipRepeat');
+ count 
+---------------------------------------------------------------------
+   202
+(1 row)
+
+BEGIN;
+SET LOCAL blackboxdb.TTLTaskMaxRunTimeInMS to 3000;
+SET LOCAL blackboxdb.RepeatPurgeIndexesForTTLTask to on;
+SET LOCAL blackboxdb.skipRepeatDeleteForUnOrderedIndex to on;
+CALL blackboxdb_api_internal.delete_expired_rows(10);
+END;
+-- Should have deleted exactly 10 (one batch), because repeat was skipped for unordered index
+SELECT count(*) FROM blackboxdb_api.collection('db', 'ttlSkipRepeat');
+ count 
+---------------------------------------------------------------------
+   192
+(1 row)
+
+-- 22b. Test with skipRepeatDeleteForUnOrderedIndex = off
+-- With repeat mode on and skipRepeatDeleteForUnOrderedIndex off, repeat delete should be active
+-- and delete significantly more than one batch.
+BEGIN;
+SET LOCAL blackboxdb.TTLTaskMaxRunTimeInMS to 3000;
+SET LOCAL blackboxdb.RepeatPurgeIndexesForTTLTask to on;
+SET LOCAL blackboxdb.skipRepeatDeleteForUnOrderedIndex to off;
+CALL blackboxdb_api_internal.delete_expired_rows(10);
+END;
+-- Should have deleted all remaining expired docs (repeat was active), leaving only the 2 non-expired
+SELECT count(*) <= 172 FROM blackboxdb_api.collection('db', 'ttlSkipRepeat');
+ ?column? 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+-- 23. Test LP_DEAD benefit: delete_expired_rows() marks dead index entries during its scan.
+-- After TTL delete + VACUUM(INDEX_CLEANUP OFF), calling delete_expired_rows() again
+-- encounters stale index entries and marks them as dead (via enable_support_dead_index_items
+-- GUC set internally by SetGUCLocally). The very first read query then skips those entries.
+-- Uses a fresh database to avoid Citus Adaptive wrapping (which hides innerScanLoops metadata).
+SET blackboxdb.enableDeadIndexEntryMarkingByTTLTask to on;
+SELECT blackboxdb_api.create_collection('ttl_lpdead_db', 'ttlDeadTupleTest');
+NOTICE:  creating collection
+ create_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT collection_id AS dead_tup_col FROM blackboxdb_api_catalog.collections
+    WHERE database_name = 'ttl_lpdead_db' AND collection_name = 'ttlDeadTupleTest' \gset
+-- Disable autovacuum for predictability
+SELECT FORMAT('ALTER TABLE blackboxdb_data.documents_%s SET (autovacuum_enabled = off)', :dead_tup_col) \gexec
+ALTER TABLE blackboxdb_data.documents_20017 SET (autovacuum_enabled = off)
+-- Insert 1000 expired documents (batch 1) with distinct TTL values
+SELECT COUNT(blackboxdb_api.insert_one('ttl_lpdead_db', 'ttlDeadTupleTest',
+    FORMAT('{ "_id": %s, "ttl": { "$date": { "$numberLong": "%s" } } }', i, i)::blackboxdb_core.bson))
+FROM generate_series(1, 1000) AS i;
+ count 
+---------------------------------------------------------------------
+  1000
+(1 row)
+
+-- Create composite TTL index
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_lpdead_db',
+    '{"createIndexes": "ttlDeadTupleTest", "indexes": [{"key": {"ttl": 1}, "name": "ttl_dead_idx", "v":1, "expireAfterSeconds": 5, "enableCompositeTerm": true}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Verify initial state: 1000 index entries
+SET blackboxdb.enableExtendedExplainPlans to on;
+SET blackboxdb.forceDisableSeqScan to on;
+SELECT blackboxdb_distributed_test_helpers.run_explain_and_trim(
+    $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ttl_lpdead_db', '{ "find": "ttlDeadTupleTest", "filter": { "ttl": { "$exists": true } } }') $cmd$);
+                                  run_explain_and_trim                                   
+---------------------------------------------------------------------
+ Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=1000 loops=1)
+   indexName: ttl_dead_idx
+   indexKey: {"ttl": 1}
+   isMultiKey: false
+   indexBounds: ["ttl": [MinKey, MaxKey]]
+   innerScanLoops: 1000 loops
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1000)]
+   ->  Bitmap Heap Scan on documents_20017_2000162 collection (actual rows=1000 loops=1)
+         Recheck Cond: (document @>= '{ "ttl" : { "$minKey" : 1 } }'::bson)
+         Heap Blocks: exact=10
+         ->  Bitmap Index Scan on ttl_dead_idx (actual rows=1000 loops=1)
+               Index Cond: (document @>= '{ "ttl" : { "$minKey" : 1 } }'::bson)
+(13 rows)
+
+-- First TTL delete: deletes all 1000 rows (entries are live during this scan, nothing to mark yet)
+RESET blackboxdb.forceDisableSeqScan;
+BEGIN;
+SET LOCAL blackboxdb.RepeatPurgeIndexesForTTLTask to off;
+CALL blackboxdb_api_internal.delete_expired_rows(1000);
+END;
+SELECT count(*) as rows_after_first_delete FROM blackboxdb_api.collection('ttl_lpdead_db', 'ttlDeadTupleTest');
+ rows_after_first_delete 
+---------------------------------------------------------------------
+                       0
+(1 row)
+
+-- VACUUM removes dead heap tuples but leaves index entries stale (LP_DEAD scenario)
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP OFF) blackboxdb_data.documents_%s', :dead_tup_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) blackboxdb_data.documents_20017
+-- Insert 10 more expired rows (batch 2) with distinct TTL values, so delete_expired_rows has something to scan
+SELECT COUNT(blackboxdb_api.insert_one('ttl_lpdead_db', 'ttlDeadTupleTest',
+    FORMAT('{ "_id": %s, "ttl": { "$date": { "$numberLong": "%s" } } }', i, i)::blackboxdb_core.bson))
+FROM generate_series(2001, 2010) AS i;
+ count 
+---------------------------------------------------------------------
+    10
+(1 row)
+
+-- Second TTL delete: scans TTL index encountering 1000 dead + 10 live entries.
+-- With enable_support_dead_index_items=true (set by SetGUCLocally in delete_expired_rows),
+-- this scan marks the 1000 dead entries as LP_DEAD in the index and deletes the 10 live rows.
+BEGIN;
+SET LOCAL blackboxdb.RepeatPurgeIndexesForTTLTask to off;
+CALL blackboxdb_api_internal.delete_expired_rows(1000);
+END;
+SELECT count(*) as rows_after_second_delete FROM blackboxdb_api.collection('ttl_lpdead_db', 'ttlDeadTupleTest');
+ rows_after_second_delete 
+---------------------------------------------------------------------
+                        0
+(1 row)
+
+-- VACUUM again for the 10 newly deleted rows
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP OFF) blackboxdb_data.documents_%s', :dead_tup_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP OFF) blackboxdb_data.documents_20017
+-- KEY ASSERTION: The very first query with enable_support_dead_index_items=on should
+-- already show deadEntriesOrPagesSkipped=1000, proving that delete_expired_rows() marked
+-- the dead entries during its scan. Without the SetGUCLocally in delete_expired_rows,
+-- this first query would show innerScanLoops=1010 (no entries pre-marked).
+SET blackboxdb.forceDisableSeqScan to on;
+SET blackboxdb_rum.enable_support_dead_index_items to on;
+SELECT blackboxdb_distributed_test_helpers.run_explain_and_trim(
+    $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF)
+    SELECT document FROM bson_aggregation_find('ttl_lpdead_db', '{ "find": "ttlDeadTupleTest", "filter": { "ttl": { "$exists": true } } }') $cmd$);
+                                       run_explain_and_trim                                        
+---------------------------------------------------------------------
+ Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=0 loops=1)
+   indexName: ttl_dead_idx
+   indexKey: {"ttl": 1}
+   isMultiKey: false
+   indexBounds: ["ttl": [MinKey, MaxKey]]
+   innerScanLoops: 10 loops
+   deadEntriesOrPagesSkipped: 1000 items
+   scanType: ordered
+   scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 10)]
+   ->  Index Scan using ttl_dead_idx on documents_20017_2000162 collection (actual rows=0 loops=1)
+         Index Cond: (document @>= '{ "ttl" : { "$minKey" : 1 } }'::bson)
+(11 rows)
+
+RESET blackboxdb_rum.enable_support_dead_index_items;
+RESET blackboxdb.forceDisableSeqScan;
+RESET blackboxdb.enableExtendedExplainPlans;
+RESET blackboxdb.enableDeadIndexEntryMarkingByTTLTask;
+SELECT blackboxdb_api.drop_collection('ttl_lpdead_db', 'ttlDeadTupleTest');
+ drop_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+---------------------------------------------------------------------
+-- Group A: enableOrderedIndex equivalency tests with createTTLIndexAsCompositeByDefault=OFF
+-- With GUC OFF, undefined stays Undefined (no TTL default transformation)
+-- Equivalence table (src → target):
+--   True/DefaultTrue  matches  Undefined, True, DefaultTrue
+--   False             matches  False, Undefined
+--   Undefined         matches  False, DefaultTrue, Undefined
+---------------------------------------------------------------------
+-- A1. source=True (explicit), target=True (explicit) => equivalent (same name = noop)
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO off;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_a1", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- Verify A1 index
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM blackboxdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_a1" }') ORDER BY 1;
+                                                                                                                                                                  bson_dollar_unwind                                                                                                                                                                   
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_a1", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "expireAfterSeconds" : { "$numberInt" : "5" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_a1", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+(2 rows)
+
+SELECT (index_spec).index_name, index_spec FROM blackboxdb_api_catalog.collection_indexes ci JOIN blackboxdb_api_catalog.collections c ON c.collection_id = ci.collection_id WHERE c.database_name = 'ttl_default_composite' AND c.collection_name = 'ttlcoll_a1' AND (index_spec).index_expire_after_seconds > 0;
+ index_name |                                                        index_spec                                                         
+---------------------------------------------------------------------
+ ttl_index  | (ttl_index,"{ ""ttl"" : { ""$numberInt"" : ""1"" } }",,,,,1,5,,"{ ""enableOrderedIndex"" : { ""$numberInt"" : ""2"" } }")
+(1 row)
+
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO off;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_a1", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+                                                                                                                           create_indexes_non_concurrently                                                                                                                            
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "note" : "All specified indexes already exist", "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- A2. source=True (explicit), target=False (explicit) => NOT equivalent (different name so it creates)
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO off;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_a1", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": false, "name": "ttl_index_a2", "v" : 1, "expireAfterSeconds": 5}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- A4. source=Undefined (no enableCompositeTerm, GUC OFF), target=False (explicit) => equivalent
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO off;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_a4", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- Verify A4 index (no storageEngine since undefined)
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM blackboxdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_a4" }') ORDER BY 1;
+                                                                                                                                         bson_dollar_unwind                                                                                                                                         
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_a4", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "expireAfterSeconds" : { "$numberInt" : "5" } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_a4", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+(2 rows)
+
+SELECT (index_spec).index_name, index_spec FROM blackboxdb_api_catalog.collection_indexes ci JOIN blackboxdb_api_catalog.collections c ON c.collection_id = ci.collection_id WHERE c.database_name = 'ttl_default_composite' AND c.collection_name = 'ttlcoll_a4' AND (index_spec).index_expire_after_seconds > 0;
+ index_name |                            index_spec                            
+---------------------------------------------------------------------
+ ttl_index  | (ttl_index,"{ ""ttl"" : { ""$numberInt"" : ""1"" } }",,,,,1,5,,)
+(1 row)
+
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO off;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_a4", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": false, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+                                                                                                                           create_indexes_non_concurrently                                                                                                                            
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "note" : "All specified indexes already exist", "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- A5. source=Undefined, target=True (explicit) => NOT default_is_custom_index_option_undefined_equivalent_to_trueivalent (different name so it creates)
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO off;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_a4", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index_a5", "v" : 1, "expireAfterSeconds": 5}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- A6. source=Undefined, target=undefined => default_is_custom_index_option_undefined_equivalent_to_trueivalent
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO off;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_a4", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+                                                                                                                           create_indexes_non_concurrently                                                                                                                            
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "3" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "note" : "All specified indexes already exist", "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- A7. source=DefaultTrue (via TTL GUC ON), then test with GUC ON again => equivalent
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_a7", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- Verify A7 index
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM blackboxdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_a7" }') ORDER BY 1;
+                                                                                                                                                                  bson_dollar_unwind                                                                                                                                                                   
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_a7", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "expireAfterSeconds" : { "$numberInt" : "5" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_a7", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+(2 rows)
+
+SELECT (index_spec).index_name, index_spec FROM blackboxdb_api_catalog.collection_indexes ci JOIN blackboxdb_api_catalog.collections c ON c.collection_id = ci.collection_id WHERE c.database_name = 'ttl_default_composite' AND c.collection_name = 'ttlcoll_a7' AND (index_spec).index_expire_after_seconds > 0;
+ index_name |                                                        index_spec                                                         
+---------------------------------------------------------------------
+ ttl_index  | (ttl_index,"{ ""ttl"" : { ""$numberInt"" : ""1"" } }",,,,,1,5,,"{ ""enableOrderedIndex"" : { ""$numberInt"" : ""1"" } }")
+(1 row)
+
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_a7", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+                                                                                                                           create_indexes_non_concurrently                                                                                                                            
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "note" : "All specified indexes already exist", "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- A8. source=DefaultTrue (via TTL GUC), target=True (explicit) => equivalent
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO off;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_a7", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+                                                                                                                           create_indexes_non_concurrently                                                                                                                            
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "note" : "All specified indexes already exist", "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- A9. source=DefaultTrue (via TTL GUC), target=False (explicit) => NOT equivalent (different name so it creates)
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_a7", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": false, "name": "ttl_index_a9", "v" : 1, "expireAfterSeconds": 5}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+---------------------------------------------------------------------
+-- Group B: enableOrderedIndex equivalency tests with createTTLIndexAsCompositeByDefault=ON
+-- With GUC ON, undefined → DefaultTrue(2) for TTL indexes
+---------------------------------------------------------------------
+-- B1. source=True (explicit), target=True (explicit) => equivalent (same name = noop)
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b1", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- Verify B1 index
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM blackboxdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_b1" }') ORDER BY 1;
+                                                                                                                                                                  bson_dollar_unwind                                                                                                                                                                   
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_b1", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "expireAfterSeconds" : { "$numberInt" : "5" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_b1", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+(2 rows)
+
+SELECT (index_spec).index_name, index_spec FROM blackboxdb_api_catalog.collection_indexes ci JOIN blackboxdb_api_catalog.collections c ON c.collection_id = ci.collection_id WHERE c.database_name = 'ttl_default_composite' AND c.collection_name = 'ttlcoll_b1' AND (index_spec).index_expire_after_seconds > 0;
+ index_name |                                                        index_spec                                                         
+---------------------------------------------------------------------
+ ttl_index  | (ttl_index,"{ ""ttl"" : { ""$numberInt"" : ""1"" } }",,,,,1,5,,"{ ""enableOrderedIndex"" : { ""$numberInt"" : ""2"" } }")
+(1 row)
+
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b1", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+                                                                                                                           create_indexes_non_concurrently                                                                                                                            
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "note" : "All specified indexes already exist", "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- B2. source=True (explicit), target=False (explicit) => NOT equivalent (different name so it creates)
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b1", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": false, "name": "ttl_index_b2", "v" : 1, "expireAfterSeconds": 5}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- B3. source=True (explicit), target=undefined (GUC ON → DefaultTrue) => equivalent
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b1", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+                                                                                                                           create_indexes_non_concurrently                                                                                                                            
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "3" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "note" : "All specified indexes already exist", "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- B4. source=Undefined (explicit false, GUC ON), target=False (explicit) => equivalent
+-- Note: explicit false is not persisted, so source is effectively Undefined in catalog
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b4", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": false, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- Verify B4 index
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM blackboxdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_b4" }') ORDER BY 1;
+                                                                                                                                                                   bson_dollar_unwind                                                                                                                                                                   
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_b4", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "expireAfterSeconds" : { "$numberInt" : "5" }, "storageEngine" : { "enableOrderedIndex" : false } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_b4", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+(2 rows)
+
+SELECT (index_spec).index_name, index_spec FROM blackboxdb_api_catalog.collection_indexes ci JOIN blackboxdb_api_catalog.collections c ON c.collection_id = ci.collection_id WHERE c.database_name = 'ttl_default_composite' AND c.collection_name = 'ttlcoll_b4' AND (index_spec).index_expire_after_seconds > 0;
+ index_name |                                                         index_spec                                                         
+---------------------------------------------------------------------
+ ttl_index  | (ttl_index,"{ ""ttl"" : { ""$numberInt"" : ""1"" } }",,,,,1,5,,"{ ""enableOrderedIndex"" : { ""$numberInt"" : ""-1"" } }")
+(1 row)
+
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b4", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": false, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+                                                                                                                           create_indexes_non_concurrently                                                                                                                            
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "note" : "All specified indexes already exist", "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- B5. source=False (persisted as -1), target=True (explicit) => NOT equivalent (different name so it creates)
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b4", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index_b5", "v" : 1, "expireAfterSeconds": 5}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+ROLLBACK;
+-- B6. source=False (persisted as -1), target=undefined (GUC ON → DefaultTrue) => non-equivalent (different name so it creates)
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b4", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index_ne", "v" : 1, "expireAfterSeconds": 5}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- B7. source=DefaultTrue (via TTL GUC), target=DefaultTrue (via TTL GUC) => equivalent
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b7", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- Verify B7 index
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM blackboxdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_b7" }') ORDER BY 1;
+                                                                                                                                                                  bson_dollar_unwind                                                                                                                                                                   
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_b7", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ttl" : { "$numberInt" : "1" } }, "name" : "ttl_index", "expireAfterSeconds" : { "$numberInt" : "5" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_b7", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+(2 rows)
+
+SELECT (index_spec).index_name, index_spec FROM blackboxdb_api_catalog.collection_indexes ci JOIN blackboxdb_api_catalog.collections c ON c.collection_id = ci.collection_id WHERE c.database_name = 'ttl_default_composite' AND c.collection_name = 'ttlcoll_b7' AND (index_spec).index_expire_after_seconds > 0;
+ index_name |                                                        index_spec                                                         
+---------------------------------------------------------------------
+ ttl_index  | (ttl_index,"{ ""ttl"" : { ""$numberInt"" : ""1"" } }",,,,,1,5,,"{ ""enableOrderedIndex"" : { ""$numberInt"" : ""1"" } }")
+(1 row)
+
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b7", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+                                                                                                                           create_indexes_non_concurrently                                                                                                                            
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "note" : "All specified indexes already exist", "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- B8. source=DefaultTrue (via TTL GUC), target=True (explicit) => equivalent
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b7", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": true, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+                                                                                                                           create_indexes_non_concurrently                                                                                                                            
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "note" : "All specified indexes already exist", "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- B9. source=DefaultTrue (via TTL GUC), target=False (explicit) => NOT equivalent (different name so it creates)
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b7", "indexes": [{"key": {"ttl": 1}, "enableCompositeTerm": false, "name": "ttl_index_b9", "v" : 1, "expireAfterSeconds": 5}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- B10. source=DefaultTrue (via TTL GUC), target=DefaultTrue (TTL GUC overrides other GUC settings) => equivalent
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO on;
+SET LOCAL blackboxdb.defaultUseCompositeOpClass TO off;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_b7", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+                                                                                                                           create_indexes_non_concurrently                                                                                                                            
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "3" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "note" : "All specified indexes already exist", "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+---------------------------------------------------------------------
+-- Group C: Unsupported index types should NOT get composite (DefaultTrue guard)
+-- Verifies that hashed, 2d, 2dsphere, text indexes stay non-composite
+-- even when ShouldUseCompositeOpClassByDefault() returns true
+---------------------------------------------------------------------
+-- C1. Hashed index should not get enableOrderedIndex
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_c1", "indexes": [{"key": {"a": "hashed"}, "name": "hashed_idx"}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM blackboxdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_c1" }') ORDER BY 1;
+                                                                                                               bson_dollar_unwind                                                                                                               
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_c1", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_c1", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "a" : "hashed" }, "name" : "hashed_idx" } }, "ok" : { "$numberDouble" : "1.0" } }
+(2 rows)
+
+-- C2. 2dsphere index should not get enableOrderedIndex
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_c2", "indexes": [{"key": {"loc": "2dsphere"}, "name": "geo_idx"}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM blackboxdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_c2" }') ORDER BY 1;
+                                                                                                                                   bson_dollar_unwind                                                                                                                                   
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_c2", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_c2", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "loc" : "2dsphere" }, "name" : "geo_idx", "2dsphereIndexVersion" : { "$numberInt" : "3" } } }, "ok" : { "$numberDouble" : "1.0" } }
+(2 rows)
+
+-- C3. 2d index should not get enableOrderedIndex
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_c3", "indexes": [{"key": {"loc": "2d"}, "name": "twod_idx"}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM blackboxdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_c3" }') ORDER BY 1;
+                                                                                                               bson_dollar_unwind                                                                                                               
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_c3", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_c3", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "loc" : "2d" }, "name" : "twod_idx" } }, "ok" : { "$numberDouble" : "1.0" } }
+(2 rows)
+
+-- C4. Text index should not get enableOrderedIndex
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_c4", "indexes": [{"key": {"content": "text"}, "name": "text_idx"}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM blackboxdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_c4" }') ORDER BY 1;
+                                                                                                                                                                                              bson_dollar_unwind                                                                                                                                                                                               
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_c4", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_c4", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_fts" : "text", "_ftsx" : { "$numberInt" : "1" } }, "name" : "text_idx", "weights" : { "content" : { "$numberDouble" : "1.0" } }, "textIndexVersion" : { "$numberInt" : "2" }, "language_override" : "language" } }, "ok" : { "$numberDouble" : "1.0" } }
+(2 rows)
+
+-- C5. Compound index with hashed component should not get enableOrderedIndex
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_c5", "indexes": [{"key": {"a": 1, "b": "hashed"}, "name": "compound_hash_idx"}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM blackboxdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_c5" }') ORDER BY 1;
+                                                                                                                            bson_dollar_unwind                                                                                                                             
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_c5", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_c5", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "a" : { "$numberInt" : "1" }, "b" : "hashed" }, "name" : "compound_hash_idx" } }, "ok" : { "$numberDouble" : "1.0" } }
+(2 rows)
+
+-- C6. Regular index on same collection SHOULD get enableOrderedIndex
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_c1", "indexes": [{"key": {"b": 1}, "name": "regular_idx"}]}', true);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM blackboxdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_c1" }') ORDER BY 1;
+                                                                                                                 bson_dollar_unwind                                                                                                                  
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_c1", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_c1", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "b" : { "$numberInt" : "1" } }, "name" : "regular_idx" } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_c1", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "a" : "hashed" }, "name" : "hashed_idx" } }, "ok" : { "$numberDouble" : "1.0" } }
+(3 rows)
+
+-- C7. Explicit enableCompositeTerm:true on hashed should error
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_c7", "indexes": [{"key": {"a": "hashed"}, "enableCompositeTerm": true, "name": "bad_hashed_idx"}]}', true);
+ERROR:  Error in specification { "key" : { "a" : "hashed" }, "enableCompositeTerm" : true, "name" : "bad_hashed_idx" }:enableOrderedIndex is only supported with regular indexes.
+-- C8. Explicit enableCompositeTerm:true on 2dsphere should error
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_c8", "indexes": [{"key": {"loc": "2dsphere"}, "enableCompositeTerm": true, "name": "bad_geo_idx"}]}', true);
+ERROR:  Error in specification { "key" : { "loc" : "2dsphere" }, "enableCompositeTerm" : true, "name" : "bad_geo_idx" }:enableOrderedIndex is only supported with regular indexes.
+---------------------------------------------------------------------
+-- Group E: collMod expireAfterSeconds on composite TTL indexes
+-- Verify collMod doesn't break enableOrderedIndex
+---------------------------------------------------------------------
+-- E1. Create TTL index with DefaultTrue
+BEGIN;
+SET LOCAL blackboxdb.createTTLIndexAsCompositeByDefault TO on;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_e1", "indexes": [{"key": {"ts": 1}, "name": "ts_ttl", "v" : 1, "expireAfterSeconds": 60}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+END;
+-- Verify before collMod
+SELECT (index_spec).index_name, (index_spec).index_expire_after_seconds, index_spec FROM blackboxdb_api_catalog.collection_indexes ci JOIN blackboxdb_api_catalog.collections c ON c.collection_id = ci.collection_id WHERE c.database_name = 'ttl_default_composite' AND c.collection_name = 'ttlcoll_e1' AND (index_spec).index_expire_after_seconds > 0;
+ index_name | index_expire_after_seconds |                                                       index_spec                                                       
+---------------------------------------------------------------------
+ ts_ttl     |                         60 | (ts_ttl,"{ ""ts"" : { ""$numberInt"" : ""1"" } }",,,,,1,60,,"{ ""enableOrderedIndex"" : { ""$numberInt"" : ""1"" } }")
+(1 row)
+
+-- E2. collMod to change expireAfterSeconds — should preserve enableOrderedIndex
+SELECT blackboxdb_api.coll_mod('ttl_default_composite', 'ttlcoll_e1', '{"collMod": "ttlcoll_e1", "index": {"name": "ts_ttl", "expireAfterSeconds": 120}}');
+                                                                     coll_mod                                                                     
+---------------------------------------------------------------------
+ { "ok" : { "$numberInt" : "1" }, "expireAfterSeconds_old" : { "$numberLong" : "60" }, "expireAfterSeconds_new" : { "$numberDouble" : "120.0" } }
+(1 row)
+
+-- Verify after collMod — enableOrderedIndex should still be there
+SELECT (index_spec).index_name, (index_spec).index_expire_after_seconds, index_spec FROM blackboxdb_api_catalog.collection_indexes ci JOIN blackboxdb_api_catalog.collections c ON c.collection_id = ci.collection_id WHERE c.database_name = 'ttl_default_composite' AND c.collection_name = 'ttlcoll_e1' AND (index_spec).index_expire_after_seconds > 0;
+ index_name | index_expire_after_seconds |                                                       index_spec                                                        
+---------------------------------------------------------------------
+ ts_ttl     |                        120 | (ts_ttl,"{ ""ts"" : { ""$numberInt"" : ""1"" } }",,,,,1,120,,"{ ""enableOrderedIndex"" : { ""$numberInt"" : ""1"" } }")
+(1 row)
+
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM blackboxdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_e1" }') ORDER BY 1;
+                                                                                                                                                                 bson_dollar_unwind                                                                                                                                                                  
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_e1", "firstBatch" : { "v" : { "$numberInt" : "1" }, "key" : { "ts" : { "$numberInt" : "1" } }, "name" : "ts_ttl", "expireAfterSeconds" : { "$numberInt" : "120" }, "storageEngine" : { "enableOrderedIndex" : true } } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_e1", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+(2 rows)
+
+---------------------------------------------------------------------
+-- Group F: _id index equivalency (system sets False, should not leak)
+---------------------------------------------------------------------
+-- F1. Creating duplicate _id-like index with different name should give clean error
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_f1", "indexes": [{"key": {"_id": 1.5}, "name": "custom_id_1"}]}', true);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+---------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('ttl_default_composite', '{"createIndexes": "ttlcoll_f1", "indexes": [{"key": {"_id": 1.5}, "name": "custom_id_2"}]}', true);
+ERROR:  Index already exists with a different name: custom_id_1
+-- F2. _id index should never show enableOrderedIndex in listIndexes
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM blackboxdb_api.list_indexes_cursor_first_page('ttl_default_composite','{ "listIndexes": "ttlcoll_f1" }') ORDER BY 1;
+                                                                                                                     bson_dollar_unwind                                                                                                                     
+---------------------------------------------------------------------
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_f1", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberInt" : "1" } }, "name" : "_id_" } }, "ok" : { "$numberDouble" : "1.0" } }
+ { "cursor" : { "id" : { "$numberLong" : "0" }, "ns" : "ttl_default_composite.ttlcoll_f1", "firstBatch" : { "v" : { "$numberInt" : "2" }, "key" : { "_id" : { "$numberDouble" : "1.5" } }, "name" : "custom_id_1" } }, "ok" : { "$numberDouble" : "1.0" } }
+(2 rows)
+

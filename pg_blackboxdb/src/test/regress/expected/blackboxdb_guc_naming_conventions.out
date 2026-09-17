@@ -1,0 +1,235 @@
+-- blackboxdb GUC snake_case naming convention enforcement.
+--
+-- All GUCs registered under the 'blackboxdb.' prefix must be snake_case, i.e. match
+-- '^blackboxdb\.[a-z0-9_]+$' (lowercase letters, digits and underscores; no uppercase,
+-- camelCase or nested dots).
+--
+-- The baseline table below grandfathers GUCs that predate this convention. It is expected
+-- to only shrink over time (never grow):
+--   * A NEW non-conforming GUC makes 'all_snake_case' false and lists the name(s) in
+--     'violations' -- rename the GUC to snake_case.
+--   * A baseline entry whose GUC no longer exists makes 'baseline_is_current' false and
+--     lists the name(s) in 'stale_baseline_entries' -- remove it from the baseline below.
+--
+-- When clean, the output is stable ('t' with empty text columns), so the expected file
+-- does not need routine updates and merge conflicts are minimized.
+CREATE TEMP TABLE blackboxdb_guc_naming_baseline (name text);
+INSERT INTO blackboxdb_guc_naming_baseline (name) VALUES
+    ('blackboxdb.arrayStatisticsMaxSampleCount'),
+    ('blackboxdb.backgroundWorkerJobTimeoutThresholdSec'),
+    ('blackboxdb.batchUpdateLockTimeoutMs'),
+    ('blackboxdb.batchWriteSubTransactionCount'),
+    ('blackboxdb.blockedRolePrefixList'),
+    ('blackboxdb.cleanupCursorFiles'),
+    ('blackboxdb.createTTLIndexAsCompositeByDefault'),
+    ('blackboxdb.currentOpAddSqlCommand'),
+    ('blackboxdb.defaultCursorExpiryTimeLimitSeconds'),
+    ('blackboxdb.defaultCursorFirstPageBatchSize'),
+    ('blackboxdb.defaultTailableCursorMaxAwaitTimeMs'),
+    ('blackboxdb.defaultUniqueIndexKeyhashOverride'),
+    ('blackboxdb.defaultUseCompositeOpClass'),
+    ('blackboxdb.disableExtendedRumExplainPlans'),
+    ('blackboxdb.emitEnableOrderedIndexFalseInResponse'),
+    ('blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters'),
+    ('blackboxdb.enableAddToSetAggregationRewrite'),
+    ('blackboxdb.enableArrayFilterLogicalOperators'),
+    ('blackboxdb.enableBackgroundWorker'),
+    ('blackboxdb.enableBackgroundWorkerInitJobs'),
+    ('blackboxdb.enableBackgroundWorkerJobs'),
+    ('blackboxdb.enableBypassDocumentValidation'),
+    ('blackboxdb.enableCollationWithNewGroupAccumulators'),
+    ('blackboxdb.enableCollationWithNonUniqueOrderedIndexes'),
+    ('blackboxdb.enableCollModUnique'),
+    ('blackboxdb.enableCommutativeDeleteMany'),
+    ('blackboxdb.enableCommutativeUpdateMany'),
+    ('blackboxdb.enableCompactVacuumFull'),
+    ('blackboxdb.enableComparableTerms'),
+    ('blackboxdb.enableCompositeIndexPlanner'),
+    ('blackboxdb.enableCompositeParallelIndexScan'),
+    ('blackboxdb.enableCompositeReducedCorrelatedPrefixTrim'),
+    ('blackboxdb.enableCompositeReducedCorrelatedTermsOnCommonSubPath'),
+    ('blackboxdb.enableCompositeShardDocumentTerms'),
+    ('blackboxdb.enableCompositeUniqueHash'),
+    ('blackboxdb.enableContinuationFastBitmapLookup'),
+    ('blackboxdb.enableCursorsOnAggregationQueryRewrite'),
+    ('blackboxdb.enableDataTableWithoutCreationTime'),
+    ('blackboxdb.enableDeadIndexEntryMarkingByTTLTask'),
+    ('blackboxdb.enableDebugQueryText'),
+    ('blackboxdb.enableDelayedHoldPortal'),
+    ('blackboxdb.enableDeleteOnePlanCacheOptimization'),
+    ('blackboxdb.enableDistinctCustomScan'),
+    ('blackboxdb.enableDistinctIndexPushdown'),
+    ('blackboxdb.enableDistinctScanForGroupFirst'),
+    ('blackboxdb.enableDollarSampleHeapSkipReservoirScan'),
+    ('blackboxdb.enableDollarSampleReservoirScan'),
+    ('blackboxdb.enableDottedValueTextIndexTerms'),
+    ('blackboxdb.enableDuplicateFieldFix'),
+    ('blackboxdb.enableDynamicCursorFastStartupScan'),
+    ('blackboxdb.enableDynamicCursors'),
+    ('blackboxdb.enableDynamicPersistentCursorsWithStats'),
+    ('blackboxdb.enableExplainScanIndexCosts'),
+    ('blackboxdb.enableExplainScanNamespaceName'),
+    ('blackboxdb.enableExtendedExplainPlans'),
+    ('blackboxdb.enableExtendedIndexes'),
+    ('blackboxdb.enableFailureOnParallelIndexArrays'),
+    ('blackboxdb.enableGenerateNonExistsTerm'),
+    ('blackboxdb.enableGroupByCompoundIdIndexPushdown'),
+    ('blackboxdb.enableGroupByDistinctScan'),
+    ('blackboxdb.enableIndexMetadataGlobalTracking'),
+    ('blackboxdb.enableIndexOnlyScanForCoveredAggregateTargets'),
+    ('blackboxdb.enableIndexOnlyScanForFindProject'),
+    ('blackboxdb.enableIndexOnlyScanForRangeMatch'),
+    ('blackboxdb.enableIndexPathKeySummarization'),
+    ('blackboxdb.enableInsertDuplicateInlineHandling'),
+    ('blackboxdb.enableLocalRetryTable'),
+    ('blackboxdb.enableMultiIndexRumJoin'),
+    ('blackboxdb.enableNativeColocation'),
+    ('blackboxdb.enableNewMinMaxAccumulators'),
+    ('blackboxdb.enableNewNamespaceValidation'),
+    ('blackboxdb.enableNewWithExprAccumulators'),
+    ('blackboxdb.enableNonBlockingUniqueIndexBuild'),
+    ('blackboxdb.enableObjectIdFuncExprConversion'),
+    ('blackboxdb.enableOnlyCollectionCacheInvalidateOnCollectionChanges'),
+    ('blackboxdb.EnableOperatorVariablesInLookup'),
+    ('blackboxdb.enableOrderByIdOnCostFunction'),
+    ('blackboxdb.enableOrderByIndexTerm'),
+    ('blackboxdb.enableOrderedCompositeOperatorScan'),
+    ('blackboxdb.enablePartialMatchHasRecheck'),
+    ('blackboxdb.enablePerCollectionPlannerStatistics'),
+    ('blackboxdb.enablePerPathMultiKeySortPushdown'),
+    ('blackboxdb.enablePGPrngCursorId'),
+    ('blackboxdb.enablePlannerStatisticsNewCollections'),
+    ('blackboxdb.enablePreImages'),
+    ('blackboxdb.enablePrepareUnique'),
+    ('blackboxdb.enablePrimaryKeyCursorScan'),
+    ('blackboxdb.enableProjectPushUpBeforeUnwindWithGroup'),
+    ('blackboxdb.enableRbacCompliantSchemas'),
+    ('blackboxdb.enableRegexPrefixIndexBounds'),
+    ('blackboxdb.enableRoleCrud'),
+    ('blackboxdb.enableRolesAdminDBCheck'),
+    ('blackboxdb.enableRumCursorDynamicIndexScans'),
+    ('blackboxdb.enableRumDynamicIndexScansSkipToTid'),
+    ('blackboxdb.enableSampleScanFixOnSharded'),
+    ('blackboxdb.enableSchemaEnforcementForCSFLE'),
+    ('blackboxdb.enableSchemaValidation'),
+    ('blackboxdb.enableSkipCommentFieldOnUpsert'),
+    ('blackboxdb.enableSkipDottedFieldIndexTerms'),
+    ('blackboxdb.enableSortGroupStage'),
+    ('blackboxdb.enableSortPushToAccumulatorWithPrefix'),
+    ('blackboxdb.enableStatementTimeout'),
+    ('blackboxdb.enableStrictAddToSetModifierValidation'),
+    ('blackboxdb.enableSubqueryPushdownForMatch'),
+    ('blackboxdb.enableTailableCursorMaxAwaitTime'),
+    ('blackboxdb.enableTTLBatchObservability'),
+    ('blackboxdb.enableTTLDescSort'),
+    ('blackboxdb.enableTTLJobsOnReadOnly'),
+    ('blackboxdb.enableUniqueReindex'),
+    ('blackboxdb.enableUserCrud'),
+    ('blackboxdb.enableUsernamePasswordConstraints'),
+    ('blackboxdb.enableUsersAdminDBCheck'),
+    ('blackboxdb.enableUsersInfoPrivileges'),
+    ('blackboxdb.enableValueOnlyIndexTerms'),
+    ('blackboxdb.enableVectorCalculateDefaultSearchParam'),
+    ('blackboxdb.enableVectorCompressionHalf'),
+    ('blackboxdb.enableVectorCompressionPQ'),
+    ('blackboxdb.enableVectorHNSWIndex'),
+    ('blackboxdb.enableVectorPreFilter'),
+    ('blackboxdb.enableVectorPreFilterV2'),
+    ('blackboxdb.failOnGroupIdDuplicate'),
+    ('blackboxdb.failOnNonEmptyGroupCountArg'),
+    ('blackboxdb.forceBitmapScanForLookup'),
+    ('blackboxdb.forceCollStatsDataCollection'),
+    ('blackboxdb.forceDisableSeqScan'),
+    ('blackboxdb.forceGroupSubqueryElimination'),
+    ('blackboxdb.forceIndexOnlyScanIfAvailable'),
+    ('blackboxdb.forceIndexTermTruncation'),
+    ('blackboxdb.forceLocalExecutionShardQueries'),
+    ('blackboxdb.forceParallelScanIfAvailable'),
+    ('blackboxdb.forceRunDiagnosticCommandInline'),
+    ('blackboxdb.forceUpdateIndexInline'),
+    ('blackboxdb.forceUseIndexIfAvailable'),
+    ('blackboxdb.forceWildcardReducedTerm'),
+    ('blackboxdb.geo2dsphereSegmentMaxLength'),
+    ('blackboxdb.geo2dsphereSegmentMaxVertices'),
+    ('blackboxdb.indexBuildScheduleInSec'),
+    ('blackboxdb.indexBuildsScheduledOnBgWorker'),
+    ('blackboxdb.isNativeAuthEnabled'),
+    ('blackboxdb.IsPgReadOnlyForDiskFull'),
+    ('blackboxdb.logRelationIndexesOrder'),
+    ('blackboxdb.logTTLProgressActivity'),
+    ('blackboxdb.maxCursorFileCount'),
+    ('blackboxdb.maxCursorIntermediateFileSizeMB'),
+    ('blackboxdb.maxCustomCommandTimeoutLimit'),
+    ('blackboxdb.maxIndexBuildAttempts'),
+    ('blackboxdb.maxIndexesPerCollection'),
+    ('blackboxdb.maxNumActiveUsersIndexBuilds'),
+    ('blackboxdb.maxSchemaValidatorSize'),
+    ('blackboxdb.maxTTLBatchSizeUnorderedIndex'),
+    ('blackboxdb.maxTTLDeleteBatchSize'),
+    ('blackboxdb.maxUserLimit'),
+    ('blackboxdb.maxWildcardIndexKeySize'),
+    ('blackboxdb.maxWriteBatchSize'),
+    ('blackboxdb.removeMatchNamespaceFilters'),
+    ('blackboxdb.repeatPurgeIndexesForTTLTask'),
+    ('blackboxdb.rumFailOnLostPath'),
+    ('blackboxdb.scramDefaultSaltLen'),
+    ('blackboxdb.simulateRecoveryState'),
+    ('blackboxdb.SingleTTLTaskTimeBudget'),
+    ('blackboxdb.skipFailOnCollation'),
+    ('blackboxdb.skipIndexCleanupOnFailure'),
+    ('blackboxdb.skipIndexCleanupOnReindex'),
+    ('blackboxdb.skipRepeatDeleteForUnOrderedIndex'),
+    ('blackboxdb.tdigestCompressionAccuracy'),
+    ('blackboxdb.throwDeadlockOnCRUD'),
+    ('blackboxdb.TTLPurgerLockTimeout'),
+    ('blackboxdb.TTLPurgerStatementTimeout'),
+    ('blackboxdb.TTLSkipCaughtUpIndexes'),
+    ('blackboxdb.TTLTaskMaxRunTimeInMS'),
+    ('blackboxdb.useFileBasedPersistedCursors'),
+    ('blackboxdb.useIndexHintsForTTLTask'),
+    ('blackboxdb.useLocalExecutionShardQueries'),
+    ('blackboxdb.useNewUniqueHashEqualityFunction'),
+    ('blackboxdb.vectorPreFilterIterativeScanMode');
+-- Non-conforming GUCs that are not grandfathered by the baseline.
+SELECT
+    NOT EXISTS (
+        SELECT 1
+        FROM pg_settings s
+        LEFT JOIN blackboxdb_guc_naming_baseline b ON b.name = s.name
+        WHERE s.name ~ '^blackboxdb\.'
+          AND s.name !~ '^blackboxdb\.[a-z0-9_]+$'
+          AND b.name IS NULL
+    ) AS all_snake_case,
+    (
+        SELECT 'GUCs should follow snake casing and not contain nested dots. The following GUCs do not: ' || string_agg(s.name, ', ' ORDER BY s.name)
+        FROM pg_settings s
+        LEFT JOIN blackboxdb_guc_naming_baseline b ON b.name = s.name
+        WHERE s.name ~ '^blackboxdb\.'
+          AND s.name !~ '^blackboxdb\.[a-z0-9_]+$'
+          AND b.name IS NULL
+    ) AS violations;
+ all_snake_case | violations 
+----------------+------------
+ t              | 
+(1 row)
+
+-- Baseline entries whose GUC no longer exists; these must be pruned from the baseline.
+SELECT
+    NOT EXISTS (
+        SELECT 1
+        FROM blackboxdb_guc_naming_baseline b
+        LEFT JOIN pg_settings s ON s.name = b.name
+        WHERE s.name IS NULL
+    ) AS baseline_is_current,
+    (
+        SELECT 'Baseline entries no longer exist as GUCs and must be removed from this test: ' || string_agg(b.name, ', ' ORDER BY b.name)
+        FROM blackboxdb_guc_naming_baseline b
+        LEFT JOIN pg_settings s ON s.name = b.name
+        WHERE s.name IS NULL
+    ) AS stale_baseline_entries;
+ baseline_is_current | stale_baseline_entries 
+---------------------+------------------------
+ t                   | 
+(1 row)
+
+DROP TABLE blackboxdb_guc_naming_baseline;

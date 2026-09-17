@@ -1,0 +1,42 @@
+# Rules to normalize test outputs. Our custom diff tool passes test output
+# of tests through the substitution rules in this file before doing the
+# actual comparison.
+#
+# An example of when this is useful is when an error happens on a different
+# port number, or a different worker shard, or a different placement, etc.
+# because we are running the tests in a different configuration.
+
+
+# Differing names can have differing table column widths
+s/^-[+-]{2,}$/---------------------------------------------------------------------/g
+s/^\s+/ /g
+s/\s+$//g
+s/Memory Usage: [0-9]+kB/Memory Usage: XXXkB/g
+s/Memory: [0-9]+kB/Memory: XXXkB/g
+s/Heap Blocks: exact=[0-9]+/Heap Blocks: exact=XXX/g
+s/process [0-9]+ still waiting for ShareLock on transaction [0-9]+ after [0-9\.]+ ms/process XYZ still waiting on ShareLock on transaction T1 after D1 ms/g
+s/process [0-9]+ acquired ShareLock on transaction [0-9]+ after [0-9\.]+ ms/process XYZ acquired ShareLock on transaction T1 after D1 ms/g
+s/Distributed Subplan \d+/Distributed Subplan DDD/g
+s/Distributed Subplan [0-9]+_[0-9]+/Distributed Subplan X_X/g
+s/read_intermediate_result\('[0-9]+_[0-9]+'::text/read_intermediate_result\('X_X'::text/g
+s/Type oid not supported \d+/Type oid not supported ddd/g
+# Replace the values of the $$NOW time system variable with a constant
+s/\"now\" : \{ \"\$date\" : \{ \"\$numberLong\" : \"[0-9]*\" \} \}/\"now\" : NOW_SYS_VARIABLE/g
+s/\"sn\" : \{ \"\$date\" : \{ \"\$numberLong\" : \"[0-9]*\" \} \}/\"sn\" : NOW_SYS_VARIABLE/g
+# Same as above but for BSON embedded in composite/record literals, where quotes are doubled
+s/""now"" : \{ ""\$date"" : \{ ""\$numberLong"" : ""[0-9]*"" \} \}/""now"" : NOW_SYS_VARIABLE/g
+s/""sn"" : \{ ""\$date"" : \{ ""\$numberLong"" : ""[0-9]*"" \} \}/""sn"" : NOW_SYS_VARIABLE/g
+s/blackboxdb_api_catalog.shard_key_and_document/shard_key_and_document/g
+s/blackboxdb_api_internal.generate_unique_shard_document/generate_unique_shard_document/g
+s/blackboxdb_core.bson/bson/g
+s/TTL job elapsed time: [+-]?[0-9]*\.?[0-9]+([eE][+-]?[0-9]+)?ms,/TTL job elapsed time:<redacted>/g
+s/expiry_cutoff=[0-9]*,/expiry_cutoff=<redacted>/g
+s/coord_binary_combine_agg/coord_combine_agg/g
+s/worker_binary_partial_agg/worker_partial_agg/g
+s/coord_combine_agg\('[0-9]+'/coord_combine_agg\('xxxx'/g
+s/worker_partial_agg\('[0-9]+'/worker_partial_agg\('xxxx'/g
+s/Node: host=localhost port=[0-9]+ dbname=[a-zA-Z]+/Node: host=localhost port=xxx dbname=yyy/g
+s/Vacuum\[index=[0-9]+,vacuumCleanup=/Vacuum\[index=xxx,vacuumCleanup=/g
+# Strip function OIDs (e.g. '12345'::oid) which shift when catalog objects are added/removed
+# Must be after coord_combine_agg/worker_partial_agg rules to avoid conflicting replacements
+s/'[0-9]+'::oid/'xxxx'::oid/g

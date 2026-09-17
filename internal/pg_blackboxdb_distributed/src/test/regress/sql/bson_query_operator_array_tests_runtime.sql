@@ -1,0 +1,15 @@
+
+SET search_path TO blackboxdb_core,blackboxdb_api,blackboxdb_api_catalog,blackboxdb_api_internal;
+SET citus.next_shard_id TO 661000;
+SET blackboxdb.next_collection_id TO 6610;
+SET blackboxdb.next_collection_index_id TO 6610;
+
+
+set enable_seqscan TO on;
+set blackboxdb.forceUseIndexIfAvailable to on;
+set blackboxdb.forceDisableSeqScan to off;
+
+SELECT blackboxdb_api.drop_collection('array_query_db', 'array_operator_tests') IS NOT NULL;
+SELECT blackboxdb_api.create_collection('array_query_db', 'array_operator_tests') IS NOT NULL;
+
+\i sql/bson_query_operator_array_tests_core.sql

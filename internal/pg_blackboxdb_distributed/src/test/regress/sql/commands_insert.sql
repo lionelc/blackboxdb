@@ -1,0 +1,148 @@
+SET search_path TO blackboxdb_core,blackboxdb_api,blackboxdb_api_catalog,blackboxdb_api_internal;
+SET citus.next_shard_id TO 790000;
+SET blackboxdb.next_collection_id TO 7900;
+SET blackboxdb.next_collection_index_id TO 7900;
+
+-- exercise invalid insert syntax errors
+select blackboxdb_api.insert('db', NULL);
+select blackboxdb_api.insert(NULL, '{"insert":"into", "documents":[{"a":1}]}');
+select blackboxdb_api.insert('db', '{"documents":[{"a":1}]}');
+select blackboxdb_api.insert('db', '{"insert":"into"}');
+select blackboxdb_api.insert('db', '{"insert":["into"], "documents":[{"a":1}]}');
+select blackboxdb_api.insert('db', '{"insert":"into", "documents":{"a":1}}');
+select blackboxdb_api.insert('db', '{"insert":"into", "documents":[{"a":1}], "extra":1}');
+select blackboxdb_api.insert('db', '{"insert":"into", "documents":[4]}');
+select blackboxdb_api.insert('db', '{"insert":"into", "documents":[{"a":1}],"ordered":1}');
+
+-- Disallow system.views, system.profile writes
+select blackboxdb_api.insert('db', '{"insert":"system.views", "documents":[{"a":1}],"ordered":true}');
+select blackboxdb_api.insert('db', '{"insert":"system.profile", "documents":[{"a":1}],"ordered":true}');
+
+-- regular single-row insert
+select blackboxdb_api.insert('db', '{"insert":"into", "documents":[{"_id":99,"a":99}]}');
+select document from blackboxdb_api.collection('db','into') where document @@ '{}';
+
+-- Insert into a db with same name and different case and collection being same. Expect to error
+select blackboxdb_api.insert('dB', '{"insert":"into", "documents":[{"_id":99,"a":99}]}');
+
+-- Insert into a db with same name and different case and collection being different. Expect to error
+select blackboxdb_api.insert('dB', '{"insert":"intonew", "documents":[{"_id":99,"a":99}]}');
+
+-- Insert into same db and new collection.
+select blackboxdb_api.insert('db', '{"insert":"intonew1", "documents":[{"_id":99,"a":99}]}');
+
+-- keep the collection, but remove the rows
+select blackboxdb_api.delete('db', '{"delete":"into", "deletes":[{"q":{},"limit":0}]}');
+
+-- single-row insert with retry
+begin;
+select blackboxdb_api.insert('db', '{"insert":"into", "documents":[{"_id":1,"a":1}]}',NULL,'insert-1');
+select blackboxdb_api.insert('db', '{"insert":"into", "documents":[{"_id":1,"a":1}]}',NULL,'insert-1');
+select document from blackboxdb_api.collection('db','into') where document @@ '{}';
+rollback;
+
+-- regular multi-row insert
+begin;
+select blackboxdb_api.insert('db', '{"insert":"into", "documents":[{"_id":1,"a":1},{"_id":2,"a":2}]}');
+select document from blackboxdb_api.collection('db','into') where document @@ '{}' order by document-> '_id';
+rollback;
+
+-- multi-row insert with first document key starts with $
+begin;
+select blackboxdb_api.insert('db', '{"insert":"into", "documents":[{"_id":1,"$a":1},{"_id":2,"a":2}]}');
+select document from blackboxdb_api.collection('db','into') where document @@ '{}' order by document-> '_id';
+rollback;
+
+-- multi-row insert with first document key starts with $ and ordered:false
+begin;
+select blackboxdb_api.insert('db', '{"insert":"into", "documents":[{"_id":1,"$a":1},{"_id":2,"a":2}],"ordered":false}');
+select document from blackboxdb_api.collection('db','into') where document @@ '{}' order by document-> '_id';
+rollback;
+
+-- shard the collection by _id
+select blackboxdb_api.shard_collection('db', 'into', '{"_id":"hashed"}', false);
+
+-- single-row insert with retry
+begin;
+select blackboxdb_api.insert('db', '{"insert":"into", "documents":[{"_id":1,"a":1}]}',NULL,'insert-2');
+select blackboxdb_api.insert('db', '{"insert":"into", "documents":[{"_id":1,"a":1}]}',NULL,'insert-2');
+select document from blackboxdb_api.collection('db','into') where document @@ '{}';
+rollback;
+
+-- single-row insert with retry and auto-generated _id
+begin;
+select blackboxdb_api.insert('db', '{"insert":"into", "documents":[{"a":1}]}',NULL,'insert-2');
+select blackboxdb_api.insert('db', '{"insert":"into", "documents":[{"a":1}]}',NULL,'insert-2');
+select count(*) from blackboxdb_api.collection('db','into') where document @@ '{}';
+rollback;
+
+-- multi-row insert into different shards
+begin;
+select blackboxdb_api.insert('db', '{"insert":"into", "documents":[{"_id":1,"a":1},{"_id":2,"a":2}]}');
+select document from blackboxdb_api.collection('db','into') where document @@ '{}' order by document-> '_id';
+select document from blackboxdb_api.collection('db','into') where document @@ '{"a":1}' order by document-> '_id';
+select document from blackboxdb_api.collection('db','into') where document @@ '{"a":2}' order by document-> '_id';
+rollback;
+
+-- insert with documents in special section
+begin;
+SELECT blackboxdb_api.insert('db', '{"insert":"into"}', '{ "": [{"_id":1,"a":1},{"_id":2,"a":2}] }');
+select document from blackboxdb_api.collection('db','into') where document @@ '{}' order by document-> '_id';
+rollback;
+
+-- insert with both docs specified.
+begin;
+select blackboxdb_api.insert('db', '{"insert":"into", "documents":[{"_id":1,"a":1},{"_id":2,"a":2}]}', '{ "": [{"_id":1,"a":1},{"_id":2,"a":2}] }');
+rollback;
+
+-- insert with id undefined skips
+begin;
+select blackboxdb_api.insert('db', '{"insert":"into", "documents":[{"_id":{ "$undefined": true } }]}');
+rollback;
+
+begin;
+select blackboxdb_api.insert('db', '{"insert":"into"}', '{ "": [ {"_id":{ "$undefined": true } } ]}');
+rollback;
+
+
+-- single-row insert into non-existent collection when auto-creation is disabled
+begin;
+set local blackboxdb.enable_create_collection_on_insert to off;
+select blackboxdb_api.insert('db', '{"insert":"notexists", "documents":[{"_id":1,"a":1}]}');
+rollback;
+
+-- insert with invalid database
+begin;
+select blackboxdb_api.insert('Invalid Database Name', '{"insert":"notexists", "documents":[{"_id":1,"a":1}]}');
+rollback;
+
+begin;
+select blackboxdb_api.insert('db', '{"insert":"system.othercoll", "documents":[{"_id":1,"a":1}]}');
+rollback;
+
+
+begin;
+select blackboxdb_api.insert('db', '{"insert":"random$name", "documents":[{"_id":1,"a":1}]}');
+rollback;
+
+begin;
+select blackboxdb_api.insert('db', '{"insert":".randomname", "documents":[{"_id":1,"a":1}]}');
+rollback;
+
+begin;
+select blackboxdb_api.insert('verylongdatabasenameformeasuringthelimitsofdatabasenamesinmongodb', '{"insert":"coll", "documents":[{"_id":1,"a":1}]}');
+rollback;
+
+begin;
+select blackboxdb_api.insert('verylongdatabasenameformeasuringlimitsofdatabasenamesinmongodb', '{"insert":"verylongcollectionnameformeasuringthelimitsofcollectionnamesinmongodb", "documents":[{"_id":1,"a":1}]}');
+rollback;
+
+select blackboxdb_api.drop_collection('db','into');
+select blackboxdb_api.drop_collection('db','intonew1');
+
+-- Server contract - never attempt to deduplicate inserting documents, the clients may deduplicate them based on the handling of JSON/BSON data type.
+select blackboxdb_api.insert_one('db', 'duplicatetests', '{"_id": "duplicate1", "a": {"$numberInt": "1"}}');
+select blackboxdb_api.insert_one('db', 'duplicatetests', '{"_id": "duplicate2", "a": {"$numberInt": "1"}, "a": {"$numberInt": "2"}}');
+select blackboxdb_api.insert_one('db', 'duplicatetests', '{"_id": "duplicate3", "a": {"$numberInt": "1"}, "b": {"$numberInt": "2"}}');
+-- storage size of duplicate2 and duplicate3 should be same.
+SELECT document FROM blackboxdb_api_catalog.bson_aggregation_pipeline('db', '{ "aggregate": "duplicatetests", "pipeline": [{"$project": { "storageSize": {"$bsonSize": "$$ROOT"} } }] }');

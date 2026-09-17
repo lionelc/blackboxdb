@@ -1,0 +1,640 @@
+SET search_path TO blackboxdb_api,blackboxdb_core,blackboxdb_api_catalog;
+SET blackboxdb.next_collection_id TO 200;
+SET blackboxdb.next_collection_index_id TO 200;
+set blackboxdb.defaultUseCompositeOpClass to on;
+CREATE SCHEMA index_selectivity_tests;
+CREATE FUNCTION index_selectivity_tests.validate_explain_has_minimal_bounds(query text) RETURNS void
+ LANGUAGE plpgsql AS $$
+DECLARE
+    v_explain_row text;
+    v_has_index_bounds boolean := false;
+BEGIN
+    FOR v_explain_row IN EXECUTE p_query
+    LOOP
+        IF v_explain_row LIKE '%indexBounds:%' THEN
+            v_has_index_bounds := true;
+            IF LOWER(v_explain_row) LIKE '%minkey%' OR LOWER(v_explain_row) LIKE '%maxkey%' THEN
+                RAISE EXCEPTION 'Pushed to an index which has a path that is not fully constrained %', v_explain_row;
+            END IF;
+        END IF;
+    END LOOP;
+    IF NOT v_has_index_bounds THEN
+        RAISE EXCEPTION 'Expected index bounds not found in EXPLAIN output for query: %', p_query;
+    END IF;
+END;
+$$;
+CREATE FUNCTION index_selectivity_tests.transform_explain_index_bounds(p_query text) RETURNS SETOF TEXT
+ LANGUAGE plpgsql AS $$
+DECLARE
+    v_explain_row text;
+BEGIN
+    FOR v_explain_row IN EXECUTE p_query
+    LOOP
+        IF regexp_like(v_explain_row, '.+startup cost=[0-9\.]+, total cost=[0-9\.]+, selectivity=[0-9\.e-]+, correlation=[0-9\.]+, estimated index pages loaded=[0-9\.]+%, estimated total index entries=5000, boundary selectivity=[0-9\.e-]+, num boundaries=[0-9]+, estimated data pages loaded=[0-9\.]+%') THEN
+            RETURN NEXT regexp_replace(v_explain_row, '=[0-9\.e-]+', '=xx.xx', 'g');
+        ELSE
+            RETURN NEXT v_explain_row;
+        END IF;
+    END LOOP;
+END;
+$$;
+-- create 2 single path indexes
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently(
+    'comp_idb', '{ "createIndexes": "comp_index_selectivity", "indexes": [ { "name": "comp_index1", "key": { "path1": 1 } } ] }', TRUE);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently(
+    'comp_idb', '{ "createIndexes": "comp_index_selectivity", "indexes": [ { "name": "comp_index2", "key": { "path2": 1 } } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- insert 5000 rows
+SELECT COUNT(blackboxdb_api.insert_one('comp_idb', 'comp_index_selectivity', bson_build_document('_id'::text, i, 'path1'::text, i, 'path2'::text, i))) FROM generate_series(1, 5000) i;
+ count 
+-------
+  5000
+(1 row)
+
+ANALYZE blackboxdb_data.documents_201;
+-- now do a query on both fields, where the selectivity of 1 is far less than the other
+-- this should pick index for path1 (but doesn't)
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_idb', '{ "find": "comp_index_selectivity", "filter": { "path1": 5, "path2": { "$gt": 500 } }}');
+                                                                  QUERY PLAN                                                                   
+-----------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on documents_201 collection
+   Recheck Cond: ((document @> '{ "path2" : { "$numberInt" : "500" } }'::bson) AND (document @= '{ "path1" : { "$numberInt" : "5" } }'::bson))
+   ->  BitmapAnd
+         ->  Bitmap Index Scan on comp_index2
+               Index Cond: (document @> '{ "path2" : { "$numberInt" : "500" } }'::bson)
+         ->  Bitmap Index Scan on comp_index1
+               Index Cond: (document @= '{ "path1" : { "$numberInt" : "5" } }'::bson)
+(7 rows)
+
+-- enable the composite planner GUC and now things should work (since documents are smaller than 1 KB)
+set blackboxdb.enableCompositeIndexPlanner to on;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_idb', '{ "find": "comp_index_selectivity", "filter": { "path1": 5, "path2": { "$gt": 500 } }}');
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
+ Index Scan using comp_index1 on documents_201 collection
+   Index Cond: (document @= '{ "path1" : { "$numberInt" : "5" } }'::bson)
+   Filter: (document @> '{ "path2" : { "$numberInt" : "500" } }'::bson)
+(3 rows)
+
+set blackboxdb.enableExplainScanIndexCosts to on;
+set blackboxdb.enableExtendedExplainPlans to on;
+SELECT index_selectivity_tests.transform_explain_index_bounds($cmd$ 
+    EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_idb', '{ "find": "comp_index_selectivity", "filter": { "path1": 5, "path2": { "$gt": 500 } }}');
+$cmd$);
+                                                                                                               transform_explain_index_bounds                                                                                                                
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (BlackboxDBApiExplainQueryScan)
+   namespaceName: comp_idb.comp_index_selectivity
+   indexName: comp_index1
+   indexKey: {"path1": 1}
+   isMultiKey: false
+   indexBounds: ["path1": [5, 5]]
+   comp_index1: (startup cost=xx.xx, total cost=xx.xx, selectivity=xx.xx, correlation=xx.xx, estimated index pages loaded=xx.xx%, estimated total index entries=xx.xx, boundary selectivity=xx.xx, num boundaries=xx.xx, estimated data pages loaded=xx.xx%)
+   _id_: (startup cost=xx.xx, total cost=xx.xx, selectivity=xx.xx, correlation=xx.xx, estimated index pages loaded=xx.xx%, estimated total index entries=xx.xx, boundary selectivity=xx.xx, num boundaries=xx.xx, estimated data pages loaded=xx.xx%)
+   comp_index2: (startup cost=xx.xx, total cost=xx.xx, selectivity=xx.xx, correlation=xx.xx, estimated index pages loaded=xx.xx%, estimated total index entries=xx.xx, boundary selectivity=xx.xx, num boundaries=xx.xx, estimated data pages loaded=xx.xx%)
+   ->  Index Scan using comp_index1 on documents_201 collection
+         Index Cond: (document @= '{ "path1" : { "$numberInt" : "5" } }'::bson)
+         Filter: (document @> '{ "path2" : { "$numberInt" : "500" } }'::bson)
+(12 rows)
+
+reset blackboxdb.enableExplainScanIndexCosts;
+reset blackboxdb.enableExtendedExplainPlans;
+-- repeat this setup but with documents > 1 KB
+TRUNCATE blackboxdb_data.documents_201;
+SELECT COUNT(blackboxdb_api.insert_one('comp_idb', 'comp_index_selectivity',
+    bson_build_document('_id'::text, i, 'path1'::text, i, 'path2'::text, i, 'large_text_field'::text, repeat('aaaaaaa', 500) ))) FROM generate_series(1, 5000) i;
+ count 
+-------
+  5000
+(1 row)
+
+ANALYZE blackboxdb_data.documents_201;
+set blackboxdb.enableCompositeIndexPlanner to off;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_idb', '{ "find": "comp_index_selectivity", "filter": { "path1": 5, "path2": { "$gt": 500 } }}');
+                                                                  QUERY PLAN                                                                   
+-----------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on documents_201 collection
+   Recheck Cond: ((document @> '{ "path2" : { "$numberInt" : "500" } }'::bson) AND (document @= '{ "path1" : { "$numberInt" : "5" } }'::bson))
+   ->  BitmapAnd
+         ->  Bitmap Index Scan on comp_index2
+               Index Cond: (document @> '{ "path2" : { "$numberInt" : "500" } }'::bson)
+         ->  Bitmap Index Scan on comp_index1
+               Index Cond: (document @= '{ "path1" : { "$numberInt" : "5" } }'::bson)
+(7 rows)
+
+set blackboxdb.enableCompositeIndexPlanner to on;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_idb', '{ "find": "comp_index_selectivity", "filter": { "path1": 5, "path2": { "$gt": 500 } }}');
+                                   QUERY PLAN                                   
+--------------------------------------------------------------------------------
+ Bitmap Heap Scan on documents_201 collection
+   Recheck Cond: (document @= '{ "path1" : { "$numberInt" : "5" } }'::bson)
+   Filter: (document @> '{ "path2" : { "$numberInt" : "500" } }'::bson)
+   ->  Bitmap Index Scan on comp_index1
+         Index Cond: (document @= '{ "path1" : { "$numberInt" : "5" } }'::bson)
+(5 rows)
+
+set blackboxdb.enableExtendedExplainPlans to on;
+set blackboxdb.enableCompositeIndexPlanner to off;
+-- Create indexes on the two $or branch fields and a compound sort index
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently(
+    'comp_idb', '{ "createIndexes": "generic_selectiviity_coll", "indexes": [ { "name": "idx_refs_val", "key": { "refs.val": 1 } } ] }', TRUE);
+NOTICE:  creating collection
+                                                                                                   create_indexes_non_concurrently                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : true, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently(
+    'comp_idb', '{ "createIndexes": "generic_selectiviity_coll", "indexes": [ { "name": "idx_code_id", "key": { "code": 1, "_id": 1 } } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Insert docs > 1KB with padding. Many docs match the $in filter to make BitmapOr + Sort expensive.
+SELECT COUNT(blackboxdb_api.insert_one('comp_idb', 'generic_selectiviity_coll',
+    bson_build_document(
+        '_id'::text, i,
+        'code'::text, CASE WHEN i % 5 = 0 THEN 'xK9mTargetValue' ELSE 'otherVal' || i END,
+        'refs'::text, ('[ { "val": "' || CASE WHEN i % 7 = 0 THEN 'xK9mTargetValue' ELSE 'otherRef' || i END || '" } ]')::bson,
+        'removed'::text, CASE WHEN i % 100 = 0 THEN true ELSE false END,
+        'padding'::text, repeat('z', 2000)
+    ))) FROM generate_series(1, 10000) i;
+ count 
+-------
+ 10000
+(1 row)
+
+ANALYZE blackboxdb_data.documents_202;
+-- Test: $or with $in on separate indexes should not bitmap OR with composite planner
+-- This reproduces a scenario where a query with $or, $ne, sort and limit picks a
+-- bitmap OR plan unless enableCompositeIndexPlanner is set, where the composite planner
+-- adjusts cost estimates on large documents to prefer the ordered index scan.
+-- Without composite planner: uses Bitmap OR (suboptimal for large docs with sort + limit)
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_idb',
+    '{ "find": "generic_selectiviity_coll", "filter": { "$or": [ { "code": { "$in": [ "xK9mTargetValue" ] } }, { "refs.val": { "$in": [ "xK9mTargetValue" ] } } ], "removed": { "$ne": true } }, "sort": { "code": 1 }, "limit": 50 }');
+                                                                                         QUERY PLAN                                                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+         namespaceName: comp_idb.generic_selectiviity_coll
+         indexName: idx_code_id
+         indexKey: {"code": 1,"_id": 1}
+         isMultiKey: false
+         indexBounds: ["code": (MinKey, MaxKey), "_id": (MinKey, MaxKey)]
+         ->  Index Scan using idx_code_id on documents_202 collection
+               Index Cond: (document @<> '{ "code" : { "orderByScan" : { "$numberInt" : "1" } } }'::bson)
+               Order By: (document |-<> '{ "code" : { "$numberInt" : "1" } }'::bson)
+               Filter: ((document @!= '{ "removed" : true }'::bson) AND ((document @= '{ "code" : "xK9mTargetValue" }'::bson) OR (document @= '{ "refs.val" : "xK9mTargetValue" }'::bson)))
+(11 rows)
+
+-- With composite planner: should use Bitmap OR
+set blackboxdb.enableCompositeIndexPlanner to on;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_idb',
+    '{ "find": "generic_selectiviity_coll", "filter": { "$or": [ { "code": { "$in": [ "xK9mTargetValue" ] } }, { "refs.val": { "$in": [ "xK9mTargetValue" ] } } ], "removed": { "$ne": true } }, "sort": { "code": 1 }, "limit": 50 }');
+                                                                      QUERY PLAN                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   ->  Sort
+         Sort Key: (bson_orderby(document, '{ "code" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+         ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+               namespaceName: comp_idb.generic_selectiviity_coll
+               indexName: idx_code_id
+               indexKey: {"code": 1,"_id": 1}
+               isMultiKey: false
+               indexBounds: ["code": ["xK9mTargetValue", "xK9mTargetValue"], "_id": (MinKey, MaxKey)]
+               indexName: idx_refs_val
+               indexKey: {"refs.val": 1}
+               isMultiKey: false
+               indexBounds: ["refs.val": ["xK9mTargetValue", "xK9mTargetValue"]]
+               ->  Bitmap Heap Scan on documents_202 collection
+                     Recheck Cond: ((document @= '{ "code" : "xK9mTargetValue" }'::bson) OR (document @= '{ "refs.val" : "xK9mTargetValue" }'::bson))
+                     Filter: (document @!= '{ "removed" : true }'::bson)
+                     ->  BitmapOr
+                           ->  Bitmap Index Scan on idx_code_id
+                                 Index Cond: (document @= '{ "code" : "xK9mTargetValue" }'::bson)
+                           ->  Bitmap Index Scan on idx_refs_val
+                                 Index Cond: (document @= '{ "refs.val" : "xK9mTargetValue" }'::bson)
+(21 rows)
+
+-- Test: composite planner picks optimal compound index for multi-field filter with sort + limit
+-- Without composite planner, the planner picks a suboptimal index whose leading key is more
+-- selective but does not align with the sort. With composite planner, it picks the compound
+-- index whose key order aligns with the sort, avoiding an expensive sort step on large docs.
+set blackboxdb.enableCompositeIndexPlanner to off;
+-- Drop indexes from previous test and truncate
+CALL blackboxdb_api.drop_indexes('comp_idb', '{ "dropIndexes": "generic_selectiviity_coll", "index": ["idx_refs_val", "idx_code_id"] }');
+                          retval                          
+----------------------------------------------------------
+ { "ok" : true, "nIndexesWas" : { "$numberLong" : "3" } }
+(1 row)
+
+TRUNCATE blackboxdb_data.documents_202;
+-- Create three compound indexes
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently(
+    'comp_idb', '{ "createIndexes": "generic_selectiviity_coll", "indexes": [ { "name": "idx_flag_groupId_ownerId", "key": { "flag": 1, "groupId": 1, "_id.ownerId": 1 } } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently(
+    'comp_idb', '{ "createIndexes": "generic_selectiviity_coll", "indexes": [ { "name": "idx_flag_ownerGroupId_ownerId", "key": { "flag": 1, "_id.ownerGroupId": 1, "_id.ownerId": 1 } } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently(
+    'comp_idb', '{ "createIndexes": "generic_selectiviity_coll", "indexes": [ { "name": "idx_ownerId_groupId_state_flag_id", "key": { "_id.ownerId": 1, "groupId": 1, "state": 1, "flag": 1, "_id": 1 } } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "3" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Insert 5000 docs > 1KB with compound _id
+SELECT COUNT(blackboxdb_api.insert_one('comp_idb', 'generic_selectiviity_coll',
+    ('{ "_id": { "ownerId": "owner-' || (i % 10)::text || '", "ownerGroupId": "ownerGroup-' || (i % 50)::text || '", "seq": ' || i::text ||
+     ' }, "flag": ' || CASE WHEN i % 50 = 0 THEN 'true' ELSE 'false' END ||
+     ', "groupId": "group-' || (i % 200)::text ||
+     '", "state": "active", "padding": "' || repeat('z', 1100) || '" }')::bson
+    )) FROM generate_series(1, 5000) i;
+ count 
+-------
+  5000
+(1 row)
+
+ANALYZE blackboxdb_data.documents_202;
+-- Without composite planner: picks suboptimal idx_ownerId_groupId_state_flag_id
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_idb',
+    '{ "find": "generic_selectiviity_coll", "filter": { "flag": false, "_id.ownerId": { "$in": ["owner-3"] }, "groupId": { "$in": ["group-0", "group-1", "group-2", "group-3", "group-4", "group-5", "group-6", "group-7", "group-8", "group-9", "group-10" ] } }, "sort": { "groupId": 1, "_id": 1 }, "limit": 500 }');
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   ->  Sort
+         Sort Key: (bson_orderby(document, '{ "groupId" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+         ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+               namespaceName: comp_idb.generic_selectiviity_coll
+               indexName: idx_ownerId_groupId_state_flag_id
+               indexKey: {"_id.ownerId": 1,"groupId": 1,"state": 1,"flag": 1,"_id": 1}
+               isMultiKey: false
+               indexBounds: ["_id.ownerId": ["owner-3", "owner-3"], "groupId": ["group-0", "group-0"], "state": (MinKey, MaxKey), "flag": [false, false], "_id": (MinKey, MaxKey)], ["_id.ownerId": ["owner-3", "owner-3"], "groupId": ["group-1", "group-1"], "state": (MinKey, MaxKey), "flag": [false, false], "_id": (MinKey, MaxKey)], ["_id.ownerId": ["owner-3", "owner-3"], "groupId": ["group-2", "group-2"], "state": (MinKey, MaxKey), "flag": [false, false], "_id": (MinKey, MaxKey)], ["_id.ownerId": ["owner-3", "owner-3"], "groupId": ["group-3", "group-3"], "state": (MinKey, MaxKey), "flag": [false, false], "_id": (MinKey, MaxKey)], ["_id.ownerId": ["owner-3", "owner-3"], "groupId": ["group-4", "group-4"], "state": (MinKey, MaxKey), "flag": [false, false], "_id": (MinKey, MaxKey)], ["_id.ownerId": ["owner-3", "owner-3"], "groupId": ["group-5", "group-5"], "state": (MinKey, MaxKey), "flag": [false, false], "_id": (MinKey, MaxKey)], ["_id.ownerId": ["owner-3", "owner-3"], "groupId": ["group-6", "group-6"], "state": (MinKey, MaxKey), "flag": [false, false], "_id": (MinKey, MaxKey)], ["_id.ownerId": ["owner-3", "owner-3"], "groupId": ["group-7", "group-7"], "state": (MinKey, MaxKey), "flag": [false, false], "_id": (MinKey, MaxKey)], ["_id.ownerId": ["owner-3", "owner-3"], "groupId": ["group-8", "group-8"], "state": (MinKey, MaxKey), "flag": [false, false], "_id": (MinKey, MaxKey)], ["_id.ownerId": ["owner-3", "owner-3"], "groupId": ["group-9", "group-9"], "state": (MinKey, MaxKey), "flag": [false, false], "_id": (MinKey, MaxKey)], ["_id.ownerId": ["owner-3", "owner-3"], "groupId": ["group-10", "group-10"], "state": (MinKey, MaxKey), "flag": [false, false], "_id": (MinKey, MaxKey)]
+               ->  Index Scan using "idx_ownerId_groupId_state_flag_id" on documents_202 collection
+                     Index Cond: ((document @= '{ "flag" : false }'::bson) AND (document @= '{ "_id.ownerId" : "owner-3" }'::bson) AND (document @*= '{ "groupId" : [ "group-0", "group-1", "group-2", "group-3", "group-4", "group-5", "group-6", "group-7", "group-8", "group-9", "group-10" ] }'::bson))
+                     Order By: (document |-<> '{ "groupId" : { "$numberInt" : "1" } }'::bson)
+(12 rows)
+
+-- With composite planner: picks optimal idx_flag_groupId_ownerId
+set blackboxdb.enableCompositeIndexPlanner to on;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_idb',
+    '{ "find": "generic_selectiviity_coll", "filter": { "flag": false, "_id.ownerId": { "$in": ["owner-3"] }, "groupId": { "$in": ["group-0", "group-1", "group-2", "group-3", "group-4", "group-5", "group-6", "group-7", "group-8", "group-9", "group-10" ] } }, "sort": { "groupId": 1, "_id": 1 }, "limit": 500 }');
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   ->  Sort
+         Sort Key: (bson_orderby(document, '{ "groupId" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+         ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+               namespaceName: comp_idb.generic_selectiviity_coll
+               indexName: idx_flag_groupId_ownerId
+               indexKey: {"flag": 1,"groupId": 1,"_id.ownerId": 1}
+               isMultiKey: false
+               indexBounds: ["flag": [false, false], "groupId": ["group-0", "group-0"], "_id.ownerId": ["owner-3", "owner-3"]], ["flag": [false, false], "groupId": ["group-1", "group-1"], "_id.ownerId": ["owner-3", "owner-3"]], ["flag": [false, false], "groupId": ["group-2", "group-2"], "_id.ownerId": ["owner-3", "owner-3"]], ["flag": [false, false], "groupId": ["group-3", "group-3"], "_id.ownerId": ["owner-3", "owner-3"]], ["flag": [false, false], "groupId": ["group-4", "group-4"], "_id.ownerId": ["owner-3", "owner-3"]], ["flag": [false, false], "groupId": ["group-5", "group-5"], "_id.ownerId": ["owner-3", "owner-3"]], ["flag": [false, false], "groupId": ["group-6", "group-6"], "_id.ownerId": ["owner-3", "owner-3"]], ["flag": [false, false], "groupId": ["group-7", "group-7"], "_id.ownerId": ["owner-3", "owner-3"]], ["flag": [false, false], "groupId": ["group-8", "group-8"], "_id.ownerId": ["owner-3", "owner-3"]], ["flag": [false, false], "groupId": ["group-9", "group-9"], "_id.ownerId": ["owner-3", "owner-3"]], ["flag": [false, false], "groupId": ["group-10", "group-10"], "_id.ownerId": ["owner-3", "owner-3"]]
+               ->  Bitmap Heap Scan on documents_202 collection
+                     Recheck Cond: ((document @= '{ "flag" : false }'::bson) AND (document @= '{ "_id.ownerId" : "owner-3" }'::bson) AND (document @*= '{ "groupId" : [ "group-0", "group-1", "group-2", "group-3", "group-4", "group-5", "group-6", "group-7", "group-8", "group-9", "group-10" ] }'::bson))
+                     ->  Bitmap Index Scan on "idx_flag_groupId_ownerId"
+                           Index Cond: ((document @= '{ "flag" : false }'::bson) AND (document @= '{ "_id.ownerId" : "owner-3" }'::bson) AND (document @*= '{ "groupId" : [ "group-0", "group-1", "group-2", "group-3", "group-4", "group-5", "group-6", "group-7", "group-8", "group-9", "group-10" ] }'::bson))
+(13 rows)
+
+-- Test: composite planner picks correct index with $elemMatch on nested arrays
+-- Reproduces https://anonymous.example/blackboxdb/issues/405
+-- Without composite planner, a shorter prefix-matching index is picked instead of the
+-- longer compound index that covers the $elemMatch fields.
+set blackboxdb.enableCompositeIndexPlanner to off;
+set enable_seqscan to on;
+set enable_bitmapscan to on;
+-- Drop indexes from previous test and truncate
+CALL blackboxdb_api.drop_indexes('comp_idb', '{ "dropIndexes": "generic_selectiviity_coll", "index": ["idx_flag_groupId_ownerId", "idx_flag_ownerGroupId_ownerId", "idx_ownerId_groupId_state_flag_id"] }');
+                          retval                          
+----------------------------------------------------------
+ { "ok" : true, "nIndexesWas" : { "$numberLong" : "4" } }
+(1 row)
+
+TRUNCATE blackboxdb_data.documents_202;
+-- Create three compound indexes with enableOrderedIndex
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently(
+    'comp_idb', '{ "createIndexes": "generic_selectiviity_coll", "indexes": [ { "key": { "tenantId": 1, "active": 1, "status": 1, "steps.assignees.userId": 1, "steps.assignees.status": 1, "steps.assignees.active": 1, "label": 1 }, "name": "idx_tenant_active_status_userId_assigneeStatus_assigneeActive_label", "enableOrderedIndex": true } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently(
+    'comp_idb', '{ "createIndexes": "generic_selectiviity_coll", "indexes": [ { "key": { "tenantId": 1, "steps.assignees.userId": 1, "steps.assignees.status": 1, "steps.assignees.active": 1, "steps.assignees.updatedAt": -1 }, "name": "idx_tenant_userId_assigneeStatus_assigneeActive_updatedAt", "enableOrderedIndex": true } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "2" }, "numIndexesAfter" : { "$numberInt" : "3" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently(
+    'comp_idb', '{ "createIndexes": "generic_selectiviity_coll", "indexes": [ { "key": { "tenantId": 1, "active": 1, "status": 1, "createdAt": -1 }, "name": "idx_tenant_active_status_createdAt", "enableOrderedIndex": true } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "3" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Insert 1000 docs with nested array structure
+SELECT COUNT(blackboxdb_api.insert_one('comp_idb', 'generic_selectiviity_coll',
+    FORMAT('{ "_id": %s, "tenantId": "tenant-abc-001", "active": 1, "status": 1, "steps": [ { "assignees": [ { "status": 4, "active": 1, "userId": "user-xyz-001", "updatedAt": "20260101120000" } ] } ], "label": "entry-name" }', i)::bson
+    )) FROM generate_series(1, 1000) i;
+ count 
+-------
+  1000
+(1 row)
+
+ANALYZE blackboxdb_data.documents_202;
+-- Without composite planner: picks idx_tenant_active_status_createdAt (suboptimal, only matches 3-field prefix)
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_idb',
+    '{ "find": "generic_selectiviity_coll", "filter": { "tenantId": { "$in": ["tenant-abc-001", "tenant-abc-002"] }, "active": 1, "status": { "$in": [1, 2, 3] }, "steps.assignees": { "$elemMatch": { "userId": "user-xyz-001", "status": 4, "active": 1 } } } }');
+                                                                                                                                                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                    
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (BlackboxDBApiExplainQueryScan)
+   namespaceName: comp_idb.generic_selectiviity_coll
+   indexName: idx_tenant_active_status_createdAt
+   indexKey: {"tenantId": 1,"active": 1,"status": 1,"createdAt": -1}
+   isMultiKey: false
+   indexBounds: ["tenantId": ["tenant-abc-001", "tenant-abc-001"], "active": [1, 1], "status": [1, 1], "createdAt": DESC(MinKey, MaxKey)], ["tenantId": ["tenant-abc-002", "tenant-abc-002"], "active": [1, 1], "status": [1, 1], "createdAt": DESC(MinKey, MaxKey)], ["tenantId": ["tenant-abc-001", "tenant-abc-001"], "active": [1, 1], "status": [2, 2], "createdAt": DESC(MinKey, MaxKey)], ["tenantId": ["tenant-abc-002", "tenant-abc-002"], "active": [1, 1], "status": [2, 2], "createdAt": DESC(MinKey, MaxKey)], ["tenantId": ["tenant-abc-001", "tenant-abc-001"], "active": [1, 1], "status": [3, 3], "createdAt": DESC(MinKey, MaxKey)], ["tenantId": ["tenant-abc-002", "tenant-abc-002"], "active": [1, 1], "status": [3, 3], "createdAt": DESC(MinKey, MaxKey)]
+   ->  Index Scan using "idx_tenant_active_status_createdAt" on documents_202 collection
+         Index Cond: ((document @*= '{ "tenantId" : [ "tenant-abc-001", "tenant-abc-002" ] }'::bson) AND (document @= '{ "active" : { "$numberInt" : "1" } }'::bson) AND (document @*= '{ "status" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }'::bson))
+         Filter: (document @#? '{ "steps.assignees" : { "userId" : "user-xyz-001", "status" : { "$numberInt" : "4" }, "active" : { "$numberInt" : "1" } } }'::bson)
+(9 rows)
+
+-- With composite planner: picks a better index that covers more query fields
+set blackboxdb.enableCompositeIndexPlanner to on;
+set enable_seqscan to off;
+set enable_bitmapscan to off;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_idb',
+    '{ "find": "generic_selectiviity_coll", "filter": { "tenantId": { "$in": ["tenant-abc-001", "tenant-abc-002"] }, "active": 1, "status": { "$in": [1, 2, 3] }, "steps.assignees": { "$elemMatch": { "userId": "user-xyz-001", "status": 4, "active": 1 } } } }');
+                                                                                                                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                                                                                                                    
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (BlackboxDBApiExplainQueryScan)
+   namespaceName: comp_idb.generic_selectiviity_coll
+   indexName: idx_tenant_userId_assigneeStatus_assigneeActive_updatedAt
+   indexKey: {"tenantId": 1,"steps.assignees.userId": 1,"steps.assignees.status": 1,"steps.assignees.active": 1,"steps.assignees.updatedAt": -1}
+   isMultiKey: true
+   hasCorrelatedTerms: true
+   indexBounds: ["tenantId": ["tenant-abc-001", "tenant-abc-001"], "steps.assignees.userId": ["user-xyz-001", "user-xyz-001"], "steps.assignees.status": (MinKey, MaxKey), "steps.assignees.active": (MinKey, MaxKey), "steps.assignees.updatedAt": DESC(MinKey, MaxKey)], ["tenantId": ["tenant-abc-002", "tenant-abc-002"], "steps.assignees.userId": ["user-xyz-001", "user-xyz-001"], "steps.assignees.status": (MinKey, MaxKey), "steps.assignees.active": (MinKey, MaxKey), "steps.assignees.updatedAt": DESC(MinKey, MaxKey)]
+   ->  Index Scan using "idx_tenant_userId_assigneeStatus_assigneeActive_updatedAt" on documents_202 collection
+         Index Cond: ((document @*= '{ "tenantId" : [ "tenant-abc-001", "tenant-abc-002" ] }'::bson) AND (document @<> '{ "steps.assignees.userId" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "user-xyz-001", "isTopLevel" : false } ] } }'::bson) AND (document @<> '{ "steps.assignees.status" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "4" }, "isTopLevel" : false } ] } }'::bson) AND (document @<> '{ "steps.assignees.active" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : { "$numberInt" : "1" }, "isTopLevel" : false } ] } }'::bson))
+         Filter: ((document @= '{ "active" : { "$numberInt" : "1" } }'::bson) AND (document @*= '{ "status" : [ { "$numberInt" : "1" }, { "$numberInt" : "2" }, { "$numberInt" : "3" } ] }'::bson) AND (document @#? '{ "steps.assignees" : { "userId" : "user-xyz-001", "status" : { "$numberInt" : "4" }, "active" : { "$numberInt" : "1" } } }'::bson))
+(10 rows)
+
+-- Reset before next section
+set enable_seqscan to on;
+set enable_bitmapscan to on;
+set blackboxdb.enableCompositeIndexPlanner to off;
+--------------------------------------------------------------------------------
+-- Test: Per-collection planner statistics using btree selectivity functions
+-- Validates that with per-collection stats enabled, the planner uses accurate
+-- selectivity estimates (eqsel/scalargtsel/etc.) instead of the generic
+-- restriction selectivity which clamps at 0.0001. This prevents false positive
+-- BitmapAnd plans when a highly selective index exists.
+--------------------------------------------------------------------------------
+SET blackboxdb.enablePerCollectionPlannerStatistics TO on;
+SET blackboxdb.enablePlannerStatisticsNewCollections TO on;
+SELECT blackboxdb_api.create_collection('comp_idb', 'btree_selectivity');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+-- Create indexes on a highly selective field (guid) and a low-selectivity field (category)
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('comp_idb', '{ "createIndexes": "btree_selectivity", "indexes": [ { "key": { "guid": 1 }, "name": "guid_1" }, { "key": { "category": 1 }, "name": "category_1" }, { "key": { "score": 1 }, "name": "score_1" } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "4" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- Insert 50000 rows: unique guids, ~10% category="rare", ~90% category="common"
+-- Documents > 1KB to ensure index scans are preferred over seq scan
+-- At 50K rows: true guid selectivity = 2/50002 ~ 0.00004
+-- Without fix: clamped to 0.0001 (2.5x overestimate → BitmapAnd becomes "cheap")
+-- With fix: uses eqsel giving accurate estimate → Index Scan preferred
+SELECT COUNT(blackboxdb_api.insert_one('comp_idb', 'btree_selectivity',
+    bson_build_document('_id'::text, i, 'guid'::text, ('guid-' || lpad(i::text, 8, '0')), 'category'::text, 'common'::text, 'score'::text, i, 'padding'::text, repeat('x', 1200))))
+FROM generate_series(1, 45000) i;
+ count 
+-------
+ 45000
+(1 row)
+
+SELECT COUNT(blackboxdb_api.insert_one('comp_idb', 'btree_selectivity',
+    bson_build_document('_id'::text, i, 'guid'::text, ('guid-' || lpad(i::text, 8, '0')), 'category'::text, 'rare'::text, 'score'::text, i, 'padding'::text, repeat('x', 1200))))
+FROM generate_series(45001, 50000) i;
+ count 
+-------
+  5000
+(1 row)
+
+-- Insert 2 target rows with known guid and category="rare"
+SELECT blackboxdb_api.insert_one('comp_idb', 'btree_selectivity',
+    '{ "_id": 50001, "guid": "target-guid-00000001", "category": "rare", "score": 5000, "padding": "target1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('comp_idb', 'btree_selectivity',
+    '{ "_id": 50002, "guid": "target-guid-00000001", "category": "rare", "score": 5001, "padding": "target2xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+ANALYZE blackboxdb_data.documents_203;
+SET enable_seqscan TO off;
+-- Test: Without per-collection stats, both guid and category get generic selectivity
+-- (LowSelectivity = 0.01). The planner incorrectly combines both indexes via BitmapAnd
+-- because it overestimates the number of matching rows for each index.
+SET blackboxdb.enablePerCollectionPlannerStatistics TO off;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_idb',
+    '{ "find": "btree_selectivity", "filter": { "$and": [ {"guid": "target-guid-00000001"}, {"category": "rare"} ] } }');
+                                                             QUERY PLAN                                                              
+-------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (BlackboxDBApiExplainQueryScan)
+   namespaceName: comp_idb.btree_selectivity
+   indexName: category_1
+   indexKey: {"category": 1}
+   isMultiKey: false
+   indexBounds: ["category": ["rare", "rare"]]
+   indexName: guid_1
+   indexKey: {"guid": 1}
+   isMultiKey: false
+   indexBounds: ["guid": ["target-guid-00000001", "target-guid-00000001"]]
+   ->  Bitmap Heap Scan on documents_203 collection
+         Recheck Cond: ((document @= '{ "category" : "rare" }'::bson) AND (document @= '{ "guid" : "target-guid-00000001" }'::bson))
+         ->  BitmapAnd
+               ->  Bitmap Index Scan on category_1
+                     Index Cond: (document @= '{ "category" : "rare" }'::bson)
+               ->  Bitmap Index Scan on guid_1
+                     Index Cond: (document @= '{ "guid" : "target-guid-00000001" }'::bson)
+(17 rows)
+
+-- Test: With per-collection stats enabled, eqsel returns accurate selectivity for guid
+-- (2/50002 ~ 0.00004) which is lower than category (5000/50002 ~ 0.1).
+-- The accurate selectivity avoids BitmapAnd and uses guid_1 directly.
+-- Disable bitmap scan for deterministic plan output (IndexScan vs BitmapHeapScan
+-- is marginal at this data size; the key point is BitmapAnd is avoided above).
+SET enable_bitmapscan TO off;
+SET blackboxdb.enablePerCollectionPlannerStatistics TO on;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_idb',
+    '{ "find": "btree_selectivity", "filter": { "$and": [ {"guid": "target-guid-00000001"}, {"category": "rare"} ] } }');
+                                  QUERY PLAN                                   
+-------------------------------------------------------------------------------
+ Custom Scan (BlackboxDBApiExplainQueryScan)
+   namespaceName: comp_idb.btree_selectivity
+   indexName: guid_1
+   indexKey: {"guid": 1}
+   isMultiKey: false
+   indexBounds: ["guid": ["target-guid-00000001", "target-guid-00000001"]]
+   ->  Index Scan using guid_1 on documents_203 collection
+         Index Cond: (document @= '{ "guid" : "target-guid-00000001" }'::bson)
+         Filter: (document @= '{ "category" : "rare" }'::bson)
+(9 rows)
+
+-- Test: Range query on score with guid uses scalar selectivity functions
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('comp_idb',
+    '{ "find": "btree_selectivity", "filter": { "$and": [ {"guid": "target-guid-00000001"}, {"score": {"$gte": 4000, "$lte": 6000}} ] } }');
+                                                                     QUERY PLAN                                                                      
+-----------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (BlackboxDBApiExplainQueryScan)
+   namespaceName: comp_idb.btree_selectivity
+   indexName: guid_1
+   indexKey: {"guid": 1}
+   isMultiKey: false
+   indexBounds: ["guid": ["target-guid-00000001", "target-guid-00000001"]]
+   ->  Index Scan using guid_1 on documents_203 collection
+         Index Cond: (document @= '{ "guid" : "target-guid-00000001" }'::bson)
+         Filter: ((document @>= '{ "score" : { "$numberInt" : "4000" } }'::bson) AND (document @<= '{ "score" : { "$numberInt" : "6000" } }'::bson))
+(9 rows)
+
+-- Test: Verify query returns correct results
+SELECT document FROM bson_aggregation_find('comp_idb',
+    '{ "find": "btree_selectivity", "filter": { "$and": [ {"guid": "target-guid-00000001"}, {"category": "rare"} ] } }');
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             document                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "50001" }, "guid" : "target-guid-00000001", "category" : "rare", "score" : { "$numberInt" : "5000" }, "padding" : "target1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
+ { "_id" : { "$numberInt" : "50002" }, "guid" : "target-guid-00000001", "category" : "rare", "score" : { "$numberInt" : "5001" }, "padding" : "target2xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
+(2 rows)
+
+-- Cleanup: drop the collection to free resources
+SELECT blackboxdb_api.drop_collection('comp_idb', 'btree_selectivity');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+-- ============================================================================
+-- Root cause: GetDollarExistsSelectivity scenario
+-- ============================================================================
+SET blackboxdb.enablePerCollectionPlannerStatistics = on;
+SET blackboxdb.enablePlannerStatisticsNewCollections = on;
+-- Create a collection with a sparse field (some docs have "b", some don't)
+SELECT blackboxdb_api.insert_one('comp_idb', 'exists_sel', '{ "_id": 1, "a": 1 }');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('comp_idb', 'exists_sel', '{ "_id": 2, "a": 2, "b": 1 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('comp_idb', 'exists_sel', '{ "_id": 3, "a": 3 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('comp_idb', 'exists_sel', '{ "_id": 4, "a": 4, "b": 2 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('comp_idb', 'exists_sel', '{ "_id": 5, "a": 5 }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Create compound index (generates extended statistics when GUCs are on)
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently(
+    'comp_idb',
+    '{ "createIndexes": "exists_sel", "indexes": [{ "key": { "a": 1, "b": 1 }, "name": "idx_exists_sel" }] }',
+    true
+);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+\d blackboxdb_data.documents_204
+           Table "blackboxdb_data.documents_204"
+     Column      |  Type  | Collation | Nullable | Default 
+-----------------+--------+-----------+----------+---------
+ shard_key_value | bigint |           | not null | 
+ object_id       | bson   |           | not null | 
+ document        | bson   |           | not null | 
+Indexes:
+    "collection_pk_204" PRIMARY KEY, btree (shard_key_value, object_id)
+    "documents_rum_index_218" blackboxdb_extended_rum (document blackboxdb_extended_rum_catalog.bson_extended_rum_composite_path_ops (pathspec='[ "a", "b" ]', tl='2691'))
+Check constraints:
+    "shard_key_value_check" CHECK (shard_key_value = '204'::bigint)
+Statistics objects:
+    "blackboxdb_data.documents_rum_index_218_stats" ON blackboxdb_api_internal.bson_stats_project(document, 'a'::text), blackboxdb_api_internal.bson_stats_project(document, 'b'::text) FROM blackboxdb_data.documents_204
+
+-- Force stats collection
+ANALYZE blackboxdb_data.documents_204;
+-- $exists: true on field "a" with stats - exercises GetDollarExistsSelectivity
+SELECT document from blackboxdb_api_catalog.bson_aggregation_find('comp_idb', '{ "find": "exists_sel", "filter": { "a": { "$exists": true } } }');
+                                            document                                            
+------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "a" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "2" }, "a" : { "$numberInt" : "2" }, "b" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "3" }, "a" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "4" }, "a" : { "$numberInt" : "4" }, "b" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "5" }, "a" : { "$numberInt" : "5" } }
+(5 rows)
+
+-- $exists: false on field "a" with stats
+SELECT document from blackboxdb_api_catalog.bson_aggregation_find('comp_idb', '{ "find": "exists_sel", "filter": { "a": { "$exists": false } } }');
+ document 
+----------
+(0 rows)
+
+-- Cleanup
+SELECT blackboxdb_api.drop_collection('comp_idb', 'exists_sel');
+ drop_collection 
+-----------------
+ t
+(1 row)
+
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+RESET blackboxdb.enablePerCollectionPlannerStatistics;
+RESET blackboxdb.enablePlannerStatisticsNewCollections;
+RESET blackboxdb.enableCompositeIndexPlanner;

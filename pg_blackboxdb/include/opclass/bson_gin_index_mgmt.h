@@ -1,0 +1,298 @@
+/*-------------------------------------------------------------------------
+ * Copyright (c) Anonymous.  All rights reserved.
+ *
+ * include/opclass/bson_gin_index_mgmt.h
+ *
+ * Common declarations of the bson index management methods.
+ *
+ *-------------------------------------------------------------------------
+ */
+
+#ifndef BSON_GIN_INDEX_MGMT_H
+#define BSON_GIN_INDEX_MGMT_H
+
+#include "opclass/bson_gin_common.h"
+#include "access/reloptions.h"
+#include "nodes/primnodes.h"
+
+/*
+ * Tri-state multi-key status of an index path. Unknown means the multi-key state
+ * is not tracked/known (callers must treat the path conservatively as multi-key);
+ * HasArrays / HasNoArrays are the known states.
+ */
+typedef enum IndexMultiKeyStatus
+{
+	IndexMultiKeyStatus_Unknown = 0,
+
+	IndexMultiKeyStatus_HasArrays = 1,
+
+	IndexMultiKeyStatus_HasNoArrays = 2
+} IndexMultiKeyStatus;
+
+/*
+ * Enum identifying the kind of index based on the options.
+ */
+typedef enum IndexOptionsType
+{
+	/* This is an index of a single path - wildcard or not */
+	IndexOptionsType_SinglePath,
+
+	/* This is a wildcard index with multiple path projections */
+	IndexOptionsType_Wildcard,
+
+	/* This is a hash index on a single path */
+	IndexOptionsType_Hashed,
+
+	/* This is the unique shard_key hash index */
+	IndexOptionsType_UniqueShardKey,
+
+	/* This is a text index on a single path */
+	IndexOptionsType_Text,
+
+	/* This is a 2d index on a single path */
+	IndexOptionsType_2d,
+
+	/* This is a 2dsphere index on a path */
+	IndexOptionsType_2dsphere,
+
+	/* This is a composite index on a path */
+	IndexOptionsType_Composite,
+
+	/* The options for the unique shard path opclass */
+	IndexOptionsType_UniqueShardPath,
+} IndexOptionsType;
+
+
+/*
+ * Versioning for indexes when making breaking changes to index layout/terms.
+ */
+typedef enum IndexOptionsVersion
+{
+	/* The default value (version that got started with) */
+	IndexOptionsVersion_V0 = 0,
+
+	/* Version that includes term path prefix elision for single path indexes & index term truncation */
+	IndexOptionsVersion_V1 = 1,
+} IndexOptionsVersion;
+
+
+/*
+ * Base struct for all options used in the GIN index.
+ * Note - all option classes must have the same layout.
+ */
+typedef struct
+{
+	int32 vl_len_;              /* varlena header (do not touch directly!) */
+	IndexOptionsType type;      /* This must be the first field */
+	IndexOptionsVersion version;
+	int intOption_deprecated;   /* This is a deprecated field for int type fields */
+	int32_t indexTermTruncateLimit; /* this must be the next field in all index options */
+	uint32_t wildcardIndexTruncatedPathLimit;
+	int collation;
+} BsonGinIndexOptionsBase;
+
+/*
+ * This is the serialized post-processed structure that holds the indexing options
+ * for single path indexes (both wildcard and non-wildcard)
+ * This handles indexes of the form { "$**": 1 }, { "a.b.$**" : 1 }
+ * { "a.b" : 1 }, { "a": 1 } etc.
+ */
+typedef struct
+{
+	BsonGinIndexOptionsBase base;
+	bool isWildcard;
+	bool generateNotFoundTerm;
+	bool useReducedWildcardTerms;
+	int path;
+} BsonGinSinglePathOptions;
+
+/*
+ * This is the serialized post-processed structure that holds the indexing options
+ * for wildcard projection path indexes
+ * This handles indexes of the form
+ * { "$**": 1, { "wildcardProjection": { "a.b": 1, "d": 1 } } }
+ * { "$**": 1, { "wildcardProjection": { "a.b": 0, "_id": 1 } } }
+ * Holds information on whether it's an inclusion/exclusion index and the set of paths
+ * to be considered for indexing.
+ */
+typedef struct
+{
+	BsonGinIndexOptionsBase base;
+	bool isExclusion;
+	bool includeId;
+	int pathSpec;
+} BsonGinWildcardProjectionPathOptions;
+
+/*
+ * This is the serialized post-processed structure that holds the indexing options
+ * for hashed indexes
+ * This handles indexes of the form { "a": "hashed" }, { "a.b" : "hashed" }
+ */
+typedef struct
+{
+	BsonGinIndexOptionsBase base;
+	int path;
+} BsonGinHashOptions;
+
+
+/*
+ * This is the serialized post-processed structure that holds the indexing options
+ * for single path exclusion hash indexes.
+ */
+typedef struct
+{
+	BsonGinIndexOptionsBase base;
+	int path;
+} BsonGinExclusionHashOptions;
+
+
+typedef struct
+{
+	BsonGinIndexOptionsBase base;
+	bool enableCompositeHashGeneration;
+} BsonShardPathExclusionOptions;
+
+/*
+ * This is the serialized post-processed structure that holds the indexing options
+ * for single path text indexes (both wildcard and non-wildcard)
+ * This handles indexes of the form { "$**": "text" },
+ * { "a.b" : "text" }, { "a": "text" } etc.
+ */
+typedef struct
+{
+	BsonGinIndexOptionsBase base;
+	bool isWildcard;
+	bool enableDottedTerms;
+	int defaultLanguage;
+	int weights;
+	int languageOverride;
+} BsonGinTextPathOptions;
+
+
+/*
+ * This is the serialized post-processed structure that holds the indexing options
+ * for single path 2d indexes.
+ *
+ * This handles indexes of the form { "a": "2d" }, { "a.b" : "2d" }
+ */
+typedef struct
+{
+	BsonGinIndexOptionsBase base;
+	int path;
+	double maxBound;
+	double minBound;
+} Bson2dGeometryPathOptions;
+
+/*
+ * This is the serialized post-processed structure that holds the indexing options
+ * for single path 2dsphere indexes.
+ */
+typedef struct
+{
+	BsonGinIndexOptionsBase base;
+	int path;
+} Bson2dGeographyPathOptions;
+
+typedef struct
+{
+	BsonGinIndexOptionsBase base;
+
+	/* Offset into the string containing
+	 * the composite path spec.
+	 */
+	int compositePathSpec;
+
+	/*
+	 * The path index containing a wildcard
+	 * path (or -1 if there isn't).
+	 */
+	int wildcardPathIndex;
+
+	/* Whether or not to emit a reduced termset
+	 * for correlated documents in arrays for composite
+	 * indexes.
+	 */
+	bool enableCompositeReducedCorrelatedTerms;
+
+	/* Whether or not to track per path multi-key terms*/
+	bool enableMetadataBasedTracking;
+} BsonGinCompositePathOptions;
+
+bool ValidateIndexForQualifierElement(bytea *indexOptions,
+									  pgbsonelement *queryelement,
+									  const char *queryCollation,
+									  BsonIndexStrategy strategy);
+bool ValidateIndexForQualifierValue(bytea *indexOptions, Datum queryValue,
+									BsonIndexStrategy
+									strategy);
+bool ValidateIndexForQualifierPathForEquality(bytea *indexOptions, const
+											  StringView *queryPath,
+											  BsonIndexStrategy strat);
+
+Size FillSinglePathSpec(const char *prefix, void *buffer);
+Size FillCollationSpec(const char *collation, void *buffer);
+void ValidateSinglePathSpec(const char *prefix);
+void ValidateCollationSpec(const char *collationOption);
+Size FillDeprecatedStringSpec(const char *value, void *ptr);
+
+struct PathKey;
+struct Expr;
+struct Const;
+typedef struct SortIndexInputDetails
+{
+	Oid funcOid;
+	const char *sortPath;
+	struct Expr *sortVar;
+	struct Expr *sortDatum;
+	struct PathKey *sortPathKey;
+	struct Const *collationConst;
+} SortIndexInputDetails;
+
+
+struct IndexPath;
+bool CompositeIndexSupportsIndexOnlyScan(const struct IndexPath *indexPath);
+
+int32_t GetCompositeOpClassColumnNumber(const char *currentPath, void *contextOptions,
+										int8_t *sortDirection);
+
+int32_t GetCompositeOpClassPathCount(void *contextOptions);
+const char * GetCompositeFirstIndexPath(void *contextOptions);
+const char * GetCompositeFirstIndexPathAndSortOrder(void *contextOptions,
+													int8_t *sortOrder);
+const char * GetFirstPathFromIndexOptionsIfApplicable(bytea *indexOptions,
+													  bool *isWildcardIndex);
+bool PathHasArrayIndexElements(const StringView *path);
+bool SubPathHasArrayIndexElements(const StringView *path, StringView subPath);
+
+struct PlannerInfo;
+bool TraverseIndexPathForCompositeIndex(struct IndexPath *indexPath, struct
+										PlannerInfo *root,
+										bool *canSupportIndexOnlyScan);
+List * ExtractBoundaryQualsForOrderedIndexPath(struct IndexPath *indexPath,
+											   int *num_sa_scans);
+OpExpr * CreateFullScanOpExpr(Expr *documentExpr, const char *sourcePath, uint32_t
+							  sourcePathLength, int32_t orderByScanDirection);
+
+/* Helper macro to retrieve a length prefixed value in the index options */
+#define Get_Index_Path_Option(options, field, result, resultFieldLength) \
+	const char *pathDefinition = GET_STRING_RELOPTION(options, field); \
+	if (pathDefinition == NULL) { resultFieldLength = 0; result = NULL; } \
+	else { memcpy(&resultFieldLength, pathDefinition, sizeof(uint32_t)); result = \
+			   pathDefinition + sizeof(uint32_t); }
+
+
+#define Get_Index_Path_Option_Length(options, field, resultFieldLength) \
+	const char *pathDefinition = GET_STRING_RELOPTION(options, field); \
+	if (pathDefinition == NULL) { resultFieldLength = 0; } \
+	else { memcpy(&resultFieldLength, pathDefinition, sizeof(uint32_t)); }
+
+/* Macro to retrieve the collation string, if any, value from the index options */
+#define Get_Index_Collation_Option(options, field, result, resultFieldLength) \
+	const char *collationDefinition = GET_STRING_RELOPTION(options, field); \
+	if (collationDefinition == NULL) { resultFieldLength = 0; result = NULL; } \
+	else { \
+		memcpy(&resultFieldLength, collationDefinition, sizeof(uint32_t)); \
+		result = resultFieldLength > 0 ? collationDefinition + sizeof(uint32_t) : NULL; \
+	}
+
+#endif

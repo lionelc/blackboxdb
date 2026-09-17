@@ -1,0 +1,478 @@
+/*-------------------------------------------------------------------------
+ * Copyright (c) Anonymous.  All rights reserved.
+ *
+ * src/configs/feature_flag_configs.c
+ *
+ * Initialization of GUCs that change behavior that will only be used
+ * in tests.
+ *-------------------------------------------------------------------------
+ */
+
+#include <postgres.h>
+#include <miscadmin.h>
+#include <utils/guc.h>
+#include <limits.h>
+
+#include "metadata/metadata_guc.h"
+#include "configs/config_initialization.h"
+#include "commands/commands_common.h"
+
+#define DEFAULT_NEXT_COLLECTION_ID NEXT_COLLECTION_ID_UNSET
+int NextCollectionId = DEFAULT_NEXT_COLLECTION_ID;
+
+#define DEFAULT_NEXT_COLLECTION_INDEX_ID NEXT_COLLECTION_INDEX_ID_UNSET
+int NextCollectionIndexId = DEFAULT_NEXT_COLLECTION_INDEX_ID;
+
+#define DEFAULT_SIMULATE_RECOVERY_STATE false
+bool SimulateRecoveryState = DEFAULT_SIMULATE_RECOVERY_STATE;
+
+#define DEFAULT_ENABLE_GENERATE_NON_EXISTS_TERM true
+bool EnableGenerateNonExistsTerm = DEFAULT_ENABLE_GENERATE_NON_EXISTS_TERM;
+
+#define DEFAULT_INDEX_TRUNCATION_LIMIT_OVERRIDE INT_MAX
+int IndexTruncationLimitOverride = DEFAULT_INDEX_TRUNCATION_LIMIT_OVERRIDE;
+
+#define DEFAULT_UNIQUE_INDEX_KEYHASH_OVERIDE 0
+int DefaultUniqueIndexKeyhashOverride = DEFAULT_UNIQUE_INDEX_KEYHASH_OVERIDE;
+
+#define DEFAULT_USE_LOCAL_EXECUTION_SHARD_QUERIES true
+bool UseLocalExecutionShardQueries = DEFAULT_USE_LOCAL_EXECUTION_SHARD_QUERIES;
+
+#define DEFAULT_FORCE_LOCAL_EXECUTION_SHARD_QUERIES false
+bool ForceLocalExecutionShardQueries = DEFAULT_FORCE_LOCAL_EXECUTION_SHARD_QUERIES;
+
+#define DEFAULT_FORCE_INDEX_TERM_TRUNCATION false
+bool ForceIndexTermTruncation = DEFAULT_FORCE_INDEX_TERM_TRUNCATION;
+
+#define DEFAULT_MAX_WORKER_CURSOR_SIZE BSON_MAX_ALLOWED_SIZE
+int32_t MaxWorkerCursorSize = DEFAULT_MAX_WORKER_CURSOR_SIZE;
+
+#define DEFAULT_ENABLE_NATIVE_COLOCATION true
+bool EnableNativeColocation = DEFAULT_ENABLE_NATIVE_COLOCATION;
+
+#define DEFAULT_MAX_ALLOWED_DOCS_IN_DENSIFY 500000
+extern int32 PEC_InternalQueryMaxAllowedDensifyDocs;
+
+#define DEFAULT_FORCE_WILDCARD_REDUCED_TERM false
+bool ForceWildcardReducedTerm = DEFAULT_FORCE_WILDCARD_REDUCED_TERM;
+
+extern int32 PEC_InternalDocumentSourceDensifyMaxMemoryBytes;
+
+#define DEFAULT_FORCE_DISABLE_SEQ_SCAN false
+bool ForceDisableSeqScan = DEFAULT_FORCE_DISABLE_SEQ_SCAN;
+
+#define DEFAULT_CURRENTOP_ADD_SQL_COMMAND false
+bool CurrentOpAddSqlCommand = DEFAULT_CURRENTOP_ADD_SQL_COMMAND;
+
+#define DEFAULT_LOG_RELATION_INDEXES_ORDER false
+bool EnableLogRelationIndexesOrder = DEFAULT_LOG_RELATION_INDEXES_ORDER;
+
+#define DEFAULT_ENABLE_LARGE_UNIQUE_INDEX_KEYS true
+bool DefaultEnableLargeUniqueIndexKeys = DEFAULT_ENABLE_LARGE_UNIQUE_INDEX_KEYS;
+
+#define DEFAULT_ENABLE_DEBUG_QUERY_TEXT false
+bool EnableDebugQueryText = DEFAULT_ENABLE_DEBUG_QUERY_TEXT;
+
+#define DEFAULT_ENABLE_MULTI_INDEX_RUM_JOIN false
+bool EnableMultiIndexRumJoin = DEFAULT_ENABLE_MULTI_INDEX_RUM_JOIN;
+
+#define DEFAULT_FORCE_UPDATE_INDEX_INLINE false
+bool ForceUpdateIndexInline = DEFAULT_FORCE_UPDATE_INDEX_INLINE;
+
+#define DEFAULT_FORCE_RUN_DIAGNOSTIC_COMMAND_INLINE false
+bool ForceRunDiagnosticCommandInline = DEFAULT_FORCE_RUN_DIAGNOSTIC_COMMAND_INLINE;
+
+#define DEFAULT_FORCE_INDEX_ONLY_SCAN_IF_AVAILABLE false
+bool ForceIndexOnlyScanIfAvailable = DEFAULT_FORCE_INDEX_ONLY_SCAN_IF_AVAILABLE;
+
+#define DEFAULT_FORCE_PARALLEL_SCAN_IF_AVAILABLE false
+bool ForceParallelScanIfAvailable = DEFAULT_FORCE_PARALLEL_SCAN_IF_AVAILABLE;
+
+#define DEFAULT_ENABLE_RBAC_COMPLIANT_SCHEMAS false
+bool EnableRbacCompliantSchemas = DEFAULT_ENABLE_RBAC_COMPLIANT_SCHEMAS;
+
+#define DEFAULT_DISABLE_EXTENDED_RUM_EXPLAIN_PLANS false
+bool DisableExtendedRumExplainPlans = DEFAULT_DISABLE_EXTENDED_RUM_EXPLAIN_PLANS;
+
+/* Left behind for compat testing of older tables */
+#define DEFAULT_ENABLE_DATA_TABLES_WITHOUT_CREATION_TIME true
+bool EnableDataTableWithoutCreationTime =
+	DEFAULT_ENABLE_DATA_TABLES_WITHOUT_CREATION_TIME;
+
+#define DEFAULT_RUM_FAIL_ON_LOST_PATH false
+bool RumFailOnLostPath = DEFAULT_RUM_FAIL_ON_LOST_PATH;
+
+#define DEFAULT_FORCE_COLL_STATS_DATA_COLLECTION false
+bool ForceCollStatsDataCollection = DEFAULT_FORCE_COLL_STATS_DATA_COLLECTION;
+
+/* On by default; can be turned off in tests to exercise the non-live-tuples count path */
+#define DEFAULT_USE_PG_STATS_LIVE_TUPLES_FOR_COUNT true
+bool UsePgStatsLiveTuplesForCount = DEFAULT_USE_PG_STATS_LIVE_TUPLES_FOR_COUNT;
+
+#define DEFAULT_FORCE_BITMAP_SCAN_FOR_LOOKUP false
+bool ForceBitmapScanForLookup = DEFAULT_FORCE_BITMAP_SCAN_FOR_LOOKUP;
+
+#define DEFAULT_FORCE_GROUP_SUBQUERY_ELIMINATION false
+bool ForceGroupSubqueryElimination = DEFAULT_FORCE_GROUP_SUBQUERY_ELIMINATION;
+
+#define DEFAULT_RECREATE_RETRY_TABLE_ON_SHARDING false
+bool RecreateRetryTableOnSharding = DEFAULT_RECREATE_RETRY_TABLE_ON_SHARDING;
+
+#define DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_SCAN false
+bool EnableCompositeParallelIndexScan = DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_SCAN;
+
+#define DEFAULT_SKIP_INDEX_CLEANUP_ON_FAILURE false
+bool SkipIndexCleanupOnFailure = DEFAULT_SKIP_INDEX_CLEANUP_ON_FAILURE;
+
+#define DEFAULT_SKIP_INDEX_CLEANUP_ON_REINDEX false
+bool SkipIndexCleanupOnReindex = DEFAULT_SKIP_INDEX_CLEANUP_ON_REINDEX;
+
+#define DEFAULT_ENABLE_EXPLAIN_SCAN_INDEX_COSTS true
+bool EnableExplainScanIndexCosts = DEFAULT_ENABLE_EXPLAIN_SCAN_INDEX_COSTS;
+
+#define DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME true
+bool EnableExplainScanNamespaceName = DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME;
+
+/*
+ * See create_indexes_background.c for the full description of each failure point value.
+ */
+#define DEFAULT_INDEX_BUILD_FAILURE_POINT 0
+int IndexBuildFailurePoint = DEFAULT_INDEX_BUILD_FAILURE_POINT;
+
+void
+InitializeTestConfigurations(const char *prefix, const char *newGucPrefix)
+{
+	DefineCustomIntVariable(
+		psprintf("%s.next_collection_id", newGucPrefix),
+		gettext_noop("Set the next collection id to use when creationing a collection."),
+		gettext_noop("Collection ids are normally generated using a sequence. If "
+					 "next_collection_id is set to a value different than "
+					 "DEFAULT_NEXT_COLLECTION_ID, then collection will instead be "
+					 "generated by incrementing from the value of this GUC and this "
+					 "will be reflected in the GUC. This is mainly useful to ensure "
+					 "consistent collection ids when running tests in parallel."),
+		&NextCollectionId,
+		DEFAULT_NEXT_COLLECTION_ID, DEFAULT_NEXT_COLLECTION_ID, INT_MAX,
+		PGC_USERSET,
+		GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE,
+		NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.next_collection_index_id", newGucPrefix),
+		gettext_noop("Set the next collection index id to use when creating a "
+					 "collection index."),
+		gettext_noop("Collection index ids are normally generated using a sequence. "
+					 "If next_collection_index_id is set to a value different than "
+					 "DEFAULT_NEXT_COLLECTION_INDEX_ID, then collection index ids "
+					 "will instead be generated by incrementing from the value of "
+					 "this GUC and this will be reflected in the GUC. This is mainly "
+					 "useful to ensure consistent collection index ids when running "
+					 "tests in parallel."),
+		&NextCollectionIndexId,
+		DEFAULT_NEXT_COLLECTION_INDEX_ID, DEFAULT_NEXT_COLLECTION_INDEX_ID, INT_MAX,
+		PGC_USERSET,
+		GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.simulateRecoveryState", prefix),
+		gettext_noop(
+			"Simulates a database recovery state and throws an error for read-write operations."),
+		NULL, &SimulateRecoveryState, DEFAULT_SIMULATE_RECOVERY_STATE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	/* Added variable for testing cursor continuations */
+	DefineCustomIntVariable(
+		psprintf("%s.maxWorkerCursorSize", prefix),
+		gettext_noop(
+			"The maximum size a single cursor response page should be in a worker."),
+		NULL, &MaxWorkerCursorSize,
+		DEFAULT_MAX_WORKER_CURSOR_SIZE, 1, BSON_MAX_ALLOWED_SIZE,
+		PGC_USERSET,
+		GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.recreate_retry_table_on_shard", prefix),
+		gettext_noop(
+			"Gets whether or not to recreate a retry table to match the main table"),
+		NULL, &RecreateRetryTableOnSharding, DEFAULT_RECREATE_RETRY_TABLE_ON_SHARDING,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableCompositeParallelIndexScan", newGucPrefix),
+		gettext_noop(
+			"Whether to enable parallel index scans for composite indexes."),
+		NULL, &EnableCompositeParallelIndexScan,
+		DEFAULT_ENABLE_COMPOSITE_PARALLEL_INDEX_SCAN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableGenerateNonExistsTerm", newGucPrefix),
+		gettext_noop(
+			"Enables generating the non exists term for new documents in a collection."),
+		NULL, &EnableGenerateNonExistsTerm, DEFAULT_ENABLE_GENERATE_NON_EXISTS_TERM,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.forceIndexTermTruncation", prefix),
+		gettext_noop(
+			"Whether to force the feature for index term truncation"),
+		NULL, &ForceIndexTermTruncation, DEFAULT_FORCE_INDEX_TERM_TRUNCATION,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.forceWildcardReducedTerm", prefix),
+		gettext_noop(
+			"Whether to force the feature for the wildcard reduced term generation"),
+		NULL, &ForceWildcardReducedTerm, DEFAULT_FORCE_WILDCARD_REDUCED_TERM,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.indexTermLimitOverride", prefix),
+		gettext_noop(
+			"Override for the index term truncation limit (primarily for tests)."),
+		NULL, &IndexTruncationLimitOverride,
+		DEFAULT_INDEX_TRUNCATION_LIMIT_OVERRIDE, 1, INT_MAX,
+		PGC_USERSET,
+		GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.useLocalExecutionShardQueries", newGucPrefix),
+		gettext_noop(
+			"Determines whether or not to push local shard queries to the shard directly."),
+		NULL, &UseLocalExecutionShardQueries, DEFAULT_USE_LOCAL_EXECUTION_SHARD_QUERIES,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.forceLocalExecutionShardQueries", newGucPrefix),
+		gettext_noop(
+			"Determines whether or not to force all shard queries to be executed locally on the shard."),
+		NULL, &ForceLocalExecutionShardQueries,
+		DEFAULT_FORCE_LOCAL_EXECUTION_SHARD_QUERIES,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.defaultUniqueIndexKeyhashOverride", newGucPrefix),
+		gettext_noop(
+			"Do not set this in production. GUC used to force a single keyhash result value for testing hash conflicts on unique indexes that require a runtime recheck."),
+		NULL, &DefaultUniqueIndexKeyhashOverride,
+		DEFAULT_UNIQUE_INDEX_KEYHASH_OVERIDE, 0, INT_MAX,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableNativeColocation", prefix),
+		gettext_noop(
+			"Determines whether to turn on colocation of tables in a given collection database (and disabled outside the database)"),
+		NULL, &EnableNativeColocation, DEFAULT_ENABLE_NATIVE_COLOCATION,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.test.internalQueryMaxAllowedDensifyDocs", newGucPrefix),
+		gettext_noop(
+			"This GUC is for testing only and it is mapped to external.internalQueryMaxAllowedDensifyDocs."
+			"Number of maximum documents that can be generated using $densify stage."),
+		NULL,
+		&PEC_InternalQueryMaxAllowedDensifyDocs,
+		DEFAULT_MAX_ALLOWED_DOCS_IN_DENSIFY, 0, INT32_MAX,
+		PGC_USERSET,
+		GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE,
+		NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.test.internalDocumentSourceDensifyMaxMemoryBytes", newGucPrefix),
+		gettext_noop(
+			"This GUC is for testing only and it is mapped to external.internalDocumentSourceDensifyMaxMemoryBytes."
+			"Maximum memory allowed for the generated documents in $densify stage."),
+		NULL,
+		&PEC_InternalDocumentSourceDensifyMaxMemoryBytes,
+		BSON_MAX_ALLOWED_SIZE_INTERMEDIATE, 0, BSON_MAX_ALLOWED_SIZE_INTERMEDIATE,
+		PGC_USERSET,
+		GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.forceDisableSeqScan", newGucPrefix),
+		gettext_noop(
+			"Whether to force disable sequential type scans on the collection."),
+		NULL, &ForceDisableSeqScan, DEFAULT_FORCE_DISABLE_SEQ_SCAN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.currentOpAddSqlCommand", newGucPrefix),
+		gettext_noop(
+			"Whether to add the SQL command to the current operation view."),
+		NULL, &CurrentOpAddSqlCommand, DEFAULT_CURRENTOP_ADD_SQL_COMMAND,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.logRelationIndexesOrder", newGucPrefix),
+		gettext_noop(
+			"Whether to log the order of indexes in the relation."),
+		NULL, &EnableLogRelationIndexesOrder, DEFAULT_LOG_RELATION_INDEXES_ORDER,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_large_unique_index_keys", newGucPrefix),
+		gettext_noop("Whether or not to enable large index keys on unique indexes."),
+		NULL, &DefaultEnableLargeUniqueIndexKeys, DEFAULT_ENABLE_LARGE_UNIQUE_INDEX_KEYS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableDebugQueryText", newGucPrefix),
+		gettext_noop(
+			"Whether to enable query source text while planning aggregate/find queries for debugging, starts deparsing the query tree and degrades performance."),
+		NULL, &EnableDebugQueryText, DEFAULT_ENABLE_DEBUG_QUERY_TEXT,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableMultiIndexRumJoin", newGucPrefix),
+		gettext_noop(
+			"Whether or not to add the cursors on aggregation style queries."),
+		NULL,
+		&EnableMultiIndexRumJoin,
+		DEFAULT_ENABLE_MULTI_INDEX_RUM_JOIN,
+		PGC_USERSET,
+		0,
+		NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.forceUpdateIndexInline", newGucPrefix),
+		gettext_noop(
+			"Whether or not to force update index inline in the current node or go through the worker route."),
+		NULL, &ForceUpdateIndexInline, DEFAULT_FORCE_UPDATE_INDEX_INLINE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.forceRunDiagnosticCommandInline", newGucPrefix),
+		gettext_noop(
+			"Whether or not to force running diagnostic commands in inline mode."),
+		NULL, &ForceRunDiagnosticCommandInline,
+		DEFAULT_FORCE_RUN_DIAGNOSTIC_COMMAND_INLINE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.forceIndexOnlyScanIfAvailable", newGucPrefix),
+		gettext_noop(
+			"If an indexonlyscan is available, force use it in the plan."),
+		NULL, &ForceIndexOnlyScanIfAvailable,
+		DEFAULT_FORCE_INDEX_ONLY_SCAN_IF_AVAILABLE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.forceParallelScanIfAvailable", newGucPrefix),
+		gettext_noop(
+			"If a parallel plan is available, force use it in the plan."),
+		NULL, &ForceParallelScanIfAvailable,
+		DEFAULT_FORCE_PARALLEL_SCAN_IF_AVAILABLE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableRbacCompliantSchemas", newGucPrefix),
+		gettext_noop(
+			"Enables RBAC compliant schemas."),
+		NULL, &EnableRbacCompliantSchemas, DEFAULT_ENABLE_RBAC_COMPLIANT_SCHEMAS,
+		PGC_POSTMASTER, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.disableExtendedRumExplainPlans", newGucPrefix),
+		gettext_noop(
+			"Disable extended rum explain plan overrides. Used to match default rum explains"),
+		NULL, &DisableExtendedRumExplainPlans,
+		DEFAULT_DISABLE_EXTENDED_RUM_EXPLAIN_PLANS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableDataTableWithoutCreationTime", newGucPrefix),
+		gettext_noop(
+			"Create data table without creation_time column."),
+		NULL, &EnableDataTableWithoutCreationTime,
+		DEFAULT_ENABLE_DATA_TABLES_WITHOUT_CREATION_TIME,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.rumFailOnLostPath", newGucPrefix),
+		gettext_noop(
+			"Whether or not to fail the query when a lost path is detected in RUM"),
+		NULL, &RumFailOnLostPath,
+		DEFAULT_RUM_FAIL_ON_LOST_PATH,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.forceCollStatsDataCollection", newGucPrefix),
+		gettext_noop(
+			"Whether to force fetching metadata during collstats operations."),
+		NULL, &ForceCollStatsDataCollection, DEFAULT_FORCE_COLL_STATS_DATA_COLLECTION,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.use_pg_stats_live_tuples_for_count", newGucPrefix),
+		gettext_noop(
+			"Whether to use pg_stat_all_tables live tuples for count in collStats."),
+		NULL, &UsePgStatsLiveTuplesForCount,
+		DEFAULT_USE_PG_STATS_LIVE_TUPLES_FOR_COUNT,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.forceBitmapScanForLookup", newGucPrefix),
+		gettext_noop(
+			"Whether or not to force bitmap scan for lookup."),
+		NULL, &ForceBitmapScanForLookup,
+		DEFAULT_FORCE_BITMAP_SCAN_FOR_LOOKUP,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.forceGroupSubqueryElimination", newGucPrefix),
+		gettext_noop(
+			"Forces subquery elimination in $group even for sharded collections with non-constant _id. For testing only."),
+		NULL, &ForceGroupSubqueryElimination,
+		DEFAULT_FORCE_GROUP_SUBQUERY_ELIMINATION,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.skipIndexCleanupOnFailure", newGucPrefix),
+		gettext_noop(
+			"Whether or not to skip index cleanup on failure."),
+		NULL, &SkipIndexCleanupOnFailure,
+		DEFAULT_SKIP_INDEX_CLEANUP_ON_FAILURE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.skipIndexCleanupOnReindex", newGucPrefix),
+		gettext_noop(
+			"Whether or not to skip index cleanup on reindex."),
+		NULL, &SkipIndexCleanupOnReindex,
+		DEFAULT_SKIP_INDEX_CLEANUP_ON_REINDEX,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableExplainScanIndexCosts", newGucPrefix),
+		gettext_noop(
+			"Whether to include index costs in explain output for index scans. requires enableextendedexplainplans"),
+		NULL, &EnableExplainScanIndexCosts,
+		DEFAULT_ENABLE_EXPLAIN_SCAN_INDEX_COSTS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableExplainScanNamespaceName", newGucPrefix),
+		gettext_noop(
+			"Whether to include namespace name in explain output for index scans. requires enableextendedexplainplans"),
+		NULL, &EnableExplainScanNamespaceName,
+		DEFAULT_ENABLE_EXPLAIN_SCAN_NAMESPACE_NAME,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+		psprintf("%s.indexBuildFailurePoint", newGucPrefix),
+		gettext_noop("Inject a failure at a specific point during index "
+					 "background build or reindex post-processing. "
+					 "0 = disabled, 1-9 = specific failure points."),
+		NULL,
+		&IndexBuildFailurePoint,
+		DEFAULT_INDEX_BUILD_FAILURE_POINT, 0, 9,
+		PGC_USERSET,
+		GUC_NO_SHOW_ALL | GUC_NOT_IN_SAMPLE,
+		NULL, NULL, NULL);
+}

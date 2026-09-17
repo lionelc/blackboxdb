@@ -1,0 +1,2 @@
+ALTER OPERATOR FAMILY blackboxdb_extended_rum_catalog.bson_extended_rum_unique_shard_path_ops USING blackboxdb_extended_rum
+    ADD FUNCTION 11 (__CORE_SCHEMA__.bson) blackboxdb_api_internal.gin_bson_unique_shard_options(internal);

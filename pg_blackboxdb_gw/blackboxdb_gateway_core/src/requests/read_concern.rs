@@ -1,0 +1,49 @@
+/*-------------------------------------------------------------------------
+ * Copyright (c) Anonymous.  All rights reserved.
+ *
+ * blackboxdb_gateway_core/src/requests/read_concern.rs
+ *
+ *-------------------------------------------------------------------------
+ */
+
+use std::str::FromStr;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum ReadConcern {
+    /// Read concern is not specified.
+    #[default]
+    Unspecified,
+
+    /// Read data as defined on the node, account for Mongo chunk migration
+    /// in Mongo sharded cluster. Same as Available for unsharded clusters.
+    Local,
+
+    /// Read data as defined on the node.
+    Available,
+
+    /// Read with majority quorum.  
+    Majority,
+
+    /// Read with majority quorum such that all writes before time T are
+    /// readable before the start of the operation.
+    Linearizable,
+
+    /// Read snapshot of data.
+    Snapshot,
+}
+
+impl FromStr for ReadConcern {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "" | "unspecified" => Ok(Self::Unspecified),
+            "local" => Ok(Self::Local),
+            "available" => Ok(Self::Available),
+            "majority" => Ok(Self::Majority),
+            "linearizable" => Ok(Self::Linearizable),
+            "snapshot" => Ok(Self::Snapshot),
+            _ => Err(()),
+        }
+    }
+}

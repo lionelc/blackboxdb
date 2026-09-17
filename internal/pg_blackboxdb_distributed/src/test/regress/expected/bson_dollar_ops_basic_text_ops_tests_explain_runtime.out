@@ -1,0 +1,35 @@
+set search_path to blackboxdb_core,blackboxdb_api,blackboxdb_api_catalog,pg_catalog;
+SET citus.next_shard_id TO 1400000;
+SET blackboxdb.next_collection_id TO 1400;
+SET blackboxdb.next_collection_index_id TO 1400;
+SELECT blackboxdb_api.create_collection('db', 'queryregexopstest');
+NOTICE:  creating collection
+ create_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+SELECT blackboxdb_api.create_collection('db', 'querytextopstest');
+NOTICE:  creating collection
+ create_collection 
+---------------------------------------------------------------------
+ t
+(1 row)
+
+\i sql/bson_dollar_ops_basic_text_ops_tests_explain_core.sql
+/* validate explain */
+EXPLAIN (COSTS OFF) SELECT object_id, document FROM blackboxdb_api.collection('db','queryregexopstest') WHERE document @~ '{ "a.b": "^.+$" }';
+                                                   QUERY PLAN                                                    
+---------------------------------------------------------------------
+ Custom Scan (Citus Adaptive)
+   Task Count: 1
+   Tasks Shown: All
+   ->  Task
+         Node: host=localhost port=58070 dbname=regression
+         ->  Bitmap Heap Scan on documents_1400_1400007 collection
+               Recheck Cond: (shard_key_value = '1400'::bigint)
+               Filter: (document OPERATOR(blackboxdb_api_catalog.@~) '{ "a.b" : "^.+$" }'::blackboxdb_core.bson)
+               ->  Bitmap Index Scan on _id_
+                     Index Cond: (shard_key_value = '1400'::bigint)
+(10 rows)
+

@@ -1,0 +1,6 @@
+comment = 'Multi-Node API surface for BlackboxDB'
+default_version = '0.116-0'
+module_pathname = '$libdir/pg_blackboxdb_distributed'
+relocatable = false
+superuser = true
+requires = 'citus, blackboxdb_core, blackboxdb'

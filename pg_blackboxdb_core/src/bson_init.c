@@ -1,0 +1,92 @@
+/*-------------------------------------------------------------------------
+ * Copyright (c) Anonymous.  All rights reserved.
+ *
+ * src/bson_init.c
+ *
+ * Initialization of the shared library initialization for bson.
+ *-------------------------------------------------------------------------
+ */
+#include <postgres.h>
+#include <miscadmin.h>
+#include <utils/guc.h>
+#include <bson.h>
+
+#include "bson_init.h"
+
+
+/* --------------------------------------------------------- */
+/* GUCs and default values */
+/* --------------------------------------------------------- */
+
+/* GUC controlling whether or not we use the pretty printed version json representation for bson */
+/* SystemConfig */
+#define DEFAULT_BSON_TEXT_USE_JSON_REPRESENTATION false
+bool BsonTextUseJsonRepresentation = DEFAULT_BSON_TEXT_USE_JSON_REPRESENTATION;
+
+/* GUC deciding whether collation is support */
+/* FeatureFlag */
+/* Added in v108, Pending stabilization, enable in v124 */
+#define DEFAULT_ENABLE_COLLATION false
+bool EnableCollation = DEFAULT_ENABLE_COLLATION;
+
+/* FeatureFlag */
+/* Added in v110, Pending stabilization, enable in v116 */
+#define DEFAULT_SKIP_BSON_ARRAY_TRAVERSE_OPTIMIZATION false
+bool SkipBsonArrayTraverseOptimization = DEFAULT_SKIP_BSON_ARRAY_TRAVERSE_OPTIMIZATION;
+
+/* FeatureFlag */
+/* Added in v114, Pending stabilization, enable in v116 */
+#define DEFAULT_ENABLE_WRITE_DOCUMENTS_IN_REPATH false
+bool EnableWriteDocumentsInRepath = DEFAULT_ENABLE_WRITE_DOCUMENTS_IN_REPATH;
+
+/* FeatureFlag */
+/* Added in v114, Pending stabilization, enable in v124 */
+#define DEFAULT_ENABLE_BSON_SELECTIVITY_FROM_BTREE_STATS false
+bool EnableBsonSelectivityFromBtreeStats =
+	DEFAULT_ENABLE_BSON_SELECTIVITY_FROM_BTREE_STATS;
+
+/*
+ * Initializes core configurations pertaining to blackboxdb core.
+ */
+void
+InitBlackboxDBCoreConfigurations(const char *prefix)
+{
+	DefineCustomBoolVariable(
+		psprintf("%s.bsonUseEJson", prefix),
+		gettext_noop(
+			"Determines whether the bson text is printed as extended Json. Used mainly for test."),
+		NULL, &BsonTextUseJsonRepresentation, DEFAULT_BSON_TEXT_USE_JSON_REPRESENTATION,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableCollation", prefix),
+		gettext_noop(
+			"Determines whether collation is supported."),
+		NULL, &EnableCollation,
+		DEFAULT_ENABLE_COLLATION,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.skipBsonArrayTraverseOptimization", prefix),
+		gettext_noop(
+			"Determines whether to skip the optimization for traversing arrays in bson documents."),
+		NULL, &SkipBsonArrayTraverseOptimization,
+		DEFAULT_SKIP_BSON_ARRAY_TRAVERSE_OPTIMIZATION,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableWriteDocumentsInRepath", prefix),
+		gettext_noop(
+			"Whether to enable writing documents during bson repath and build."),
+		NULL, &EnableWriteDocumentsInRepath,
+		DEFAULT_ENABLE_WRITE_DOCUMENTS_IN_REPATH,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enableBsonSelectivityFromBtreeStats", prefix),
+		gettext_noop(
+			"Whether to enable selectivity calculations based on btree statistics for bson btree operators."),
+		NULL, &EnableBsonSelectivityFromBtreeStats,
+		DEFAULT_ENABLE_BSON_SELECTIVITY_FROM_BTREE_STATS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+}

@@ -1,0 +1,7 @@
+tmp/
+log/
+results/
+regression.diffs
+!expected/*.out
+#multinode test expected outputs
+!expected/multinode/*.out

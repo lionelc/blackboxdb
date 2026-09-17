@@ -1,0 +1,34 @@
+[Unit]
+Description=BlackboxDB Gateway
+After=network.target
+Documentation=https://anonymous.example/blackboxdb
+
+[Service]
+Type=simple
+User=blackboxdb-gateway
+Group=blackboxdb-gateway
+WorkingDirectory=/var/lib/blackboxdb-gateway
+UMask=0077
+EnvironmentFile=-/etc/blackboxdb/gateway/gateway.env
+ExecStart=/usr/bin/blackboxdb-gateway run
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+# Hardened sandboxing
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallFilter=@system-service
+ReadWritePaths=/var/lib/blackboxdb-gateway /run/blackboxdb-gateway
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,99 @@
+SET search_path TO blackboxdb_api_catalog, blackboxdb_api, blackboxdb_api_internal, blackboxdb_core, public;
+SET blackboxdb.next_collection_id TO 1984000;
+SET blackboxdb.next_collection_index_id TO 1984000;
+-- Insert test data
+SELECT blackboxdb_api.insert_one('db', 'rewrite_sql_test', '{ "_id": 1, "country": "Mexico", "city": "CDMX" }');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('db', 'rewrite_sql_test', '{ "_id": 2, "country": "USA", "city": "NYC" }');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+-- Test aggregate with $match
+SELECT blackboxdb_api_internal.bson_get_rewritten_sql('db',
+  '{ "aggregate": "rewrite_sql_test", "pipeline": [{ "$match": { "country": "Mexico" } }], "cursor": {} }'::blackboxdb_core.bson);
+                                         bson_get_rewritten_sql                                          
+---------------------------------------------------------------------------------------------------------
+  SELECT document                                                                                       +
+    FROM blackboxdb_data.documents_1984000 collection                                                   +
+   WHERE ((document #= '{ "country" : "Mexico" }'::bsonquery) AND (shard_key_value = '1984000'::bigint))
+(1 row)
+
+-- Test aggregate with $project and $limit
+SELECT blackboxdb_api_internal.bson_get_rewritten_sql('db',
+  '{ "aggregate": "rewrite_sql_test", "pipeline": [{ "$project": { "country": 1 } }, { "$limit": 10 }], "cursor": {} }'::blackboxdb_core.bson);
+                                                                          bson_get_rewritten_sql                                                                          
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  SELECT bson_dollar_project(document, '{ "country" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson) AS document+
+    FROM blackboxdb_data.documents_1984000 collection                                                                                                                    +
+   WHERE (shard_key_value = '1984000'::bigint)                                                                                                                           +
+  LIMIT '10'::bigint
+(1 row)
+
+-- Test find with filter
+SELECT blackboxdb_api_internal.bson_get_rewritten_sql('db',
+  '{ "find": "rewrite_sql_test", "filter": { "country": "Mexico" } }'::blackboxdb_core.bson);
+                                         bson_get_rewritten_sql                                          
+---------------------------------------------------------------------------------------------------------
+  SELECT document                                                                                       +
+    FROM blackboxdb_data.documents_1984000 collection                                                   +
+   WHERE ((document #= '{ "country" : "Mexico" }'::bsonquery) AND (shard_key_value = '1984000'::bigint))
+(1 row)
+
+-- Test find with filter, projection, sort, skip, limit
+SELECT blackboxdb_api_internal.bson_get_rewritten_sql('db',
+  '{ "find": "rewrite_sql_test", "filter": { "_id": { "$gt": 0 } }, "projection": { "country": 1 }, "sort": { "_id": 1 }, "skip": 0, "limit": 5 }'::blackboxdb_core.bson);
+                                                                                                                                                      bson_get_rewritten_sql                                                                                                                                                       
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  SELECT bson_dollar_project_find(document, '{ "country" : { "$numberInt" : "1" } }'::bson, '{ "_id" : { "$gt" : { "$numberInt" : "0" } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson) AS document                                                                                            +
+    FROM blackboxdb_data.documents_1984000 collection                                                                                                                                                                                                                                                                             +
+   WHERE ((document #> '{ "_id" : { "$numberInt" : "0" } }'::bsonquery) AND ((object_id > '{ "" : { "$numberInt" : "0" } }'::bson) AND (object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson)) AND (shard_key_value = '1984000'::bigint) AND bson_dollar_fullscan(document, '{ "_id" : { "$numberInt" : "1" } }'::bson))+
+   ORDER BY (bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST                                                                                                                                                                                                                                      +
+  LIMIT '5'::bigint
+(1 row)
+
+-- Test count
+SELECT blackboxdb_api_internal.bson_get_rewritten_sql('db',
+  '{ "count": "rewrite_sql_test" }'::blackboxdb_core.bson);
+                                                                      bson_get_rewritten_sql                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  SELECT bson_dollar_merge_documents(bson_dollar_project(document, '{ "n" : "$count" }'::bson), '{ "ok" : { "$numberDouble" : "1.0" } }'::bson, false) AS document+
+    FROM coll_stats_aggregation('db'::text, 'rewrite_sql_test'::text, '{ "count" : {  } }'::bson) collection(document)
+(1 row)
+
+-- Test count with query filter
+SELECT blackboxdb_api_internal.bson_get_rewritten_sql('db',
+  '{ "count": "rewrite_sql_test", "query": { "country": "Mexico" } }'::blackboxdb_core.bson);
+                                                               bson_get_rewritten_sql                                                               
+----------------------------------------------------------------------------------------------------------------------------------------------------
+  SELECT bsoncommandcount(1) AS document                                                                                                           +
+    FROM ( SELECT collection.document                                                                                                              +
+            FROM blackboxdb_data.documents_1984000 collection                                                                                      +
+           WHERE ((collection.document #= '{ "country" : "Mexico" }'::bsonquery) AND (collection.shard_key_value = '1984000'::bigint))) agg_stage_1
+(1 row)
+
+-- Test distinct
+SELECT blackboxdb_api_internal.bson_get_rewritten_sql('db',
+  '{ "distinct": "rewrite_sql_test", "key": "country" }'::blackboxdb_core.bson);
+                                                                            bson_get_rewritten_sql                                                                             
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  SELECT bson_distinct_agg(document) AS document                                                                                                                              +
+    FROM ( SELECT DISTINCT bson_distinct_unwind(collection.document, 'country'::text) AS document                                                                             +
+            FROM blackboxdb_data.documents_1984000 collection                                                                                                                 +
+           WHERE ((collection.shard_key_value = '1984000'::bigint) AND bson_dollar_fullscan(collection.document, '{ "country" : { "$numberInt" : "1" } }'::bson))) agg_stage_0
+(1 row)
+
+-- Test error on unsupported command type
+SELECT blackboxdb_api_internal.bson_get_rewritten_sql('db',
+  '{ "unsupported": "rewrite_sql_test" }'::blackboxdb_core.bson);
+ERROR:  unsupported command type: unsupported
+-- Test error on empty spec
+SELECT blackboxdb_api_internal.bson_get_rewritten_sql('db',
+  '{ }'::blackboxdb_core.bson);
+ERROR:  empty BSON spec provided

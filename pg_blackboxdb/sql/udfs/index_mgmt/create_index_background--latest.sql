@@ -1,0 +1,158 @@
+CREATE OR REPLACE PROCEDURE __API_SCHEMA_INTERNAL__.build_index_concurrently(IN p_job_index int)
+ LANGUAGE C
+AS 'MODULE_PATHNAME', $procedure$command_build_index_concurrently$procedure$;
+COMMENT ON PROCEDURE __API_SCHEMA_INTERNAL__.build_index_concurrently(int)
+    IS 'Builds a index for a collection';
+
+CREATE OR REPLACE FUNCTION __API_SCHEMA_INTERNAL_V2__.check_build_index_status(
+    IN p_arg __CORE_SCHEMA__.bson,
+    OUT retval __CORE_SCHEMA__.bson,
+    OUT ok boolean,
+    OUT complete boolean)
+ RETURNS record
+ LANGUAGE C
+ VOLATILE
+AS 'MODULE_PATHNAME', $$command_check_build_index_status$$;
+COMMENT ON FUNCTION __API_SCHEMA_INTERNAL_V2__.check_build_index_status(__CORE_SCHEMA__.bson)
+    IS 'Calls check_build_index_status_internal.';
+
+-- TODO: DROP the __API_SCHEMA__.create_indexes_background
+CREATE OR REPLACE FUNCTION __API_SCHEMA_V2__.create_indexes_background(
+    p_database_name text, 
+    p_index_spec __CORE_SCHEMA__.bson, 
+    OUT retval __CORE_SCHEMA__.bson,
+    OUT ok boolean,
+    OUT requests __CORE_SCHEMA__.bson)
+RETURNS record
+ LANGUAGE C
+ VOLATILE
+AS 'MODULE_PATHNAME', $$command_create_indexes_background$$;
+COMMENT ON FUNCTION __API_SCHEMA_V2__.create_indexes_background(text, __CORE_SCHEMA__.bson)
+    IS 'Submits the build index(es) requests on a collection and waits for them to finish.';
+
+CREATE OR REPLACE FUNCTION __API_SCHEMA_INTERNAL__.check_build_index_status_internal(
+    IN p_arg __CORE_SCHEMA__.bson)
+ RETURNS __CORE_SCHEMA__.bson
+ LANGUAGE C
+ VOLATILE
+AS 'MODULE_PATHNAME', $$command_check_build_index_status_internal$$;
+COMMENT ON FUNCTION __API_SCHEMA_INTERNAL__.check_build_index_status_internal(__CORE_SCHEMA__.bson)
+    IS 'Checks for build index(es) requests to finish.';
+
+DROP FUNCTION IF EXISTS __API_SCHEMA_INTERNAL__.create_indexes_background_internal CASCADE;
+CREATE OR REPLACE FUNCTION __API_SCHEMA_INTERNAL__.create_indexes_background_internal(
+    IN p_database_name text,
+    IN p_arg __CORE_SCHEMA__.bson)
+ RETURNS __CORE_SCHEMA__.bson
+ LANGUAGE C
+ VOLATILE
+AS 'MODULE_PATHNAME', $$command_create_indexes_background_internal$$;
+COMMENT ON FUNCTION __API_SCHEMA_INTERNAL__.create_indexes_background_internal(text,__CORE_SCHEMA__.bson)
+    IS 'Queues the Index creation request(s) on a collection';
+
+DROP FUNCTION IF EXISTS __API_SCHEMA_INTERNAL__.schedule_background_index_build_workers;
+
+CREATE OR REPLACE FUNCTION __API_SCHEMA_INTERNAL__.schedule_background_index_build_jobs(IN p_force_override boolean DEFAULT false)
+RETURNS void
+LANGUAGE C
+AS 'MODULE_PATHNAME', $$schedule_background_index_build_jobs$$;
+COMMENT ON FUNCTION __API_SCHEMA_INTERNAL__.schedule_background_index_build_jobs(boolean)
+    IS 'Schedules the background index build cron job.';
+
+CREATE OR REPLACE FUNCTION __API_SCHEMA_INTERNAL__.reindex_index_background(
+    p_database_name text, 
+    p_reindex_spec __CORE_SCHEMA__.bson, 
+    OUT retval __CORE_SCHEMA__.bson,
+    OUT ok boolean,
+    OUT requests __CORE_SCHEMA__.bson)
+RETURNS record
+ LANGUAGE C
+ VOLATILE
+AS 'MODULE_PATHNAME', $$command_reindex_index_background$$;
+
+DROP FUNCTION IF EXISTS __API_SCHEMA_INTERNAL__.reindex_indexes_background_internal CASCADE;
+CREATE OR REPLACE FUNCTION __API_SCHEMA_INTERNAL__.reindex_indexes_background_internal(
+    IN p_database_name text,
+    IN p_arg __CORE_SCHEMA__.bson)
+ RETURNS __CORE_SCHEMA__.bson
+ LANGUAGE C
+ VOLATILE
+AS 'MODULE_PATHNAME', $$command_reindex_index_background_internal$$;
+
+#ifdef __RBAC_SCHEMA_ENABLED__
+CREATE OR REPLACE PROCEDURE blackboxdb_api_internal_readwrite.build_index_concurrently(IN p_job_index int)
+ LANGUAGE C
+AS 'MODULE_PATHNAME', $procedure$command_build_index_concurrently$procedure$;
+COMMENT ON PROCEDURE blackboxdb_api_internal_readwrite.build_index_concurrently(int)
+    IS 'Builds a index for a collection';
+
+CREATE OR REPLACE FUNCTION blackboxdb_api_internal_readonly.check_build_index_status(
+    IN p_arg __CORE_SCHEMA__.bson,
+    OUT retval __CORE_SCHEMA__.bson,
+    OUT ok boolean,
+    OUT complete boolean)
+ RETURNS record
+ LANGUAGE C
+ VOLATILE
+AS 'MODULE_PATHNAME', $$command_check_build_index_status$$;
+COMMENT ON FUNCTION blackboxdb_api_internal_readonly.check_build_index_status(__CORE_SCHEMA__.bson)
+    IS 'Calls check_build_index_status_internal.';
+
+CREATE OR REPLACE FUNCTION blackboxdb_api_v2.create_indexes_background(
+    p_database_name text, 
+    p_index_spec __CORE_SCHEMA__.bson, 
+    OUT retval __CORE_SCHEMA__.bson,
+    OUT ok boolean,
+    OUT requests __CORE_SCHEMA__.bson)
+RETURNS record
+ LANGUAGE C
+ VOLATILE
+AS 'MODULE_PATHNAME', $$command_create_indexes_background$$;
+COMMENT ON FUNCTION blackboxdb_api_v2.create_indexes_background(text, __CORE_SCHEMA__.bson)
+    IS 'Submits the build index(es) requests on a collection and waits for them to finish.';
+
+DROP FUNCTION IF EXISTS blackboxdb_api_internal_readwrite.create_indexes_background_internal CASCADE;
+CREATE OR REPLACE FUNCTION blackboxdb_api_internal_readwrite.create_indexes_background_internal(
+    IN p_database_name text,
+    IN p_arg __CORE_SCHEMA__.bson)
+ RETURNS __CORE_SCHEMA__.bson
+ LANGUAGE C
+ VOLATILE
+AS 'MODULE_PATHNAME', $$command_create_indexes_background_internal$$;
+COMMENT ON FUNCTION blackboxdb_api_internal_readwrite.create_indexes_background_internal(text,__CORE_SCHEMA__.bson)
+    IS 'Queues the Index creation request(s) on a collection';
+
+CREATE OR REPLACE FUNCTION blackboxdb_api_internal_admin.reindex_index_background(
+    p_database_name text, 
+    p_reindex_spec __CORE_SCHEMA__.bson, 
+    OUT retval __CORE_SCHEMA__.bson,
+    OUT ok boolean,
+    OUT requests __CORE_SCHEMA__.bson)
+RETURNS record
+ LANGUAGE C
+ VOLATILE
+AS 'MODULE_PATHNAME', $$command_reindex_index_background$$;
+
+DROP FUNCTION IF EXISTS blackboxdb_api_internal_admin.reindex_indexes_background_internal CASCADE;
+CREATE OR REPLACE FUNCTION blackboxdb_api_internal_admin.reindex_indexes_background_internal(
+    IN p_database_name text,
+    IN p_arg __CORE_SCHEMA__.bson)
+ RETURNS __CORE_SCHEMA__.bson
+ LANGUAGE C
+ VOLATILE
+AS 'MODULE_PATHNAME', $$command_reindex_index_background_internal$$;
+
+CREATE OR REPLACE PROCEDURE blackboxdb_api_v2.create_indexes(IN p_database_name text, 
+                                                        IN p_arg __CORE_SCHEMA__.bson,
+                                                        INOUT retval __CORE_SCHEMA__.bson DEFAULT null,
+                                                        INOUT ok boolean DEFAULT false)
+AS $procedure$
+BEGIN
+  -- We skip other utility hooks as mentioned above, so we shouldn't ever reach here
+  RAISE EXCEPTION 'could not create any indexes, possibly due to improper installation' USING ERRCODE = 'internal_error';
+END;
+$procedure$
+LANGUAGE plpgsql;
+COMMENT ON PROCEDURE blackboxdb_api_v2.create_indexes(text, __CORE_SCHEMA__.bson, __CORE_SCHEMA__.bson, boolean)
+    IS 'create index(es) on a Mongo collection';
+#endif

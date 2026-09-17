@@ -1,0 +1,38 @@
+-- show all functions exported in blackboxdb_api_distributed
+\df blackboxdb_api_distributed.*
+                                                          List of functions
+           Schema           |             Name             |   Result data type   |            Argument data types            | Type 
+---------------------------------------------------------------------
+ blackboxdb_api_distributed | complete_upgrade             | boolean              |                                           | func
+ blackboxdb_api_distributed | initialize_cluster           | void                 |                                           | func
+ blackboxdb_api_distributed | move_collection              | blackboxdb_core.bson | move_collection_spec blackboxdb_core.bson | func
+ blackboxdb_api_distributed | rebalancer_start             | blackboxdb_core.bson | p_spec blackboxdb_core.bson               | func
+ blackboxdb_api_distributed | rebalancer_status            | blackboxdb_core.bson | p_spec blackboxdb_core.bson               | func
+ blackboxdb_api_distributed | rebalancer_stop              | blackboxdb_core.bson | p_spec blackboxdb_core.bson               | func
+ blackboxdb_api_distributed | update_postgres_index_worker | blackboxdb_core.bson | p_local_function_arg blackboxdb_core.bson | func
+(7 rows)
+
+-- show all aggregates exported
+\da+ blackboxdb_api_distributed.*
+                     List of aggregate functions
+ Schema | Name | Result data type | Argument data types | Description 
+---------------------------------------------------------------------
+(0 rows)
+
+-- This is last (Tables/indexes)
+\d blackboxdb_api_distributed.*
+    Table "blackboxdb_api_distributed.blackboxdb_cluster_data"
+  Column  |         Type         | Collation | Nullable | Default 
+---------------------------------------------------------------------
+ metadata | blackboxdb_core.bson |           | not null | 
+Indexes:
+    "blackboxdb_cluster_data_pkey" PRIMARY KEY, btree (metadata)
+Triggers:
+    blackboxdb_versions_trigger AFTER DELETE OR UPDATE ON blackboxdb_api_distributed.blackboxdb_cluster_data FOR EACH STATEMENT EXECUTE FUNCTION blackboxdb_api_internal.update_blackboxdb_version_data()
+
+Index "blackboxdb_api_distributed.blackboxdb_cluster_data_pkey"
+  Column  |         Type         | Key? | Definition 
+---------------------------------------------------------------------
+ metadata | blackboxdb_core.bson | yes  | metadata
+primary key, btree, for table "blackboxdb_api_distributed.blackboxdb_cluster_data"
+

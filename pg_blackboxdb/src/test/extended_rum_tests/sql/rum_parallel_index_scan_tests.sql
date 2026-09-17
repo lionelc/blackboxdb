@@ -1,0 +1,88 @@
+SET search_path TO blackboxdb_api_catalog, blackboxdb_core, public;
+SET blackboxdb.next_collection_id TO 900;
+SET blackboxdb.next_collection_index_id TO 900;
+
+SELECT blackboxdb_api.drop_collection('p_ixscan', 'parallel_scan');
+SELECT blackboxdb_api.create_collection('p_ixscan', 'parallel_scan');
+
+SELECT collection_id AS p_col FROM blackboxdb_api_catalog.collections WHERE database_name = 'p_ixscan' AND collection_name = 'parallel_scan' \gset
+
+-- disable autovacuum to have predicatability
+SELECT FORMAT('ALTER TABLE blackboxdb_data.documents_%s set (autovacuum_enabled = off, parallel_workers = 2)', :p_col) \gexec
+
+
+SELECT COUNT(blackboxdb_api.insert_one('p_ixscan', 'parallel_scan',  FORMAT('{ "_id": %s, "a": %s, "b": %s }', i, i, i)::bson)) FROM generate_series(1, 1000) AS i;
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently(
+    'p_ixscan',
+    '{ "createIndexes": "parallel_scan", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "enableCompositeTerm": true } ] }', TRUE);
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently(
+    'p_ixscan',
+    '{ "createIndexes": "parallel_scan", "indexes": [ { "key": { "b": 1 }, "name": "b_1", "enableCompositeTerm": false } ] }', TRUE);
+
+set blackboxdb.enableExtendedExplainPlans to on;
+set enable_bitmapscan to off;
+SELECT blackboxdb_test_helpers.run_explain_and_trim(
+    $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
+        '{ "find": "parallel_scan", "filter": { "a": { "$gt": 10 } } }') $cmd$);
+
+set parallel_tuple_cost to 0;
+set parallel_setup_cost to 0;
+set blackboxdb.enableCompositeParallelIndexScan to on;
+set parallel_leader_participation to off;
+set enable_seqscan to off;
+set blackboxdb.forceParallelScanIfAvailable to on;
+set blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters to on;
+
+-- Ensure deterministic planner statistics
+SELECT FORMAT('VACUUM FREEZE ANALYZE blackboxdb_data.documents_%s', :p_col) \gexec
+
+-- Enable leader participation for EXPLAIN ANALYZE so the leader's scan opaque
+-- gets the scan type from DSM during rumgettuple.
+set parallel_leader_participation to on;
+
+SELECT blackboxdb_test_helpers.run_explain_and_trim(
+    $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
+        '{ "find": "parallel_scan", "filter": { "a": { "$gt": 10, "$lt": 50 } } }') $cmd$);
+
+-- Backward sort on composite index with parallel ordered scan
+SELECT blackboxdb_test_helpers.run_explain_and_trim(
+    $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
+        '{ "find": "parallel_scan", "filter": { "a": { "$gt": 10, "$lt": 50 } }, "sort": { "a": -1 } }') $cmd$);
+
+SELECT blackboxdb_test_helpers.run_explain_and_trim(
+    $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
+        '{ "find": "parallel_scan", "filter": { "a": { "$gt": 10, "$lt": 50 } }, "sort": { "a": 1 } }') $cmd$);
+
+SELECT blackboxdb_test_helpers.run_explain_and_trim(
+    $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
+        '{ "find": "parallel_scan", "sort": { "a": 1 } }') $cmd$);
+
+SELECT blackboxdb_test_helpers.run_explain_and_trim(
+    $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
+        '{ "find": "parallel_scan", "filter": { "b": { "$gt": 10, "$lt": 50 } } }') $cmd$);
+
+SELECT blackboxdb_test_helpers.run_explain_and_trim(
+    $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
+        '{ "find": "parallel_scan", "filter": { "b": { "$gt": 10, "$lt": 50 } }, "sort": { "b": -1 } }') $cmd$);
+
+SELECT blackboxdb_test_helpers.run_explain_and_trim(
+    $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
+        '{ "find": "parallel_scan", "filter": { "b": { "$gt": 10, "$lt": 50 } }, "sort": { "b": 1 } }') $cmd$);
+
+-- Restore leader participation off for non-EXPLAIN queries
+set parallel_leader_participation to off;
+
+-- Test with parallel_leader_participation OFF: the leader does not call rumgettuple,
+-- so scan type is inferred from numberOfOrderBys. Must not crash.
+SELECT blackboxdb_test_helpers.run_explain_and_trim(
+    $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
+        '{ "find": "parallel_scan", "filter": { "a": { "$gt": 10, "$lt": 50 } }, "sort": { "a": 1 } }') $cmd$);
+
+SELECT blackboxdb_test_helpers.run_explain_and_trim(
+    $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
+        '{ "find": "parallel_scan", "filter": { "a": { "$gt": 10, "$lt": 50 } }, "sort": { "a": -1 } }') $cmd$);
+
+SELECT blackboxdb_test_helpers.run_explain_and_trim(
+    $cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_find('p_ixscan',
+        '{ "find": "parallel_scan", "filter": { "a": { "$gt": 10, "$lt": 50 } } }') $cmd$);

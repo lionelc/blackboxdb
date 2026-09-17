@@ -1,0 +1,2 @@
+test: blackboxdb_distributed_setup
+test: blackboxdb_distributed_test_helpers

@@ -1,0 +1,2319 @@
+/*-------------------------------------------------------------------------
+ * Copyright (c) Anonymous.  All rights reserved.
+ *
+ * blackboxdb_gateway_core/src/explain/mod.rs
+ *
+ *-------------------------------------------------------------------------
+ */
+
+use core::f64;
+use std::{cmp::Ordering, collections::HashMap, str::FromStr};
+
+use bson::{rawdoc, Document, RawArrayBuf, RawBson, RawDocument, RawDocumentBuf};
+use model::{
+    DistributedJob, DistributedQueryPlan, DistributedSubPlan, ExplainPlan, IndexCost, IndexDetails,
+    PostgresExplain, VectorSearchParams,
+};
+use serde_json::Value;
+use std::sync::LazyLock;
+
+use crate::{
+    context::{ConnectionContext, RequestContext},
+    error::{BlackboxDBError, Result},
+    postgres::{PgDataClient, QueryCatalog},
+    protocol::OK_SUCCEEDED,
+    requests::{ExplainTarget, RequestType},
+    responses::{RawResponse, Response},
+};
+
+mod model;
+mod query_diagnostics;
+
+static MAX_EXPLAIN_BSON_COMMAND_LENGTH: usize = 100 * 1024;
+
+type AggregationStage = (
+    &'static str,
+    Option<fn(&ExplainPlan, &mut RawDocumentBuf, &QueryCatalog) -> ()>,
+);
+
+static AGGREGATION_STAGE_NAME_MAP: LazyLock<HashMap<&'static str, AggregationStage>> =
+    LazyLock::new(|| {
+        let project_function: fn(&ExplainPlan, &mut RawDocumentBuf, &QueryCatalog) -> () =
+            |p, writer, query_catalog| {
+                write_output_stage(
+                    |output, query_catalog| {
+                        query_diagnostics::get_projection_type_output(
+                            output,
+                            "project",
+                            query_catalog,
+                        )
+                    },
+                    query_catalog,
+                    p,
+                    writer,
+                );
+            };
+        let add_fields_function: fn(&ExplainPlan, &mut RawDocumentBuf, &QueryCatalog) -> () =
+            |p, writer, query_catalog| {
+                write_output_stage(
+                    |output, query_catalog| {
+                        query_diagnostics::get_projection_type_output(
+                            output,
+                            "add_fields",
+                            query_catalog,
+                        )
+                    },
+                    query_catalog,
+                    p,
+                    writer,
+                );
+            };
+        HashMap::from([
+            ("UNWIND", ("$unwind", None)),
+            ("MATCH", ("$match", None)),
+            ("LOOKUP_JOIN", ("$lookup", None)),
+            ("LOOKUP", ("$lookup", None)),
+            ("FACET", ("$facet", None)),
+            ("GROUP", ("$group", None)),
+            ("COUNT_SCAN", ("$count", None)),
+            ("LIMIT", ("$limit", None)),
+            ("SAMPLESORT", ("$sample", None)),
+            ("SORT", ("$sort", None)),
+            ("PROJECT", ("$project", Some(project_function))), //Some(WriteProjectionStage)),
+            ("ADDFIELDS", ("$addFields", Some(add_fields_function))), //Some(WriteAddFieldsStage)),
+            ("SHARD_MERGE", ("$mergeCursors", None)),
+            ("MERGE_CURSORS", ("$group", None)),
+            ("WORKER_PARTIAL_AGG", ("$group", None)),
+            ("UNIONWITH", ("$unionWith", None)),
+            ("DOCUMENTS_AGG", ("$documents", None)),
+            ("COLLSTATS_AGG", ("$collStats", None)),
+        ])
+    });
+
+fn write_output_stage(
+    f: fn(&str, &QueryCatalog) -> RawDocumentBuf,
+    query_catalog: &QueryCatalog,
+    plan: &ExplainPlan,
+    writer: &mut RawDocumentBuf,
+) {
+    if let Some(output) = plan.output.as_ref() {
+        for o in output {
+            let doc = f(o, query_catalog);
+            for (key, val) in doc.into_iter().flatten() {
+                writer.append(key, val.to_raw_bson());
+            }
+        }
+    }
+}
+
+/// Processing explain handles both inline `explain: true` and top-level explain wrappers.
+///
+/// # Errors
+///
+/// Returns an error if the explain target is malformed or backend explain execution fails.
+pub async fn process_explain(
+    request_context: &RequestContext<'_>,
+    verbosity: Option<Verbosity>,
+    connection_context: &ConnectionContext,
+    pg_data_client: &impl PgDataClient,
+) -> Result<Response> {
+    let target = request_context.request().explain_target()?;
+    let request_document = request_context.request().document();
+
+    let verbosity = verbosity.unwrap_or_else(|| {
+        request_document
+            .get_str("verbosity")
+            .map_or(Verbosity::QueryPlanner, Verbosity::from_str)
+    });
+
+    match target.request_type() {
+        RequestType::Aggregate => {
+            run_explain(
+                request_context,
+                &target,
+                "pipeline",
+                verbosity,
+                connection_context,
+                pg_data_client,
+            )
+            .await
+        }
+        RequestType::Find => {
+            run_explain(
+                request_context,
+                &target,
+                "find",
+                verbosity,
+                connection_context,
+                pg_data_client,
+            )
+            .await
+        }
+        RequestType::Count => {
+            run_explain(
+                request_context,
+                &target,
+                "count",
+                verbosity,
+                connection_context,
+                pg_data_client,
+            )
+            .await
+        }
+        RequestType::Distinct => {
+            run_explain(
+                request_context,
+                &target,
+                "distinct",
+                verbosity,
+                connection_context,
+                pg_data_client,
+            )
+            .await
+        }
+        _ => Err(BlackboxDBError::bad_value(
+            "Unrecognized explain command.".to_owned(),
+        )),
+    }
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum Verbosity {
+    Default,
+    QueryPlanner,
+    ExecutionStats,
+    AllPlansExecution,
+    AllShardsQueryPlan,
+    AllShardsExecution,
+}
+
+impl Verbosity {
+    fn from_str(value: &str) -> Self {
+        match value {
+            "queryPlanner" => Self::QueryPlanner,
+            "executionStats" => Self::ExecutionStats,
+            "allPlansExecution" => Self::AllPlansExecution,
+            "allShardsQueryPlan" => Self::AllShardsQueryPlan,
+            "allShardsExecution" => Self::AllShardsExecution,
+            _ => Self::Default,
+        }
+    }
+}
+
+#[expect(clippy::expect_used, reason = "values are checked before access")]
+async fn run_explain(
+    request_context: &RequestContext<'_>,
+    target: &ExplainTarget<'_>,
+    query_base: &str,
+    verbosity: Verbosity,
+    connection_context: &ConnectionContext,
+    pg_data_client: &impl PgDataClient,
+) -> Result<Response> {
+    let request = request_context.request();
+
+    let (explain_response, query) = pg_data_client
+        .execute_explain(
+            request_context,
+            target,
+            query_base,
+            verbosity,
+            connection_context,
+        )
+        .await?;
+
+    let dynamic_config = connection_context.dynamic_configuration();
+
+    match explain_response {
+        Some(content) => {
+            let explain_content = dynamic_config
+                .enable_developer_explain()
+                .then(|| convert_to_bson(content.clone()));
+
+            let (collection_name, subtype) = get_subtype_and_collection_name(target)?;
+            let (body, planning_time, execution_time, data_size) = transform_explain(
+                content,
+                request.db(),
+                collection_name,
+                subtype,
+                query_base,
+                verbosity,
+                connection_context.service_context.query_catalog(),
+            )?;
+
+            let mut explain = RawDocumentBuf::new();
+            explain.append("explainVersion", 2.0);
+
+            let command_str = format!(
+                "db.runCommand({{explain: {}}})",
+                Document::try_from(target.document())?
+                    .to_string()
+                    .replace('\"', "'")
+            );
+            if command_str.len() > MAX_EXPLAIN_BSON_COMMAND_LENGTH {
+                let truncate_at = command_str.floor_char_boundary(MAX_EXPLAIN_BSON_COMMAND_LENGTH);
+                explain.append("command", &command_str[..truncate_at]);
+            } else {
+                explain.append("command", command_str);
+            }
+
+            if let Some(planning_time) = planning_time {
+                if planning_time != 0.0 {
+                    explain.append(
+                        "explainCommandPlanningTimeMillis",
+                        smallest_from_f64(truncate_latency(planning_time)),
+                    );
+                }
+            }
+            if let Some(execution_time) = execution_time {
+                if execution_time != 0.0 {
+                    explain.append(
+                        "explainCommandExecTimeMillis",
+                        smallest_from_f64(truncate_latency(execution_time)),
+                    );
+                }
+            }
+            if let Some(data_size) = data_size {
+                explain.append("dataSize", data_size);
+            }
+
+            if let Some(instance_name) = dynamic_config.instance_name() {
+                if !instance_name.is_empty() {
+                    explain.append("instanceName", instance_name);
+                }
+            }
+
+            // Merge body fields into explain
+            for (key, val) in body.into_iter().flatten() {
+                explain.append(key, val.to_raw_bson());
+            }
+
+            if dynamic_config.enable_developer_explain() {
+                explain.append(
+                    "internal",
+                    developer_explain(
+                        &query,
+                        explain_content.expect("Set during developer explain"),
+                        target.document(),
+                        request.db(),
+                    ),
+                );
+            }
+
+            explain.append("ok", OK_SUCCEEDED);
+
+            Ok(Response::Raw(RawResponse::new(explain)))
+        }
+        None => Err(BlackboxDBError::internal_error(
+            "PG returned no rows in response".to_owned(),
+        )),
+    }
+}
+
+fn developer_explain(
+    query: &str,
+    explain_content: RawBson,
+    request: &RawDocument,
+    db: &str,
+) -> RawDocumentBuf {
+    rawdoc! {
+        "sql": {
+            "query": query
+        },
+        "query_parameters":[db, request.to_raw_document_buf()],
+        "explain": explain_content
+    }
+}
+
+fn get_subtype_and_collection_name<'a>(
+    target: &ExplainTarget<'a>,
+) -> Result<(&'a str, RequestType)> {
+    if let Some(collection) = target.collection() {
+        return Ok((collection, target.request_type()));
+    }
+
+    let (key, first_field) =
+        target
+            .document()
+            .into_iter()
+            .next()
+            .ok_or(BlackboxDBError::bad_value(
+                "Explain request was empty".to_owned(),
+            ))??;
+    let request_type = RequestType::from_str(key)?;
+
+    if let Some(collection) = first_field.as_str() {
+        return Ok((collection, request_type));
+    }
+
+    if request_type == RequestType::Aggregate
+        && (first_field.as_i32().is_some()
+            || first_field.as_i64().is_some()
+            || first_field.as_f64().is_some())
+    {
+        return Ok(("", request_type));
+    }
+
+    Err(BlackboxDBError::bad_value(
+        "First field of explain document needs to be a string".to_owned(),
+    ))
+}
+
+#[expect(
+    clippy::type_complexity,
+    reason = "complex return type required by explain transform"
+)]
+fn transform_explain(
+    explain_content: serde_json::Value,
+    db: &str,
+    collection: &str,
+    subtype: RequestType,
+    query_base: &str,
+    verbosity: Verbosity,
+    query_catalog: &QueryCatalog,
+) -> Result<(RawDocumentBuf, Option<f64>, Option<f64>, Option<String>)> {
+    let mut plans: Vec<PostgresExplain> = serde_json::from_value(explain_content).map_err(|e| {
+        BlackboxDBError::internal_error(format!("Failed to parse backend explain plan: {e}"))
+    })?;
+
+    let plan = plans.remove(0);
+
+    // Store top level data
+    let planning_time = plan.planning_time;
+    let execution_time = plan.execution_time;
+    let data_size = plan
+        .plan
+        .distributed_plan
+        .as_ref()
+        .and_then(|dp| dp.job.total_response_size.clone());
+
+    let plan = decompose_distributed_plan(plan.plan);
+
+    let is_unsharded = is_unsharded(&plan);
+
+    let plan = try_simplify_plan(plan, is_unsharded, query_base, query_catalog);
+
+    let collection_path = format!("{db}.{collection}");
+    let base_result = if subtype == RequestType::Aggregate {
+        aggregate_explain(plan, &collection_path, verbosity, query_catalog)
+    } else {
+        cursor_explain(plan, &collection_path, false, verbosity, query_catalog)
+    };
+
+    Ok((base_result, planning_time, execution_time, data_size))
+}
+
+fn decompose_distributed_plan(mut explain_plan: ExplainPlan) -> ExplainPlan {
+    if let Some(mut subplans) = explain_plan
+        .distributed_plan
+        .as_mut()
+        .and_then(|dplan| dplan.subplans.take())
+    {
+        return decompose_plan_with_subplans(explain_plan, &mut subplans);
+    }
+
+    if let Some(plans) = explain_plan.inner_plans {
+        explain_plan.inner_plans =
+            Some(plans.into_iter().map(decompose_distributed_plan).collect());
+    }
+    explain_plan
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "distributed_plan is checked for Some before access"
+)]
+fn walk_plan<T, F, G>(
+    explain_plan: &ExplainPlan,
+    plan_func: &F,
+    job_func: &G,
+    state: T,
+    walk_inner: bool,
+) -> T
+where
+    F: Fn(&ExplainPlan, T) -> T,
+    G: Fn(&DistributedJob, T) -> T,
+{
+    let mut state = plan_func(explain_plan, state);
+    if let Some(tasks) = explain_plan
+        .distributed_plan
+        .as_ref()
+        .map(|dp| &dp.job.tasks)
+    {
+        state = job_func(
+            &explain_plan
+                .distributed_plan
+                .as_ref()
+                .expect("Just acquired")
+                .job,
+            state,
+        );
+        for task in tasks {
+            for plans in &task.worker_plans {
+                for plan in plans {
+                    state = walk_plan(&plan.plan, plan_func, job_func, state, walk_inner);
+                }
+            }
+        }
+    }
+    if walk_inner {
+        if let Some(ref plans) = explain_plan.inner_plans {
+            for plan in plans {
+                state = walk_plan(plan, plan_func, job_func, state, walk_inner);
+            }
+        }
+    }
+    state
+}
+
+#[expect(clippy::expect_used, reason = "values are checked before access")]
+fn decompose_plan_with_subplans(
+    mut explain_plan: ExplainPlan,
+    subplans: &mut Vec<DistributedSubPlan>,
+) -> ExplainPlan {
+    if subplans.is_empty() {
+        return explain_plan;
+    }
+
+    let (intermediate_read, _, other_tasks) = walk_plan(
+        &explain_plan,
+        &|plan, (intermediate_read, custom_tasks, other_tasks)| match (
+            plan.node_type.as_str(),
+            plan.function_name.as_deref(),
+        ) {
+            ("Custom Scan", _) => (intermediate_read, custom_tasks + 1, other_tasks),
+            ("Function Scan", Some("read_intermediate_result")) => {
+                (intermediate_read + 1, custom_tasks, other_tasks)
+            }
+            _ => (intermediate_read, custom_tasks, other_tasks + 1),
+        },
+        &|_, s| s,
+        (0, 0, 0),
+        true,
+    );
+
+    if intermediate_read == 0 {
+        if let Some(dp) = explain_plan.distributed_plan.as_mut() {
+            dp.subplans = Some(subplans.clone());
+        }
+        return explain_plan;
+    }
+
+    if other_tasks == 0 && intermediate_read == 1 {
+        if subplans[subplans.len() - 1].statements.len() == 1 {
+            let mut last_sub_plan = subplans.remove(subplans.len() - 1);
+            return decompose_plan_with_subplans(last_sub_plan.statements.remove(0).plan, subplans);
+        }
+        let mut new_plans = Vec::new();
+        for plans in subplans {
+            for plan in &plans.statements {
+                new_plans.push(plan.plan.clone());
+            }
+        }
+        if new_plans.len() == 1 {
+            return decompose_distributed_plan(new_plans.remove(0));
+        }
+
+        explain_plan.inner_plans = Some(new_plans);
+        explain_plan.distributed_plan = None;
+    } else if intermediate_read > 0 {
+        if let Some(tasks) = explain_plan
+            .distributed_plan
+            .as_ref()
+            .map(|dp| &dp.job.tasks)
+        {
+            let inner_plans = explain_plan.inner_plans.get_or_insert(Vec::new());
+            for task in tasks {
+                for list in &task.worker_plans {
+                    for plan in list {
+                        inner_plans.push(plan.plan.clone());
+                    }
+                }
+            }
+            explain_plan.distributed_plan = None;
+        }
+
+        if let Some(inner_plans) = explain_plan.inner_plans {
+            explain_plan.inner_plans = Some(
+                inner_plans
+                    .into_iter()
+                    .map(|p| walk_plan_and_replace_intermediate_reads(p, subplans))
+                    .collect(),
+            );
+        }
+
+        // TODO: Rip out the citus dependency
+        if explain_plan
+            .custom_plan_provider
+            .as_ref()
+            .is_some_and(|s| s == "Citus Adaptive")
+            && explain_plan
+                .inner_plans
+                .as_ref()
+                .is_some_and(|ip| ip.len() == 1)
+        {
+            return explain_plan.inner_plans.take().expect("Checked").remove(0);
+        }
+    }
+    explain_plan
+}
+
+fn walk_plan_and_replace_intermediate_reads(
+    mut plan: ExplainPlan,
+    subplans: &mut Vec<DistributedSubPlan>,
+) -> ExplainPlan {
+    if subplans.is_empty() {
+        return plan;
+    }
+
+    if plan.node_type == "Function Scan"
+        && plan.function_name.as_deref() == Some("read_intermediate_result")
+    {
+        if subplans[subplans.len() - 1].statements.len() == 1 {
+            let mut last_sub_plan = subplans.remove(subplans.len() - 1);
+            return decompose_plan_with_subplans(last_sub_plan.statements.remove(0).plan, subplans);
+        }
+    } else if let Some(inner_plans) = plan.inner_plans {
+        plan.inner_plans = Some(
+            inner_plans
+                .into_iter()
+                .map(|p| decompose_plan_with_subplans(p, subplans))
+                .collect(),
+        );
+    }
+
+    plan
+}
+
+fn is_unsharded(plan: &ExplainPlan) -> bool {
+    let (has_distributed_job, has_shard_filter) = walk_plan(
+        plan,
+        &|plan, mut state: (bool, bool)| {
+            if let Some(relation) = plan.relation_name.as_deref() {
+                if plan.filter.as_deref().is_some_and(|f| {
+                    query_diagnostics::has_shard_filter_query(f)
+                        && !query_diagnostics::is_unsharded_query(relation, f)
+                }) || plan.index_condition.as_deref().is_some_and(|ic| {
+                    query_diagnostics::has_shard_filter_query(ic)
+                        && !query_diagnostics::is_unsharded_query(relation, ic)
+                }) {
+                    state.1 = true;
+                }
+            }
+            state
+        },
+        &|job, mut state: (bool, bool)| {
+            if job.task_count > 1 {
+                state.0 = true;
+            }
+            state
+        },
+        (false, false),
+        true,
+    );
+    !has_distributed_job && !has_shard_filter
+}
+
+fn remove_nested_add_fields(
+    mut plan: ExplainPlan,
+    parent_stage_name: &str,
+    query_catalog: &QueryCatalog,
+) -> ExplainPlan {
+    plan.inner_plans = plan.inner_plans.map(|inner_plans| {
+        inner_plans
+            .into_iter()
+            .flat_map(|plan| {
+                let (stage_name, _) =
+                    get_stage_from_plan(&plan, Some(parent_stage_name), query_catalog);
+                if stage_name == "ADDFIELDS" {
+                    plan.inner_plans
+                        .map_or(vec![].into_iter(), std::iter::IntoIterator::into_iter)
+                } else {
+                    vec![plan].into_iter()
+                }
+            })
+            .collect()
+    });
+    plan
+}
+
+fn try_simplify_plan(
+    mut plan: ExplainPlan,
+    is_unsharded: bool,
+    query_base: &str,
+    query_catalog: &QueryCatalog,
+) -> ExplainPlan {
+    if is_unsharded {
+        if let Some(job) = plan.distributed_plan.as_mut().map(|dp| &mut dp.job) {
+            if job.task_count == 1
+                && job.tasks_shown == "All"
+                && job.tasks.len() == 1
+                && job.tasks[0].worker_plans.len() == 1
+                && job.tasks[0].worker_plans[0].len() == 1
+            {
+                plan = job.tasks.remove(0).worker_plans.remove(0).remove(0).plan;
+            }
+        }
+    }
+    if query_base == "count" {
+        if is_unsharded && plan.distributed_plan.is_none() {
+            return ExplainPlan {
+                node_type: "Explain_Count_Scan".to_owned(),
+                inner_plans: Some(vec![remove_nested_add_fields(plan, "COUNT", query_catalog)]),
+                ..Default::default()
+            };
+        } else if let Some(dp) = plan.distributed_plan.as_mut() {
+            if dp.job.task_count == 1
+                && dp.job.tasks_shown == "All"
+                && dp.job.tasks.len() == 1
+                && dp.job.tasks[0].worker_plans.len() == 1
+                && dp.job.tasks[0].worker_plans[0].len() == 1
+            {
+                let sub_plan = dp.job.tasks[0].worker_plans[0].remove(0);
+                let new_plan = remove_nested_add_fields(sub_plan.plan, "COUNT", query_catalog);
+                let new_plan = ExplainPlan {
+                    node_type: "Explain_Count_Scan".to_owned(),
+                    inner_plans: Some(vec![new_plan]),
+                    ..Default::default()
+                };
+                dp.job.tasks[0].worker_plans[0].insert(
+                    0,
+                    PostgresExplain {
+                        plan: new_plan,
+                        planning_time: sub_plan.planning_time,
+                        execution_time: sub_plan.execution_time,
+                    },
+                );
+            }
+        }
+    }
+    plan
+}
+
+#[derive(Clone, Copy)]
+enum AggregationType {
+    /// <summary>
+    /// A simple aggregation that can be reduced to a "Count"/"Distinct"/"Find" style explain.
+    /// </summary>
+    SimpleAggregation,
+
+    /// <summary>
+    /// An aggregation that requires multiple stages to explain.
+    /// </summary>
+    StageBasedAggregation,
+}
+
+const SIMPLE_AGGREGATION_STAGES: [&str; 9] = [
+    "COLLSCAN",
+    "IXSCAN",
+    "FETCH",
+    "OR",
+    "PROJECTION",
+    "AND",
+    "PROJECTION_DEFAULT",
+    "EOF",
+    "SHARD_MERGE",
+];
+
+fn get_projection_plan_from_output(output: &[String]) -> Option<&'static str> {
+    for output in output {
+        if output.contains("COALESCE(array_agg(") {
+            return Some("LOOKUP");
+        }
+        if output.contains("bson_dollar_lookup_extract_filter_expression") {
+            return Some("LOOKUP_EXTRACT");
+        }
+        if output.contains("bson_dollar_unwind") {
+            return Some("UNWIND");
+        }
+        if output.contains("bson_dollar_project") {
+            return Some("PROJECT");
+        }
+        if output.contains("bson_dollar_add_fields") {
+            return Some("ADDFIELDS");
+        }
+        if output.contains("bson_distinct_unwind") {
+            return Some("DISTINCT_UNWIND");
+        }
+    }
+    None
+}
+
+fn get_aggregate_plan_from_output<'a>(
+    output: &'a str,
+    parent_stage: Option<&str>,
+    query_catalog: &QueryCatalog,
+) -> Option<&'a str> {
+    if query_diagnostics::is_output_count(output, query_catalog) {
+        Some("COUNT_SCAN")
+    } else if output.contains("bson_build_distinct_response")
+        || output.contains("bson_distinct_agg")
+    {
+        Some("DISTINCT_SCAN")
+    } else if output.contains("COALESCE(array_agg(") {
+        Some("LOOKUP_JOIN")
+    } else if output.contains("bson_object_agg") {
+        Some("FACET")
+    } else if output.contains(query_catalog.find_coalesce()) {
+        if parent_stage.is_some_and(|p| p == "LOOKUP") {
+            Some("LOOKUP_JOIN")
+        } else {
+            let facet_names: Vec<&str> = output.split('\'').collect();
+            (facet_names.len() > 4).then(|| facet_names[facet_names.len() - 4])
+        }
+    } else if output.contains("coord_combine_agg") {
+        Some("MERGE_CURSORS")
+    } else if output.contains("worker_partial_agg") {
+        Some("WORKER_PARTIAL_AGG")
+    } else {
+        None
+    }
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "explain plan stage classification requires many branches"
+)]
+#[expect(clippy::expect_used, reason = "values are checked before access")]
+fn get_stage_from_plan(
+    plan: &ExplainPlan,
+    parent_stage: Option<&str>,
+    query_catalog: &QueryCatalog,
+) -> (String, Option<&'static str>) {
+    if plan
+        .index_name
+        .as_ref()
+        .is_some_and(|name| name.starts_with("collection_pk") || name == "_id_")
+        && plan.index_condition.as_ref().is_some_and(|cond| {
+            !cond.as_str().contains("object_id")
+                && query_diagnostics::is_unsharded_query(
+                    plan.relation_name.as_deref().unwrap_or_default(),
+                    cond.as_str(),
+                )
+        })
+    {
+        return ("COLLSCAN".to_owned(), None);
+    }
+
+    match plan.node_type.as_str() {
+        "Index Only Scan" => ("IXSCAN".to_owned(), None),
+        "Bitmap Index Scan" | "Index Scan" => {
+            if plan
+                .index_condition
+                .as_ref()
+                .is_some_and(|name| name.contains(query_catalog.find_operator()))
+            {
+                ("TEXT_MATCH".to_owned(), Some("IXSCAN"))
+            } else if plan
+                .order_by
+                .as_deref()
+                .is_some_and(|o| o.contains("<|-|>"))
+            {
+                (
+                    if plan
+                        .order_by
+                        .as_deref()
+                        .expect("Checked")
+                        .contains("bson_validate_geometry")
+                    {
+                        "GEO_NEAR_2D"
+                    } else {
+                        "GEO_NEAR_2DSPHERE"
+                    }
+                    .to_owned(),
+                    Some("IXSCAN"),
+                )
+            } else if parent_stage.is_some_and(|s| s == "FETCH")
+                || plan.node_type.as_str() == "Bitmap Index Scan"
+            {
+                ("IXSCAN".to_owned(), None)
+            } else {
+                ("FETCH".to_owned(), Some("IXSCAN"))
+            }
+        }
+        "Bitmap Heap Scan" | "Parallel Bitmap Heap Scan" => {
+            if plan
+                .filter
+                .as_ref()
+                .is_some_and(|f| f.contains(query_catalog.find_bson_text_meta_qual()))
+            {
+                ("PROJECTION_DEFAULT".to_owned(), None)
+            } else {
+                ("FETCH".to_owned(), None)
+            }
+        }
+        "BitmapOr" => ("OR".to_owned(), None),
+        "Result" | "ProjectSet" => {
+            if let Some(o) = plan.output.as_ref() {
+                if let Some(p) = get_projection_plan_from_output(o) {
+                    return (p.to_owned(), None);
+                }
+            }
+            ("PROJECTION_DEFAULT".to_owned(), None)
+        }
+        "BitmapAnd" => ("AND".to_owned(), None),
+        "Incremental Sort" => ("SORT".to_owned(), None),
+        "Sort" => {
+            if plan
+                .sort_keys
+                .as_ref()
+                .is_some_and(|keys| keys.len() == 1 && keys[0].contains("(random())"))
+            {
+                return ("SAMPLESORT".to_owned(), None);
+            }
+            if let Some(sort_keys) = plan.sort_keys.as_ref() {
+                if sort_keys.len() == 1 {
+                    if sort_keys[0].contains("bson_expression_get") {
+                        return ("GROUPSORT".to_owned(), None);
+                    } else if sort_keys[0].contains("bson_validate_geometry") {
+                        return ("GEO_NEAR_2D".to_owned(), None);
+                    } else if sort_keys[0].contains("bson_validate_geography") {
+                        return ("GEO_NEAR_2DSPHERE".to_owned(), None);
+                    }
+                }
+            }
+            if plan
+                .sort_keys
+                .as_ref()
+                .is_some_and(|keys| keys.len() == 1 && keys[0].contains("bson_expression_get"))
+            {
+                return ("GROUPSORT".to_owned(), None);
+            }
+            ("SORT".to_owned(), None)
+        }
+        "Sample Scan" => ("SAMPLESCAN".to_owned(), None),
+        "Seq Scan" => ("COLLSCAN".to_owned(), None),
+        "Unique" => ("UNIQUE".to_owned(), None),
+        "Nested Loop" => {
+            if let Some(join) = plan.join_type.as_ref() {
+                if join == "Left"
+                    || (join == "Inner"
+                        && plan.output.as_ref().is_some_and(|o| {
+                            o.len() == 1 && o[0].contains("bson_dollar_merge_documents")
+                        }))
+                {
+                    ("LOOKUP".to_owned(), None)
+                } else {
+                    (join.to_uppercase() + "_JOIN", None)
+                }
+            } else {
+                ("JOIN".to_owned(), None)
+            }
+        }
+        "CTE Scan" | "Subquery Scan" => {
+            if let Some(outputs) = plan.output.as_ref() {
+                let project_stage = if outputs.is_empty() {
+                    None
+                } else {
+                    get_projection_plan_from_output(outputs)
+                };
+
+                if plan.filter.is_some() {
+                    return ("MATCH".to_owned(), project_stage);
+                } else if let Some(stage) = project_stage {
+                    return (stage.to_owned(), None);
+                }
+            }
+            ("PROJECTION_DEFAULT".to_owned(), None)
+        }
+        "Limit" => {
+            let p = plan
+                .output
+                .as_ref()
+                .and_then(|o| get_projection_plan_from_output(o));
+            ("LIMIT".to_owned(), p)
+        }
+        "Aggregate" => {
+            if let (Some(g), Some(o)) = (plan.group_key.as_ref(), plan.output.as_ref()) {
+                let plan_outputs: Vec<&String> = o.iter().filter(|o| !g.contains(o)).collect();
+                if plan_outputs.len() == 1 {
+                    if let Some(p) =
+                        get_aggregate_plan_from_output(plan_outputs[0], parent_stage, query_catalog)
+                    {
+                        return (p.to_owned(), None);
+                    }
+                }
+
+                // An Aggregate with a group_key is always a $group stage
+                return ("GROUP".to_owned(), None);
+            } else if plan.group_key.is_some() {
+                return ("GROUP".to_owned(), None);
+            } else if let Some(o) = plan.output.as_ref() {
+                if o.len() == 1 {
+                    if let Some(p) =
+                        get_aggregate_plan_from_output(&o[0], parent_stage, query_catalog)
+                    {
+                        return (p.to_owned(), None);
+                    }
+                }
+            }
+            tracing::warn!("Unknown stage aggregate found");
+            ("GENERIC_AGGREGATE".to_owned(), None)
+        }
+        "Gather" => ("PARALLEL_MERGE".to_owned(), None),
+        "Gather Merge" => ("PARALLEL_SORT_MERGE".to_owned(), None),
+        "Custom Scan" => {
+            if let Some(cpp) = plan.custom_plan_provider.as_ref() {
+                match cpp.as_str() {
+                    "Citus Adaptive" | "Citus MERGE INTO ..." => {
+                        if plan
+                            .distributed_plan
+                            .as_ref()
+                            .is_some_and(|p| p.job.task_count == 1)
+                        {
+                            // TODO: Rip out the citus dependency
+                            ("SINGLE_SHARD".to_owned(), None)
+                        } else {
+                            ("SHARD_MERGE".to_owned(), None)
+                        }
+                    }
+                    "BlackboxDBApiExplainQueryScan" => ("ExplainWrapper".to_owned(), None),
+                    "BlackboxDBApiDistinctQueryScan" => ("DISTINCT_SCAN".to_owned(), None),
+                    "BlackboxDBApiReservoirSample" => ("SAMPLESORT".to_owned(), None),
+                    scan_type if query_catalog.scan_type_stage_override(scan_type).is_some() => (
+                        query_catalog
+                            .scan_type_stage_override(scan_type)
+                            .expect("checked")
+                            .to_owned(),
+                        None,
+                    ),
+                    scan_type if query_catalog.scan_types().contains(&scan_type.to_owned()) => {
+                        ("FETCH".to_owned(), None)
+                    }
+                    _ => {
+                        tracing::warn!("Unknown scan: {cpp}");
+                        (String::new(), None)
+                    }
+                }
+            } else {
+                tracing::warn!("Custom scan without provider.");
+                (String::new(), None)
+            }
+        }
+        "Function Scan" => {
+            if let Some(function_name) = plan.function_name.as_deref() {
+                match function_name {
+                    "empty_data_table" => return ("EOF".to_owned(), None),
+                    "bson_lookup_unwind"
+                        // A lookup unwind as the base RTE
+                        if (plan.inner_plans.is_none()
+                            || plan
+                                .inner_plans
+                                .as_ref()
+                                .is_some_and(std::vec::Vec::is_empty))
+                            && (plan.parent_relationship.is_none()
+                                || plan
+                                    .parent_relationship
+                                    .as_ref()
+                                    .is_some_and(|pr| pr != "Outer")) =>
+                    {
+                        return ("DOCUMENTS_AGG".to_owned(), None);
+                    }
+                    "coll_stats_aggregation" => {
+                        if parent_stage.is_some_and(|x| x == "COUNT") {
+                            return ("RECORD_STORE_FAST_COUNT".to_owned(), None);
+                        }
+                        return ("COLLSTATS_AGG".to_owned(), None);
+                    }
+                    _ => {}
+                }
+            }
+            tracing::warn!(
+                "Unknown function found: {}",
+                plan.function_name.as_deref().unwrap_or("None")
+            );
+            ("FUNCSCAN".to_owned(), None)
+        }
+        "Explain_Count_Scan" => ("COUNT".to_owned(), None),
+        "Append" => {
+            // This is an estimate of the behavior - could be incorrect, but
+            // as a starting point "good enough".
+            if plan.parent_relationship.is_none()
+                && plan.inner_plans.as_ref().is_some_and(|ip| {
+                    ip.len() == 2
+                        && ip.iter().all(|p| {
+                            p.parent_relationship
+                                .as_deref()
+                                .is_some_and(|pr| pr == "Member")
+                        })
+                })
+            {
+                ("UNIONWITH".to_owned(), None)
+            } else {
+                ("UNION".to_owned(), None)
+            }
+        }
+        _ => {
+            tracing::warn!("Unknown stage found: {}", plan.node_type);
+            ("COLLSCAN".to_owned(), None)
+        }
+    }
+}
+
+fn aggregate_explain(
+    mut plan: ExplainPlan,
+    collection_path: &str,
+    verbosity: Verbosity,
+    query_catalog: &QueryCatalog,
+) -> RawDocumentBuf {
+    let (agg_type, shard_count) = walk_plan(
+        &plan,
+        &|plan, mut state: (AggregationType, i32)| {
+            let (stage, _) = get_stage_from_plan(plan, None, query_catalog);
+            if !SIMPLE_AGGREGATION_STAGES.contains(&stage.as_str()) {
+                state.0 = AggregationType::StageBasedAggregation;
+            }
+            state
+        },
+        &|job, mut state| {
+            state.1 = std::cmp::max(state.1, job.task_count);
+            state
+        },
+        (AggregationType::SimpleAggregation, 0),
+        true,
+    );
+
+    if shard_count == 0 {
+        return aggregate_explain_core(plan, agg_type, collection_path, verbosity, query_catalog);
+    }
+
+    let result = determine_pipeline_split(&mut plan);
+    if let Some((errors, shard_parts, dplan)) = result {
+        if !shard_parts.is_empty() {
+            let mut shards_explain = rawdoc! {
+                "shardCount": dplan.job.task_count,
+                "shardInformation": dplan.job.tasks_shown,
+            };
+
+            if let Some(ref bytes) = dplan.job.total_response_size {
+                shards_explain.append("retrievedDocumentSizeBytes", bytes.as_str());
+            }
+
+            let mut i = 0;
+            for shard_plan in shard_parts {
+                i += 1;
+                shards_explain.append(
+                    format!("shard_{i}"),
+                    aggregate_explain_core(
+                        shard_plan.clone(),
+                        agg_type,
+                        collection_path,
+                        verbosity,
+                        query_catalog,
+                    ),
+                );
+            }
+            for error in errors {
+                i += 1;
+
+                shards_explain.append(format!("shard_{i}"), rawdoc! {"error": error});
+            }
+
+            return rawdoc! {
+                "splitPipeline": {
+                    "mergerPart": aggregate_explain_core(plan, AggregationType::StageBasedAggregation, collection_path, verbosity, query_catalog)
+                },
+                "shards":  shards_explain
+            };
+        }
+    }
+    aggregate_explain_core(plan, agg_type, collection_path, verbosity, query_catalog)
+}
+
+fn determine_pipeline_split(
+    plan: &mut ExplainPlan,
+) -> Option<(Vec<String>, Vec<ExplainPlan>, DistributedQueryPlan)> {
+    let mut errors = Vec::new();
+    let mut shard_parts = Vec::new();
+    if let Some(dplan) = plan.distributed_plan.take() {
+        if dplan.job.task_count >= 1 {
+            for job in dplan.job.tasks.as_slice() {
+                if let Some(error) = job.error.as_deref() {
+                    errors.push(error.to_owned());
+                }
+
+                for plan in job.worker_plans.as_slice() {
+                    if !plan.is_empty() {
+                        shard_parts.push(plan[0].plan.clone());
+                    }
+                }
+            }
+        }
+        return Some((errors, shard_parts, dplan));
+    } else if let Some(inner_plans) = plan.inner_plans.as_mut() {
+        for inner_plan in inner_plans {
+            let result = determine_pipeline_split(inner_plan);
+            if result.as_ref().is_some_and(|r| !r.1.is_empty()) {
+                return result;
+            }
+        }
+    }
+    None
+}
+
+fn aggregate_explain_core(
+    plan: ExplainPlan,
+    agg_type: AggregationType,
+    collection_path: &str,
+    verbosity: Verbosity,
+    query_catalog: &QueryCatalog,
+) -> RawDocumentBuf {
+    match agg_type {
+        AggregationType::SimpleAggregation => {
+            rawdoc! {
+                "stages": [
+                    { "$cursor": cursor_explain(plan, collection_path, false, verbosity, query_catalog) }
+                ]
+            }
+        }
+        AggregationType::StageBasedAggregation => {
+            let mut processed_stages = Vec::new();
+            classify_stages(plan, None, &mut processed_stages, query_catalog);
+            let bufs: Vec<RawDocumentBuf> = processed_stages
+                .into_iter()
+                .map(|(blackboxdb_name, plan, _, f)| {
+                    let mut doc = cursor_explain(
+                        plan.clone(),
+                        collection_path,
+                        true,
+                        verbosity,
+                        query_catalog,
+                    );
+                    if let Some(f) = f {
+                        f(&plan, &mut doc, query_catalog);
+                    }
+                    rawdoc! { blackboxdb_name: doc }
+                })
+                .collect();
+
+            let mut array = RawArrayBuf::new();
+            for buf in bufs {
+                array.push(buf);
+            }
+            rawdoc! {"stages": array}
+        }
+    }
+}
+
+type Stage = (
+    String,
+    ExplainPlan,
+    String,
+    Option<fn(&ExplainPlan, &mut RawDocumentBuf, &QueryCatalog) -> ()>,
+);
+
+fn classify_stages(
+    mut plan: ExplainPlan,
+    prior_stage: Option<&str>,
+    processed_stages: &mut Vec<Stage>,
+    query_catalog: &QueryCatalog,
+) -> Option<ExplainPlan> {
+    let (stage_name, _) = get_stage_from_plan(&plan, prior_stage, query_catalog);
+
+    // base case - if we see a table it becomes terminal - everything below gets put in here.
+    if plan.relation_name.is_some() || stage_name == "ExplainWrapper" {
+        processed_stages.push(("$cursor".to_owned(), plan, stage_name, None));
+        return None;
+    }
+
+    // When SAMPLESORT comes from BlackboxDBApiReservoirSample CustomScan, treat it as
+    // terminal so it stays inside $cursor. On single-node the ExplainWrapper already
+    // collapses it, but on multi-node the ExplainWrapper is on the coordinator and gets
+    // stripped during Citus subplan substitution, exposing SAMPLESORT at the top level.
+    if stage_name == "SAMPLESORT"
+        && plan.custom_plan_provider.as_deref() == Some("BlackboxDBApiReservoirSample")
+    {
+        processed_stages.push(("$cursor".to_owned(), plan, stage_name, None));
+        return None;
+    }
+
+    // if this is a Lookup JOIN then we automatically treat it as terminal.
+    // all nested stages get placed under this one.
+    // also let it parent under the root $lookup projection.
+    if stage_name == "LOOKUP_JOIN" {
+        return Some(plan);
+    }
+
+    if stage_name != "facet1"
+        && stage_name.len() > "Facet".len()
+        && stage_name.to_lowercase().starts_with("facet")
+    {
+        return Some(plan);
+    }
+
+    // Do a DFS of the stages.
+    let inner_plans = plan.inner_plans.take();
+    plan.inner_plans = inner_plans.map(|inner| {
+        inner
+            .into_iter()
+            .filter_map(|plan| {
+                classify_stages(plan, Some(&stage_name), processed_stages, query_catalog)
+            })
+            .collect()
+    });
+
+    if is_aggregation_stage_skippable(&plan, &stage_name, prior_stage) {
+        return Some(plan);
+    }
+
+    if let Some((stage, func)) = AGGREGATION_STAGE_NAME_MAP.get(stage_name.as_str()) {
+        processed_stages.push(((*stage).to_owned(), plan, stage_name, *func));
+        return None;
+    }
+
+    if prior_stage.is_none() {
+        tracing::warn!("Found residual unparented aggregation stage {stage_name}");
+        processed_stages.push(("$root".to_owned(), plan, stage_name, None));
+        return None;
+    }
+
+    tracing::warn!("Unknown aggregation stage {stage_name}");
+    Some(plan)
+}
+
+fn is_aggregation_stage_skippable(
+    plan: &ExplainPlan,
+    stage_name: &str,
+    prior_stage: Option<&str>,
+) -> bool {
+    // let 2 merge cursors merge.
+    if prior_stage.is_some_and(|p| p == stage_name) && stage_name == "MERGE_CURSORS" {
+        return true;
+    }
+
+    if stage_name == "PROJECTION_DEFAULT" || stage_name == "FETCH" {
+        // if there's valid filters, inner plans, or outputs - it's useful.
+        if plan.filter.is_some()
+            || plan.inner_plans.as_ref().is_some_and(|ip| !ip.is_empty())
+            || plan.output.as_ref().is_some_and(|o| o.len() > 1)
+        {
+            return false;
+        }
+
+        // no filters, no output, no inner plan - ignorable.
+        if plan.output.as_ref().is_none_or(std::vec::Vec::is_empty) {
+            return true;
+        }
+
+        if let Some(o) = plan.output.as_ref() {
+            if o.len() == 1
+                && plan
+                    .alias
+                    .as_ref()
+                    .is_some_and(|a| o[0] == format!("{a}.document"))
+            {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn get_total_examined(plan: &ExplainPlan) -> (i64, i64) {
+    let (mut total_rows_examined, mut total_keys_examined, _) = walk_plan(
+        plan,
+        &|p, (total_rows_examined, total_keys_examined, root)| {
+            if std::ptr::eq(p, root) {
+                (total_rows_examined, total_keys_examined, root)
+            } else {
+                (
+                    total_rows_examined
+                        + p.actual_rows.unwrap_or(0)
+                        + p.rows_removed_by_filter.unwrap_or(0),
+                    total_keys_examined
+                        + p.actual_rows.unwrap_or(0)
+                        + p.rows_removed_by_index.unwrap_or(0),
+                    root,
+                )
+            }
+        },
+        &|_, state| state,
+        (0, 0, plan),
+        false,
+    );
+
+    if total_rows_examined == 0 {
+        total_rows_examined =
+            plan.actual_rows.unwrap_or(0) + plan.rows_removed_by_filter.unwrap_or(0);
+    }
+    if total_keys_examined == 0 {
+        total_keys_examined =
+            plan.actual_rows.unwrap_or(0) + plan.rows_removed_by_index.unwrap_or(0);
+    }
+    (total_rows_examined, total_keys_examined)
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "query planner output construction requires many conditional fields"
+)]
+#[expect(clippy::expect_used, reason = "values are checked before access")]
+fn query_planner(
+    plan: ExplainPlan,
+    collection_path: &str,
+    is_aggregation_stage: bool,
+    query_catalog: &QueryCatalog,
+) -> RawDocumentBuf {
+    let mut writer = RawDocumentBuf::new();
+    if plan.distributed_plan.is_none() && !is_aggregation_stage {
+        writer.append("namespace", collection_path);
+    }
+
+    // Collect indexCosts from the entire plan tree before walking stages.
+    let mut index_costs_by_ns: Vec<(String, Vec<RawDocumentBuf>)> = Vec::new();
+    collect_index_costs(&plan, collection_path, &mut index_costs_by_ns);
+
+    let result = walk_plan_stage(
+        plan,
+        None,
+        query_catalog,
+        |plan, stage_name, query_catalog| {
+            let mut doc = rawdoc! {
+                "stage": stage_name,
+            };
+
+            if let Some(namespace_name) = plan.namespace_name.as_deref() {
+                doc.append("ns", namespace_name);
+            }
+
+            if let Some(cursor_scan_type) = plan.cursor_scan_type.as_deref() {
+                doc.append("cursorScanType", cursor_scan_type);
+            }
+
+            if stage_name != "FETCH" {
+                if let Some(index_name) = plan.index_name.as_deref() {
+                    doc.append("indexName", index_name);
+                }
+
+                if let Some(direction) = plan.scan_direction.as_deref() {
+                    doc.append("direction", direction);
+                }
+
+                if plan.node_type.to_lowercase().contains("bitmap") {
+                    doc.append("isBitmap", true);
+                }
+
+                if plan.node_type == "Index Only Scan" {
+                    doc.append("isIndexOnlyScan", true);
+                }
+
+                if let Some(details) = plan.index_details.as_ref() {
+                    let matching: Vec<&IndexDetails> = details
+                        .iter()
+                        .filter(|d| d.index_name.as_deref() == plan.index_name.as_deref())
+                        .collect();
+
+                    if matching.len() == 1 {
+                        let mut index_doc = rawdoc! {};
+                        write_query_planner_index_usage(matching[0], &mut index_doc);
+                        doc.append("indexUsage", index_doc);
+                    } else if matching.len() > 1 {
+                        let mut arr = RawArrayBuf::new();
+                        for detail in &matching {
+                            let mut index_doc = rawdoc! {};
+                            write_query_planner_index_usage(detail, &mut index_doc);
+                            arr.push(index_doc);
+                        }
+                        doc.append("indexUsages", arr);
+                    }
+                }
+            }
+
+            if let Some(page_size) = plan.page_size {
+                if page_size > 0 {
+                    doc.append("pageSize", smallest_from_i64(page_size));
+                }
+            }
+
+            if let Some(sample_size) = plan.sample_size {
+                if sample_size > 0 {
+                    doc.append("sampleSize", smallest_from_i64(sample_size));
+                }
+            }
+
+            if let Some(sample_reservoir_method) = &plan.sample_reservoir_method {
+                doc.append("sampleReservoirMethod", sample_reservoir_method.as_str());
+            }
+
+            if let Some(sample_rows_skipped) = plan.sample_rows_skipped {
+                doc.append("sampleRowsSkipped", smallest_from_i64(sample_rows_skipped));
+            }
+
+            if let Some(sample_heap_skips) = plan.sample_heap_skips {
+                doc.append("sampleHeapSkips", smallest_from_i64(sample_heap_skips));
+            }
+
+            if let Some(startup_cost) = plan.startup_cost {
+                doc.append("startupCost", startup_cost);
+            }
+
+            if let Some(total_cost) = plan.total_cost {
+                doc.append("totalCost", total_cost);
+            }
+
+            if let Some(workers_planned) = plan.workers_planned {
+                if workers_planned > 0 {
+                    doc.append("workersPlanned", smallest_from_i64(workers_planned));
+                }
+            }
+
+            if let Some(strategy) = plan.strategy.as_deref() {
+                if !strategy.eq_ignore_ascii_case("Plain") {
+                    doc.append("aggStrategy", strategy);
+                }
+            }
+
+            if let Some(join_type) = plan.join_type.as_deref() {
+                if plan.node_type == "Nested Loop" {
+                    doc.append("joinType", join_type);
+                }
+            }
+
+            if let Some(vector_search_params) = plan.vector_search_custom_params.as_deref() {
+                let params: std::result::Result<VectorSearchParams, serde_json::Error> =
+                    serde_json::from_str(vector_search_params);
+                if let Ok(params) = params {
+                    let mut vector_search = RawDocumentBuf::new();
+                    if let Some(nprobes) = params.n_probes {
+                        if nprobes != 0.0 {
+                            vector_search.append("nProbes", smallest_from_f64(nprobes));
+                        }
+                    }
+                    if let Some(ef_search) = params.ef_search {
+                        if ef_search != 0.0 {
+                            vector_search.append("efSearch", smallest_from_f64(ef_search));
+                        }
+                    }
+                    if let Some(l_search) = params.l_search {
+                        if l_search != 0.0 {
+                            vector_search.append("lSearch", smallest_from_f64(l_search));
+                        }
+                    }
+                    doc.append("cosmosSearchCustomParams", vector_search);
+                } else {
+                    tracing::error!("Failed to parse vector search params: {vector_search_params}");
+                }
+            }
+
+            if let Some(filter) = plan.filter.as_deref() {
+                let values = query_diagnostics::get_runtime_conditions(filter, query_catalog);
+                if !values.is_empty() {
+                    doc.append("runtimeFilterSet", limited_array_from_contents(values));
+                }
+            }
+
+            if let Some(sort_keys) = plan.sort_keys.as_ref() {
+                doc.append(
+                    "sortKeysCount",
+                    i32::try_from(sort_keys.len()).unwrap_or(i32::MAX),
+                );
+
+                let mut sort_keys_arr = RawArrayBuf::new();
+                for order_string in sort_keys {
+                    if let Some(order_value) =
+                        query_diagnostics::get_sort_conditions(order_string, query_catalog)
+                    {
+                        sort_keys_arr.push(order_value);
+                    }
+                }
+                if !sort_keys_arr.is_empty() {
+                    doc.append("sortKey", sort_keys_arr);
+                }
+            }
+            if let Some(presorted_keys) = plan.presorted_key.as_ref() {
+                doc.append(
+                    "presortedKeysCount",
+                    i32::try_from(presorted_keys.len()).unwrap_or(i32::MAX),
+                );
+                if let Some(sort_keys) = plan.sort_keys.as_ref() {
+                    let mut sort_keys_arr = RawArrayBuf::new();
+                    for order_string in sort_keys {
+                        if let Some(order_value) =
+                            query_diagnostics::get_sort_conditions(order_string, query_catalog)
+                        {
+                            sort_keys_arr.push(order_value);
+                        }
+                    }
+                    if !sort_keys_arr.is_empty() {
+                        doc.append("presortedKey", sort_keys_arr);
+                    }
+                }
+            }
+
+            if stage_name != "FETCH"
+                && plan.node_type == "Index Scan"
+                && plan.order_by.as_ref().is_some_and(|s| !s.trim().is_empty())
+            {
+                doc.append("hasOrderBy", true);
+            }
+
+            if plan.index_condition.is_some() && stage_name != "FETCH" {
+                let conditions = query_diagnostics::get_index_conditions(
+                    plan.index_condition.as_deref().expect("Checked"),
+                    query_catalog,
+                );
+                if !conditions.is_empty() {
+                    doc.append("indexFilterSet", limited_array_from_contents(conditions));
+                }
+            }
+
+            if stage_name != "EOF" {
+                let rows: i64 = plan
+                    .plan_rows
+                    .as_ref()
+                    .map_or(0, |n| n.as_i64().unwrap_or(i64::MAX));
+                doc.append("estimatedTotalKeysExamined", smallest_from_i64(rows));
+            }
+            doc
+        },
+    );
+    writer.append("winningPlan", result);
+
+    if !index_costs_by_ns.is_empty() {
+        let mut top_arr = RawArrayBuf::new();
+        for (ns, cost_docs) in index_costs_by_ns {
+            let mut ns_doc = rawdoc! {};
+            ns_doc.append("namespace", ns.as_str());
+            ns_doc.append("costs", RawArrayBuf::from_iter(cost_docs));
+            top_arr.push(ns_doc);
+        }
+        writer.append("indexCosts", top_arr);
+    }
+
+    writer
+}
+
+/// Writes the index usage fields for a single `IndexDetails` entry in the
+/// query planner stage output (bounds, truncation, multi-key).
+fn write_query_planner_index_usage(detail: &IndexDetails, index_doc: &mut RawDocumentBuf) {
+    if let Some(index_key) = detail.index_key.as_deref() {
+        index_doc.append("indexKeyString", index_key);
+    }
+
+    if let Some(multi_key_val) = detail.is_multi_key {
+        index_doc.append("isMultiKey", multi_key_val);
+    }
+
+    if let Some(multi_key_paths) = detail.multi_key_paths.as_ref() {
+        if !multi_key_paths.is_empty() {
+            index_doc.append("multiKeyPaths", truncated_string_array(multi_key_paths));
+        }
+    }
+
+    if let Some(has_truncation_val) = detail.has_truncation {
+        index_doc.append("hasTruncation", has_truncation_val);
+    }
+
+    if let Some(truncated_paths) = detail.truncated_paths.as_ref() {
+        if !truncated_paths.is_empty() {
+            index_doc.append("truncatedPaths", truncated_string_array(truncated_paths));
+        }
+    }
+
+    if let Some(index_bounds) = detail.index_bounds.as_ref() {
+        if !index_bounds.is_empty() {
+            index_doc.append("bounds", truncated_string_array(index_bounds));
+        }
+    }
+
+    if let Some(start_bounds) = detail.start_bounds.as_ref() {
+        if !start_bounds.is_empty() {
+            index_doc.append("startBounds", truncated_string_array(start_bounds));
+        }
+    }
+
+    if let Some(raw_bounds) = detail.raw_bounds.as_ref() {
+        if !raw_bounds.is_empty() {
+            index_doc.append("rawBounds", truncated_string_array(raw_bounds));
+        }
+    }
+}
+
+/// Writes the index usage fields for a single `IndexDetails` entry in the
+/// execution stats stage output (scan loops, scan type, duplicates, etc.).
+fn write_execution_stats_index_usage(detail: &IndexDetails, index_doc: &mut RawDocumentBuf) {
+    if let Some(inner_scan_loops) = detail.inner_scan_loops {
+        if inner_scan_loops > 0 {
+            index_doc.append("scanLoops", smallest_from_i64(inner_scan_loops));
+        }
+    }
+
+    if let Some(scan_type) = detail.scan_type.as_deref() {
+        if !scan_type.is_empty() {
+            index_doc.append("scanType", scan_type);
+        }
+    }
+
+    if let Some(num_duplicates) = detail.num_duplicates {
+        if num_duplicates > 0 {
+            index_doc.append("numDuplicates", smallest_from_i64(num_duplicates));
+        }
+    }
+
+    if let Some(num_dead_entries_or_pages_skipped) = detail.dead_entries_or_pages_skipped {
+        index_doc.append(
+            "deadEntriesOrPagesSkipped",
+            smallest_from_i64(num_dead_entries_or_pages_skipped),
+        );
+    }
+
+    if let Some(num_eligible_dead_items) = detail.eligible_dead_items {
+        index_doc.append(
+            "eligibleDeadItems",
+            smallest_from_i64(num_eligible_dead_items),
+        );
+    }
+
+    if let Some(parallel_scan_capable) = detail.parallel_scan_capable {
+        index_doc.append("parallelScanCapable", parallel_scan_capable);
+    }
+
+    if let Some(is_backward_scan) = detail.is_backward_scan {
+        index_doc.append("isBackwardScan", is_backward_scan);
+    }
+
+    if let Some(has_correlated_terms) = detail.has_correlated_terms {
+        index_doc.append("hasCorrelatedTerms", has_correlated_terms);
+    }
+
+    if let Some(scan_key_details) = detail.scan_key_details.as_ref() {
+        if !scan_key_details.is_empty() {
+            let mut scan_key_arr = RawArrayBuf::new();
+            for key in scan_key_details {
+                scan_key_arr.push(key.as_str());
+            }
+            index_doc.append("scanKeys", scan_key_arr);
+        }
+    }
+}
+
+/// Builds a `RawArrayBuf` from string values, truncating individual entries
+/// and stopping early when the accumulated length exceeds
+/// `MAX_EXPLAIN_BSON_COMMAND_LENGTH`. This prevents extremely large index
+/// bounds from producing oversized explain responses.
+fn truncated_string_array(values: &[String]) -> RawArrayBuf {
+    let mut arr = RawArrayBuf::new();
+    let mut accumulated_length: usize = 0;
+    for value in values {
+        if accumulated_length >= MAX_EXPLAIN_BSON_COMMAND_LENGTH {
+            arr.push("...");
+            break;
+        }
+
+        let remaining = MAX_EXPLAIN_BSON_COMMAND_LENGTH - accumulated_length;
+        if value.len() > remaining {
+            let truncate_at = value.floor_char_boundary(remaining);
+            arr.push(&value[..truncate_at]);
+            break;
+        }
+
+        arr.push(value.as_str());
+        accumulated_length += value.len();
+    }
+    arr
+}
+
+fn limited_array_from_contents(
+    contents: Vec<(&'static str, Option<String>, RawDocumentBuf)>,
+) -> RawArrayBuf {
+    let mut accumulated_length = 0;
+    let mut arr = RawArrayBuf::new();
+    for (expr, field, value) in contents {
+        let mut field_override = None;
+        let value_len = value.as_bytes().len();
+        let expr_value = if accumulated_length > MAX_EXPLAIN_BSON_COMMAND_LENGTH {
+            RawBson::from("...")
+        } else if value_len > MAX_EXPLAIN_BSON_COMMAND_LENGTH {
+            accumulated_length += MAX_EXPLAIN_BSON_COMMAND_LENGTH;
+            RawBson::from(format!(
+                "{}...",
+                &value.to_document().unwrap_or_default().to_string()
+                    [0..MAX_EXPLAIN_BSON_COMMAND_LENGTH]
+            ))
+        } else {
+            accumulated_length += value_len;
+            let mut value_iter = value.as_ref().iter();
+            if let Some(Ok(element_ref)) = value_iter.next() {
+                if value_iter.next().is_none() {
+                    field_override = if element_ref.0.is_empty() {
+                        None
+                    } else {
+                        Some(element_ref.0.to_owned())
+                    };
+                    element_ref.1.to_raw_bson()
+                } else {
+                    RawBson::from(value)
+                }
+            } else {
+                RawBson::from(value)
+            }
+        };
+
+        let inner_doc = rawdoc! {
+            expr: expr_value
+        };
+
+        if let Some(field) = field {
+            let doc = rawdoc! {
+                field: inner_doc
+            };
+            arr.push(doc);
+        } else if let Some(local_field) = field_override {
+            let doc = rawdoc! {
+                local_field: inner_doc
+            };
+            arr.push(doc);
+        } else {
+            arr.push(inner_doc);
+        }
+    }
+    arr
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "execution stats output requires many conditional fields"
+)]
+fn execution_stats(plan: ExplainPlan, query_catalog: &QueryCatalog) -> RawDocumentBuf {
+    let plan = skip_stage(plan, query_catalog);
+    let (total_rows_examined, total_keys_examined) = get_total_examined(&plan);
+    let execution_time = smallest_from_f64(truncate_latency(plan.actual_total_time.unwrap_or(0.0)));
+    let execution_start_at_time =
+        smallest_from_f64(truncate_latency(plan.actual_startup_time.unwrap_or(0.0)));
+    let returned = plan.actual_rows.unwrap_or(0);
+    let stages = walk_plan_stage(plan, None, query_catalog, |plan, stage_name, _| {
+        let mut doc = rawdoc! {
+            "stage": stage_name,
+            "nReturned": plan.actual_rows.unwrap_or(0),
+        };
+        doc.append(
+            "executionTimeMillis",
+            smallest_from_f64(truncate_latency(plan.actual_total_time.unwrap_or(0.0))),
+        );
+        doc.append(
+            "executionStartAtTimeMillis",
+            smallest_from_f64(truncate_latency(plan.actual_startup_time.unwrap_or(0.0))),
+        );
+        if plan.index_name.is_none()
+            || plan.filter.is_some()
+            || plan.rows_removed_by_filter.unwrap_or(0) > 0
+        {
+            doc.append(
+                "totalDocsExamined",
+                smallest_from_i64(
+                    plan.actual_rows.unwrap_or(0) + plan.rows_removed_by_filter.unwrap_or(0),
+                ),
+            );
+        }
+
+        if let Some(skipped_tuples) = plan.skipped_tuples {
+            if skipped_tuples > 0.0 {
+                doc.append("skippedTuples", smallest_from_f64(skipped_tuples));
+            }
+        }
+
+        if stage_name != "FETCH" {
+            if let Some(index_name) = plan.index_name.as_deref() {
+                doc.append("indexName", index_name);
+            }
+
+            if let Some(heap_fetches) = plan.heap_fetches {
+                doc.append("totalDocsAnalyzed", smallest_from_i64(heap_fetches));
+            }
+
+            if let Some(details) = plan.index_details.as_ref() {
+                let matching: Vec<&IndexDetails> = details
+                    .iter()
+                    .filter(|d| d.index_name.as_deref() == plan.index_name.as_deref())
+                    .collect();
+
+                if matching.len() == 1 {
+                    let mut index_doc = rawdoc! {};
+                    write_execution_stats_index_usage(matching[0], &mut index_doc);
+                    doc.append("indexUsage", index_doc);
+                } else if matching.len() > 1 {
+                    let mut arr = RawArrayBuf::new();
+                    for detail in &matching {
+                        let mut index_doc = rawdoc! {};
+                        write_execution_stats_index_usage(detail, &mut index_doc);
+                        arr.push(index_doc);
+                    }
+                    doc.append("indexUsages", arr);
+                }
+            }
+        }
+
+        if stage_name == "TEXT_MATCH" {
+            doc.append("textIndexVersion", 3);
+        }
+
+        doc.append(
+            "totalKeysExamined",
+            smallest_from_i64(
+                plan.actual_rows.unwrap_or(0) + plan.rows_removed_by_index.unwrap_or(0),
+            ),
+        );
+
+        if plan.sort_space_type.as_deref().is_some_and(|s| s == "Disk") {
+            doc.append("usedDisk", true);
+        }
+        if let Some(method) = plan.sort_method.as_deref() {
+            doc.append("sortMethod", method);
+        }
+        if let Some(blocks) = plan.exact_heap_blocks {
+            if blocks != 0 {
+                doc.append("exactBlocksRead", smallest_from_i64(blocks));
+            }
+        }
+        if let Some(blocks) = plan.lossy_heap_blocks {
+            if blocks != 0 {
+                doc.append("lossyBlocksRead", smallest_from_i64(blocks));
+            }
+        }
+        if let Some(space_used) = plan.sort_space_used {
+            if space_used > 0 {
+                doc.append(
+                    "totalDataSizeSortedBytesEstimate",
+                    smallest_from_i64(space_used),
+                );
+            }
+        }
+        if let Some(v) = plan.rows_removed_by_filter {
+            if v > 0 {
+                doc.append("totalDocsRemovedByRuntimeFilter", smallest_from_i64(v));
+            }
+        }
+        if let Some(v) = plan.rows_removed_by_index {
+            if v > 0 {
+                doc.append("totalDocsRemovedByIndexRechecks", smallest_from_i64(v));
+            }
+        }
+        if let Some(v) = plan.shared_hit_blocks {
+            if v > 0 {
+                doc.append("numBlocksFromCache", smallest_from_i64(v));
+            }
+        }
+        if let Some(v) = plan.shared_read_blocks {
+            if v > 0 {
+                doc.append("numBlocksFromDisk", smallest_from_i64(v));
+            }
+        }
+        if let Some(v) = plan.io_read_time {
+            if v > 0 {
+                doc.append("ioReadTimeMillis", smallest_from_i64(v));
+            }
+        }
+        if let Some(v) = plan.workers_launched {
+            if v > 0 {
+                doc.append("parallelWorkers", smallest_from_i64(v));
+            }
+        }
+
+        doc
+    });
+    let result = rawdoc! {
+        "nReturned": returned,
+        "executionTimeMillis": execution_time,
+        "executionStartAtTimeMillis": execution_start_at_time,
+        "totalDocsExamined": total_rows_examined,
+        "totalKeysExamined": total_keys_examined,
+        "executionStages": stages,
+    };
+    result
+}
+
+fn distribute_index_details(plan: &mut ExplainPlan, index_details: Option<Vec<IndexDetails>>) {
+    plan.index_details = index_details;
+
+    if let Some(inner_plans) = plan.inner_plans.as_mut() {
+        for inner_plan in inner_plans {
+            distribute_index_details(inner_plan, plan.index_details.clone());
+        }
+    }
+}
+
+fn build_index_cost_doc(cost: &IndexCost) -> RawDocumentBuf {
+    let mut cost_doc = rawdoc! {};
+    if let Some(index_name) = cost.index_name.as_deref() {
+        cost_doc.append("indexName", index_name);
+    } else {
+        return cost_doc;
+    }
+    if let Some(v) = cost.startup_cost.filter(|v| *v != 0.0) {
+        cost_doc.append("startupCost", v);
+    }
+    if let Some(v) = cost.total_cost.filter(|v| *v != 0.0) {
+        cost_doc.append("totalCost", v);
+    }
+    if let Some(v) = cost.selectivity.filter(|v| *v != 0.0) {
+        cost_doc.append("selectivity", v);
+    }
+    if let Some(v) = cost.correlation.filter(|v| *v != 0.0) {
+        cost_doc.append("correlation", v);
+    }
+    if let Some(v) = cost
+        .estimated_percent_index_pages_loaded
+        .filter(|v| *v != 0.0)
+    {
+        cost_doc.append("estimatedPercentIndexPagesLoaded", v);
+    }
+    if let Some(v) = cost.estimated_total_index_entries.filter(|v| *v != 0) {
+        cost_doc.append("estimatedTotalIndexEntries", smallest_from_i64(v));
+    }
+    if let Some(v) = cost.boundary_selectivity.filter(|v| *v != 0.0) {
+        cost_doc.append("boundarySelectivity", v);
+    }
+    if let Some(v) = cost
+        .estimated_data_pages_loaded_percent
+        .filter(|v| *v != 0.0)
+    {
+        cost_doc.append("estimatedDataPagesLoadedPercent", v);
+    }
+    if let Some(v) = cost.num_boundaries.filter(|v| *v != 0) {
+        cost_doc.append("numBoundaries", smallest_from_i64(v));
+    }
+    cost_doc
+}
+
+/// Recursively collects index costs from the plan tree, grouped by namespace.
+fn collect_index_costs(
+    plan: &ExplainPlan,
+    namespace: &str,
+    result: &mut Vec<(String, Vec<RawDocumentBuf>)>,
+) {
+    let effective_ns = plan.namespace_name.as_deref().unwrap_or(namespace);
+
+    if let Some(index_costs) = plan.index_costs.as_ref() {
+        let cost_docs: Vec<RawDocumentBuf> = index_costs.iter().map(build_index_cost_doc).collect();
+        if !cost_docs.is_empty() {
+            if let Some(entry) = result.iter_mut().find(|(ns, _)| ns == effective_ns) {
+                entry.1.extend(cost_docs);
+            } else {
+                result.push((effective_ns.to_owned(), cost_docs));
+            }
+        }
+    }
+
+    if let Some(inner_plans) = plan.inner_plans.as_ref() {
+        for inner_plan in inner_plans {
+            collect_index_costs(inner_plan, effective_ns, result);
+        }
+    }
+
+    if let Some(distributed_plan) = plan.distributed_plan.as_ref() {
+        for task in &distributed_plan.job.tasks {
+            for worker_plans in &task.worker_plans {
+                for pg_explain in worker_plans {
+                    collect_index_costs(&pg_explain.plan, effective_ns, result);
+                }
+            }
+        }
+    }
+}
+
+/// Repeatedly strips intermediate wrapper nodes from the plan tree until a
+/// non-skippable node is reached. Wrapper nodes (`Subquery Scan` with
+/// `bson_repath_and_build`, `ExplainQueryScan`, `BlackboxDBApiCursorScan`,
+/// `BlackboxDBApiScan`) are internal implementation details that should not be
+/// exposed in the wire-protocol explain output. Properties such as
+/// `cursor_scan_type`, `skipped_tuples`, `alias`, and `index_details` are
+/// propagated from skipped nodes to the surviving child.
+#[expect(clippy::expect_used, reason = "values are checked before access")]
+fn skip_stage(mut plan: ExplainPlan, query_catalog: &QueryCatalog) -> ExplainPlan {
+    loop {
+        plan = if plan.node_type == "Subquery Scan"
+            && plan.output.as_ref().is_some_and(|o| {
+                o.len() == 1
+                    && (o[0].starts_with("bson_repath_and_build")
+                        || o[0].starts_with(query_catalog.find_bson_repath_and_build()))
+            })
+            && plan.inner_plans.as_ref().is_some_and(|ip| ip.len() == 1)
+        {
+            let mut p = plan.inner_plans.expect("Checked").remove(0);
+            if p.alias.is_none() {
+                p.alias = plan.alias;
+            }
+            p
+        } else if plan.node_type == "Custom Scan"
+            && plan.custom_plan_provider.as_deref() == Some("BlackboxDBApiExplainQueryScan")
+            && plan.inner_plans.as_ref().is_some_and(|ip| ip.len() == 1)
+        {
+            let mut new_plan = plan.inner_plans.expect("Checked").remove(0);
+            new_plan.output = plan.output;
+            if new_plan.namespace_name.is_none() {
+                new_plan.namespace_name = plan.namespace_name.clone();
+            }
+            if new_plan.cursor_scan_type.is_none() {
+                new_plan.cursor_scan_type = plan.cursor_scan_type;
+            }
+            if new_plan.skipped_tuples.is_none() {
+                new_plan.skipped_tuples = plan.skipped_tuples;
+            }
+
+            distribute_index_details(&mut new_plan, plan.index_details);
+            new_plan
+        } else if plan.node_type == "Custom Scan"
+            && matches!(
+                plan.custom_plan_provider.as_deref(),
+                Some("BlackboxDBApiCursorScan" | "BlackboxDBApiScan")
+            )
+            && plan.inner_plans.as_ref().is_some_and(|ip| ip.len() == 1)
+        {
+            let mut new_plan = plan.inner_plans.expect("Checked").remove(0);
+            if new_plan.alias.is_none() {
+                new_plan.alias = plan.alias;
+            }
+            if new_plan.cursor_scan_type.is_none() {
+                new_plan.cursor_scan_type = plan.cursor_scan_type;
+            }
+            if new_plan.skipped_tuples.is_none() {
+                new_plan.skipped_tuples = plan.skipped_tuples;
+            }
+            new_plan
+        } else {
+            break plan;
+        };
+    }
+}
+
+fn walk_plan_stage(
+    plan: ExplainPlan,
+    parent_stage: Option<&str>,
+    query_catalog: &QueryCatalog,
+    f: fn(&ExplainPlan, &str, &QueryCatalog) -> RawDocumentBuf,
+) -> RawDocumentBuf {
+    let plan = skip_stage(plan, query_catalog);
+
+    let (stage, inner_stage) = get_stage_from_plan(&plan, parent_stage, query_catalog);
+    let mut res = f(&plan, &stage, query_catalog);
+
+    if let Some(inner) = inner_stage {
+        let mut inner_res = f(&plan, inner, query_catalog);
+        walk_plan_stage_core(plan.clone(), Some(&stage), query_catalog, &mut inner_res, f);
+        res.append("inputStage", inner_res);
+    } else {
+        walk_plan_stage_core(plan.clone(), Some(&stage), query_catalog, &mut res, f);
+    }
+    res
+}
+
+fn walk_plan_stage_core(
+    plan: ExplainPlan,
+    parent_stage: Option<&str>,
+    query_catalog: &QueryCatalog,
+    writer: &mut RawDocumentBuf,
+    f: fn(&ExplainPlan, &str, &QueryCatalog) -> RawDocumentBuf,
+) {
+    if let Some(job) = plan.distributed_plan.map(|dp| dp.job) {
+        let plan_bufs = job.tasks.into_iter().enumerate().flat_map(|(i, task)| {
+            let iter: Box<dyn Iterator<Item = RawDocumentBuf>> = if let Some(err) = task.error {
+                Box::new(std::iter::once(rawdoc! {
+                    "error": err
+                }))
+            } else {
+                let iter = task.worker_plans.into_iter().filter_map(|mut plans| {
+                    if plans.is_empty() {
+                        None
+                    } else {
+                        Some(rawdoc! {
+                            "shard": format!("shard_{}", i),
+                            "winningPlan": walk_plan_stage(plans.remove(0).plan, parent_stage, query_catalog, f)
+                        })
+                    }
+                }).collect::<Vec<RawDocumentBuf>>().into_iter();
+                Box::new(iter)
+            };
+            iter
+        });
+        writer.append("shardCount", job.task_count);
+        writer.append("shardInformation", job.tasks_shown);
+        if let Some(bytes) = job.total_response_size {
+            writer.append("retrievedDocumentSizeBytes", bytes);
+        }
+        writer.append("shards", plan_bufs.collect::<RawArrayBuf>());
+    }
+
+    if let Some(mut inner_plans) = plan.inner_plans {
+        match inner_plans.len().cmp(&1) {
+            Ordering::Equal => {
+                let recurse =
+                    walk_plan_stage(inner_plans.remove(0), parent_stage, query_catalog, f);
+                writer.append("inputStage", recurse);
+            }
+            Ordering::Greater => {
+                let docs = inner_plans
+                    .into_iter()
+                    .map(|p| walk_plan_stage(p, parent_stage, query_catalog, f))
+                    .collect::<RawArrayBuf>();
+                writer.append("inputStages", docs);
+            }
+            Ordering::Less => {}
+        }
+    }
+}
+
+fn cursor_explain(
+    plan: ExplainPlan,
+    collection_path: &str,
+    is_aggregation_stage: bool,
+    verbosity: Verbosity,
+    query_catalog: &QueryCatalog,
+) -> RawDocumentBuf {
+    let mut doc = rawdoc! {
+        "queryPlanner": query_planner(plan.clone(), collection_path, is_aggregation_stage, query_catalog),
+    };
+    if matches!(
+        verbosity,
+        Verbosity::ExecutionStats | Verbosity::AllPlansExecution | Verbosity::AllShardsExecution
+    ) {
+        doc.append("executionStats", execution_stats(plan, query_catalog));
+    }
+    doc
+}
+
+fn truncate_latency(latency: f64) -> f64 {
+    (latency * 1000.0).trunc() / 1000.0
+}
+
+fn convert_to_bson(val: serde_json::Value) -> RawBson {
+    match val {
+        Value::Number(n) => {
+            if let Some(n) = n.as_i64() {
+                RawBson::Int64(n)
+            } else if let Some(n) = n.as_f64() {
+                RawBson::Double(n)
+            } else {
+                RawBson::Double(f64::NAN)
+            }
+        }
+        Value::Object(map) => {
+            let mut doc = RawDocumentBuf::new();
+            for (k, v) in map {
+                doc.append(k, convert_to_bson(v));
+            }
+            RawBson::Document(doc)
+        }
+        Value::Array(arr) => {
+            let mut bson_array = RawArrayBuf::new();
+            for v in arr {
+                bson_array.push(convert_to_bson(v));
+            }
+            RawBson::Array(bson_array)
+        }
+        Value::Null => RawBson::Null,
+        Value::Bool(b) => RawBson::Boolean(b),
+        Value::String(s) => RawBson::String(s),
+    }
+}
+
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "intentional truncation of f64 to i64 for smallest representation"
+)]
+fn smallest_from_f64(value: f64) -> RawBson {
+    if value % 1.0 == 0.0 {
+        smallest_from_i64(value as i64)
+    } else {
+        RawBson::Double(value)
+    }
+}
+
+fn smallest_from_i64(value: i64) -> RawBson {
+    if let Ok(v) = i32::try_from(value) {
+        RawBson::Int32(v)
+    } else {
+        RawBson::Int64(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bson::rawdoc;
+
+    use crate::postgres::QueryCatalog;
+
+    use super::model::ExplainPlan;
+    use super::{get_stage_from_plan, get_subtype_and_collection_name};
+    use crate::requests::{ExplainTarget, RequestType};
+
+    /// Helper that builds a minimal [`ExplainPlan`] with the given `node_type`.
+    fn plan_with_node_type(node_type: &str) -> ExplainPlan {
+        ExplainPlan {
+            node_type: node_type.to_owned(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn gather_maps_to_parallel_merge() {
+        let plan = plan_with_node_type("Gather");
+        let catalog = QueryCatalog::default();
+
+        let (stage, inner) = get_stage_from_plan(&plan, None, &catalog);
+
+        assert_eq!(stage, "PARALLEL_MERGE");
+        assert!(inner.is_none());
+    }
+
+    #[test]
+    fn gather_merge_maps_to_parallel_sort_merge() {
+        let plan = plan_with_node_type("Gather Merge");
+        let catalog = QueryCatalog::default();
+
+        let (stage, inner) = get_stage_from_plan(&plan, None, &catalog);
+
+        assert_eq!(stage, "PARALLEL_SORT_MERGE");
+        assert!(inner.is_none());
+    }
+
+    #[test]
+    fn seq_scan_maps_to_collscan() {
+        let plan = plan_with_node_type("Seq Scan");
+        let catalog = QueryCatalog::default();
+
+        let (stage, _) = get_stage_from_plan(&plan, None, &catalog);
+
+        assert_eq!(stage, "COLLSCAN");
+    }
+
+    #[test]
+    fn explain_target_uses_cached_collection_when_available() {
+        let command = rawdoc! { "aggregate": 1_i32 };
+        let target = ExplainTarget::with_collection(RequestType::Aggregate, &command, "cached");
+
+        let (collection, request_type) =
+            get_subtype_and_collection_name(&target).expect("target should resolve");
+
+        assert_eq!(
+            (collection, request_type),
+            ("cached", RequestType::Aggregate)
+        );
+    }
+
+    #[test]
+    fn explain_target_accepts_numeric_aggregate_as_empty_collection() {
+        for command in [
+            rawdoc! { "aggregate": 1_i32 },
+            rawdoc! { "aggregate": 1_i64 },
+            rawdoc! { "aggregate": 1.0_f64 },
+        ] {
+            let target = ExplainTarget::new(RequestType::Aggregate, &command);
+
+            let (collection, request_type) =
+                get_subtype_and_collection_name(&target).expect("target should resolve");
+
+            assert_eq!((collection, request_type), ("", RequestType::Aggregate));
+        }
+    }
+
+    #[test]
+    fn explain_target_rejects_non_string_non_aggregate_collection() {
+        let command = rawdoc! { "find": 1_i32 };
+        let target = ExplainTarget::new(RequestType::Find, &command);
+
+        let error = get_subtype_and_collection_name(&target)
+            .expect_err("non-aggregate numeric target should reject");
+
+        assert_eq!(error.error_code(), crate::error::ErrorCode::BadValue);
+    }
+}

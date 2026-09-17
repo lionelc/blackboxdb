@@ -1,0 +1,144 @@
+SET search_path TO blackboxdb_core,blackboxdb_api,blackboxdb_api_catalog,blackboxdb_api_internal;
+SET citus.next_shard_id TO 2300000;
+SET blackboxdb.next_collection_id TO 23000;
+SET blackboxdb.next_collection_index_id TO 23000;
+
+--Test Set1 : array of document Tests
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1,"a" : { "b" : [ { "c" : 1, "d" : 2 }, { "c" : 5, "d" : 6 } ], "H" : { "c" : 10 } }}','{ "": { "$set": { "a.b.$[].c": 11 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [{"c":5}] }', '{ "": { "$set": { "a.$[].c": 30 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1,"a" : { "b" : [ { "x":[1,2,3,4] }, { "y": [1,2,3,4] } ]  }}','{ "": { "$inc": { "a.b.0.x.$[]": 100 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1,"a" : { "b" : [ { "x":[1,2,3,4] }, { "x": [1,2,3,4] } ]  }}','{ "": { "$inc": { "a.b.$[].x.0": 100 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+-- Test Set2 : Elements in updatespec is not present in Document
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1,"a" : { "b" : [ { "c" : 1, "d" : 2 }, { "d" : 6 } ], "H" : { "c" : 10 } }}','{ "": { "$set": { "a.b.$[].c": 11 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1,"a" : { "b" : [ { "d" : 2 }, { "d" : 6 } ] }}','{ "": { "$set": { "a.b.$[].c": 11 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1,"a" : { "b" : [ { "x":[1,2,3,4] }, { "y": [1,2,3,4] } ]  }}','{ "": { "$set": { "a.b.$[].c": 11 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+--Test Set3 : $set Operator
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4] }', '{ "": { "$set": { "a.$[]": 30 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+--Test Set4 : $inc Operator
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4] }', '{ "": { "$inc": { "a.$[]": 30 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+--Test Set5 : $min Operator 
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4] }', '{ "": { "$min": { "a.$[]": 3 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+--Test Set6 : $max Operator
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4] }', '{ "": { "$max": { "a.$[]": 3 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+--Test Set7 : $mul Operator
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4] }', '{ "": { "$mul": { "a.$[]": 3 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1.0,2.2,3.2,4.3] }', '{ "": { "$mul": { "a.$[]": 3 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+--Test Set8 : $bit Operator
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [14,6] }', '{ "": { "$bit":  { "a.$[]": {"or" : 1 } } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [14,6] }', '{ "": { "$bit":  { "a.$[]": {"and" : 1 } } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+--Test Set9 : $unset Operator
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4] }', '{ "": { "$unset": { "a.$[]": 1 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [[1,2],[3,4],[5,6]] }', '{ "": { "$unset": { "a.$[].$[]": 10} } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [{"c":5}] }', '{ "": { "$unset": { "a.$[].c": 1 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+--Test Set10 $addToSet
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [[14],[6]] }', '{ "": { "$addToSet":  { "a.$[]": "new" } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "x": {"myArray": [{"a": [[1],[1]],"b": [[1],[2]]},{"a": [[1],[2]],"b": [[1],[2]]}]} }', '{ "": { "$addToSet": {"x.myArray.$[].a.$[]": "new","x.myArray.$[].b.$[]": "new2" } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+--Test Set11 $push
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [[1],[2],[3],[4]] }', '{ "": { "$push": { "a.$[]": 30 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [[40,8,5],[42,7,15],[55,42,0],[41,0]] }', '{ "": { "$push": { "a.$[]": { "$sort":-1, "$each" : [10,20,30], "$position":2, "$slice":2} } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1,"a" : { "b" : [ { "c" : 1, "d" : 2 } ] }}','{ "": { "$set": { "a.$[]abc.c": 11 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+--Test Set12 : Update path not exist or cannot be created
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1,"a" : { "b" : [ 1 , 2 ], "H" : { "c" : 11 } }}','{ "": { "$set": { "a.b.$[].c": 11 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1,"a" : { "b" : [ { "c" : 1, "d" : 2 }, 2 ], "H" : { "c" : 11 } }}','{ "": { "$set": { "a.b.$[].c": 11 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+--Test Set 13 : Positional all operator on non array element
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1,"a" : { "b" : [ { "c" : 1, "d" : 2 } ] }}','{ "": { "$set": { "a.$[].c": 11 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+--Test Set 14 : Try with $ and $[<identifier>] and Typo with $[] 
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1,"a" : { "b" : [ { "c" : 1, "d" : 2 } ] }}','{ "": { "$set": { "a.$.c": 11 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1,"a" : { "b" : [ { "c" : 1, "d" : 2 } ] }}','{ "": { "$set": { "a.$[element].c": 11 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1.0,2.2,3.2,4.3] }', '{ "": { "$mul": { "a.$[x]": 3 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4] }', '{ "": { "$mul": { "a.$[]abc": 3 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": 2 } }', '{ "": { "$set": {"$[]":10} } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+--Test Set 15 : Complex One
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [[1,2],[3,4],[5,6]] }', '{ "": { "$inc": { "a.$[].$[]": 10 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1,"a" : { "b" : [ { "x":[1,2,3,4] }, { "x": [100,2,3,4] } ]  }}','{ "": { "$inc": { "a.b.$[].x.0": 100 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+--Test set 16: Large field
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":5},{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":6}] }', '{ "": { "$set": { "a.$[].aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 10 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+--Test set 17: Multiple Operator
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4], "b":10 }', '{ "": { "$set": { "a.$[]": 30 }, "$inc": {"b" : 1} } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4], "b":{"x":10} }', '{ "": { "$set": { "b.x": 30 }, "$inc": {"a.$[]" : 1} } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+--Test Set 18 : Path Conflicts 
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [[1,2],[3,4]] }', '{ "": { "$inc": { "a.$[].$[]": 10, "a.0": 11 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [[1,2],[3,4]] }', '{ "": { "$inc": { "a.0": 10, "a.$[].$[]": 11 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [[1,2],[3,4]] }', '{ "": { "$inc": { "a.0.1": 10, "a.$[].$[]": 11 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [[1,2],[3,4]] }', '{ "": { "$inc": { "a.$[].$[]": 11, "a.1.0": 10 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [[1,2],[3,4]] }', '{ "": { "$inc": { "a.b.$[]": 10, "a.b.0": 11 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4] }', '{ "": { "$inc": { "a.$[]": 11, "a.0": 10 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4] }', '{ "": { "$inc": { "a.0": 11, "a.$[]": 10 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4] }', '{ "": { "$inc": { "a.0": 11 }, "$set":{"a.$[]": 11} } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4] }', '{ "": { "$inc": { "a.$[]": 11 }, "$set":{"a.0": 11} } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [{ "x": 10 }, {"x": 11}] }', '{ "": { "$inc": { "a.$[].x": 11 }, "$set":{"a.0": 11} } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [{"x":10},{"y":11}] }', '{ "": { "$set": { "a.$[]": 30 }, "$inc": {"a.1.y" : 1} } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+--Test Set 19 : Multiple Spec One Operator
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [[1,2],[3,4]] }', '{ "": { "$inc": { "a.$[].0": 30 , "a.$[].1" : 10} } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [{"b":1,"c":2,"x":{"y":3}}] }', '{ "": { "$inc": { "a.$[].b": 10 , "a.$[].c" : 20, "a.$[].x.y":30} } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+---Test Set 20 : $ Operator---
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [[1,2],[3,4]] }', '{ "": { "$inc": { "a.0.$": 30 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4] }', '{ "": { "$set": { "a.$": 30 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4] }', '{ "": { "$mul": { "a.$": 30 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4] }', '{ "": { "$inc": { "a.$": 30 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4] }', '{ "": { "$min": { "a.$": 30 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [{"x": 5},{"y":10}] }', '{ "": { "$inc": { "a.$.c": 30 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": 2 } }', '{ "": { "$set": {"$":10} } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a":[{"x":5},{"y":10}] }', '{ "": { "$inc": {"a.$[].x": 10,"a.$.y": 12 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+---Test Set 21 : $[<identifier>] Operator---
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4] }', '{ "": { "$set": { "a.$[ele]": 30 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4] }', '{ "": { "$mul": { "a.$[ele]": 30 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4] }', '{ "": { "$inc": { "a.$[ele]": 30 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1,2,3,4] }', '{ "": { "$min": { "a.$[ele]": 30 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [{"x": 5,"c" :11},{"y":10},{"x":10}] }', '{ "": { "$inc": { "a.$[ele].c": 30 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": 2 } }', '{ "": { "$set": {"$[]":10} } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+---Test Set 22 : Multiple positional operator on same level---
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a":[{"a":[1,2,3],"b":[4,5,6]}] }', '{ "": { "$inc": {"a.$[].a.$[]": 10,"a.$[].b.$[x]": 11 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a":[{"x":5},{"y":10}] }', '{ "": { "$inc": {"a.$[].x": 10,"a.$[x].y": 12 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a":[{"y":5},{"x":10}] }', '{ "": { "$inc": {"a.$[].x": 10,"a.$[x].y": 12 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [[1,2,3],[4,5,6]] }', '{ "": { "$inc": { "a.$.$[]": 10} } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [ {"a":[ {"x":1},{"y":2} ] ,"b": [ {"x":5},{"y":10} ] } ] }', '{ "": { "$inc": { "a.$[].b.$[].x": 10, "a.$[].b.$[x].y":12} } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+-- Test Set 23: Rename with positional should not work.
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": 2 } }', '{ "": { "$rename": {"a.$[]": "b.$[]" } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": 2 } }', '{ "": { "$rename": {"a.0": "b.$[]" } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+-- Test Set 24: $positional with adding new fields
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": 2 } }', '{ "": { "$set": {"a.c.$[]": 1 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": { "b": 2 } }', '{ "": { "$set": {"c.$[]": 1 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+
+-- Test Set 25: $[] on empty array must be a no-op
+-- EC1: $set with $[] on top-level empty array
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [] }', '{ "": { "$set": { "a.$[]": 1 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+-- EC2: $inc with $[] on empty array
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [] }', '{ "": { "$inc": { "a.$[]": 1 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+-- EC3: $set with $[] on non-empty array (non-regression: must still update all elements)
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [1, 2] }', '{ "": { "$set": { "a.$[]": 5 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+-- EC4: nested $[] where the inner array is empty
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [{"b": []}] }', '{ "": { "$set": { "a.$[].b.$[]": 1 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+-- EC5: double $[] on empty outer array
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [] }', '{ "": { "$inc": { "a.$[].$[]": 1 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+-- EC6: numeric index backfill on empty array (must still work after fix)
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [] }', '{ "": { "$set": { "a.2": 9 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+-- EC7: numeric index 0 on empty array (must still work after fix)
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [] }', '{ "": { "$set": { "a.0": 9 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+-- EC8: $[identifier] on empty array must also be a no-op
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [] }', '{ "": { "$set": { "a.$[x]": 1 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);
+-- EC9: $[] on empty array alongside a change to another field (modified flag must reflect only the real change)
+SELECT blackboxdb_api_internal.update_bson_document('{"_id": 1, "a": [], "b": 1 }', '{ "": { "$set": { "a.$[]": 1 }, "$inc": { "b": 1 } } }', '{}', NULL::blackboxdb_core.bson, NULL::blackboxdb_core.bson, NULL::TEXT);

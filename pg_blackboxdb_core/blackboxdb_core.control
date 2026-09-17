@@ -1,0 +1,6 @@
+comment = 'Core API surface for BlackboxDB on PostgreSQL'
+default_version = '0.116-0'
+module_pathname = '$libdir/pg_blackboxdb_core'
+relocatable = false
+superuser = true
+requires = ''

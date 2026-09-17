@@ -1,0 +1,2243 @@
+/*-------------------------------------------------------------------------
+ * Copyright (c) Anonymous.  All rights reserved.
+ *
+ * src/planner/documents_planner.c
+ *
+ * Implementation of the blackboxdb_api planner hook.
+ *
+ *-------------------------------------------------------------------------
+ */
+
+#include <postgres.h>
+#include <float.h>
+#include <fmgr.h>
+#include <miscadmin.h>
+#include <bson.h>
+
+#include <catalog/pg_am.h>
+#include <catalog/pg_class.h>
+#include <catalog/pg_opfamily.h>
+#include <storage/lmgr.h>
+#include <optimizer/planner.h>
+#include "optimizer/pathnode.h"
+#include <optimizer/cost.h>
+#include <nodes/nodes.h>
+#include <nodes/makefuncs.h>
+#include <nodes/nodeFuncs.h>
+#include <nodes/parsenodes.h>
+#include <nodes/print.h>
+#include <parser/parse_target.h>
+#include <storage/lockdefs.h>
+#include <tcop/utility.h>
+#include <utils/builtins.h>
+#include <utils/lsyscache.h>
+#include <utils/syscache.h>
+#include <executor/spi.h>
+#include <parser/parse_relation.h>
+#include <optimizer/optimizer.h>
+#include <tcop/tcopprot.h>
+#include <executor/instrument.h>
+
+#include "geospatial/bson_geospatial_geonear.h"
+#include "metadata/collection.h"
+#include "metadata/metadata_cache.h"
+#include "planner/blackboxdb_planner.h"
+#include "query/query_operator.h"
+#include "opclass/bson_index_support.h"
+#include "opclass/bson_gin_index_mgmt.h"
+#include "metadata/index.h"
+#include "customscan/bson_custom_scan.h"
+#include "customscan/bson_custom_query_scan.h"
+#include "opclass/bson_text_gin.h"
+#include "aggregation/bson_aggregation_pipeline.h"
+#include "aggregation/bson_query_common.h"
+#include "utils/query_utils.h"
+#include "utils/guc_utils.h"
+#include "utils/docdb_make_funcs.h"
+#include "collation/collation.h"
+#include "api_hooks.h"
+#include "query/bson_compare.h"
+#include "planner/documents_custom_planner.h"
+#include "index_am/index_am_utils.h"
+#include "index_am/blackboxdb_rum.h"
+#include "index_am/index_am_extend_query.h"
+#include "opclass/bson_gin_index_types_core.h"
+
+
+typedef enum BlackboxDbQueryFlag
+{
+	HAS_QUERY_OPERATOR = 1 << 0,
+	HAS_BLACKBOXDB_COLLECTION_RTE = 1 << 2,
+	HAS_CURSOR_STATE_PARAM = 1 << 3,
+	HAS_CURSOR_FUNC = 1 << 4,
+	HAS_AGGREGATION_FUNCTION = 1 << 5,
+	HAS_NESTED_AGGREGATION_FUNCTION = 1 << 6,
+	HAS_QUERY_MATCH_FUNCTION = 1 << 7
+} BlackboxDbQueryFlag;
+
+
+typedef enum IndexPriorityOrdering
+{
+	IndexPriorityOrdering_PrimaryKey = 0,
+	IndexPriorityOrdering_Composite = 1,
+	IndexPriorityOrdering_Composite_Wildcard = 2,
+	IndexPriorityOrdering_Regular = 3,
+	IndexPriorityOrdering_Wildcard = 4,
+	IndexPriorityOrdering_Other = 5
+} IndexPriorityOrdering;
+
+typedef struct ReplaceBlackboxDbCollectionContext
+{
+	/* whether or not the collection is non-existent function */
+	bool isNonExistentCollection;
+
+	/* the bound parameters for the given request context */
+	ParamListInfo boundParams;
+
+	/* The query associated with this context */
+	Query *query;
+} ReplaceBlackboxDbCollectionContext;
+
+/*
+ * State that tracks the BlackboxDbQueryFlags walker
+ */
+typedef struct BlackboxDbQueryFlagsState
+{
+	/* Output: The set of flags encountered */
+	int blackboxDbQueryFlags;
+
+	/* The current depth (intermediate state during walking) */
+	int queryDepth;
+} BlackboxDbQueryFlagsState;
+
+static bool BlackboxDbQueryFlagsWalker(Node *node, BlackboxDbQueryFlagsState *queryFlags);
+static int BlackboxDbQueryFlags(Query *query);
+static bool IsReadWriteCommand(Query *query);
+static Query * ReplaceBlackboxDbCollectionFunction(Query *query, ParamListInfo
+												   boundParams,
+												   bool *isNonExistentCollection);
+static bool ReplaceBlackboxDbCollectionFunctionWalker(Node *node,
+													  ReplaceBlackboxDbCollectionContext *
+													  context);
+static bool HasUnresolvedExternParamsWalker(Node *expression, ParamListInfo boundParams);
+static bool IsRTEShardForBlackboxDbCollection(RangeTblEntry *rte,
+											  bool *isBlackboxDbDataNamespace,
+											  uint64 *collectionId);
+static bool ProcessWorkerWriteQueryPath(PlannerInfo *root, RelOptInfo *rel, Index rti,
+										RangeTblEntry *rte);
+static Query * ExpandAggregationFunction(Query *node, ParamListInfo boundParams,
+										 PlannedStmt **plan, int *cursorOptions);
+static Query * ExpandNestedAggregationFunction(Query *node, ParamListInfo boundParams);
+
+static void ForceExcludeNonIndexPaths(PlannerInfo *root, RelOptInfo *rel,
+									  Index rti, RangeTblEntry *rte);
+static List * AugmentBaseRestrictInfo(PlannerInfo *root, RelOptInfo *rel);
+
+extern bool ForceDisableSeqScan;
+extern bool EnableExtendedExplainPlans;
+extern bool EnableDefaultExtendedExplain;
+extern char *ApiGucPrefixV2;
+extern bool EnableExplainScanIndexCosts;
+extern bool EnableLogRelationIndexesOrder;
+extern bool EnableCursorsOnAggregationQueryRewrite;
+extern bool EnableCompositeParallelIndexScan;
+extern bool ForceParallelScanIfAvailable;
+extern bool EnableExtendedIndexes;
+extern bool EnableDynamicCursors;
+extern bool EnableDistinctCustomScan;
+extern bool EnableGroupByDistinctScan;
+extern bool EnableDistinctScanForGroupFirst;
+extern bool EnableDollarSampleReservoirScan;
+extern bool EnableMergeSortForInPrefix;
+extern bool EnableDynamicCursorFastStartupScan;
+extern bool EnablePartialFilterEvalOnPlanner;
+
+planner_hook_type ExtensionPreviousPlannerHook = NULL;
+set_rel_pathlist_hook_type ExtensionPreviousSetRelPathlistHook = NULL;
+explain_get_index_name_hook_type ExtensionPreviousIndexNameHook = NULL;
+get_relation_info_hook_type ExtensionPreviousGetRelationInfoHook = NULL;
+ExplainOneQuery_hook_type ExtensionPreviousExplainOneQueryHook = NULL;
+node_worker_stmt_rewrite_hook_type node_worker_stmt_rewrite_hook = NULL;
+
+
+/*
+ * BlackboxDBApiExplainOneQuery enables extended explain plans by default while
+ * an EXPLAIN runs so the additional BlackboxDB explain annotations are always
+ * produced, then delegates to the prior hook chain (or the core behavior when
+ * no prior hook was installed). The behavior is gated by
+ * EnableDefaultExtendedExplain so tests (and callers that want the vanilla
+ * output) can opt out. The extended explain GUC is set locally within a new GUC
+ * nest level so it is rolled back once the explain finishes (and is also cleaned
+ * up automatically on error at transaction/subtransaction end). This avoids
+ * leaking the setting onto later queries on a pooled connection, since
+ * EnableExtendedExplainPlans is also consulted during cost estimation.
+ */
+void
+BlackboxDBApiExplainOneQuery(Query *query, int cursorOptions, IntoClause *into,
+							 ExplainState *es, const char *queryString,
+							 ParamListInfo params, QueryEnvironment *queryEnv)
+{
+	int savedGUCLevel = -1;
+
+	if (EnableDefaultExtendedExplain)
+	{
+		savedGUCLevel = NewGUCNestLevel();
+		SetGUCLocally(psprintf("%s.enableExtendedExplainPlans", ApiGucPrefixV2),
+					  "true");
+	}
+
+	if (ExtensionPreviousExplainOneQueryHook != NULL)
+	{
+		ExtensionPreviousExplainOneQueryHook(query, cursorOptions, into, es,
+											 queryString, params, queryEnv);
+	}
+	else
+	{
+#if PG_VERSION_NUM >= 170000
+		standard_ExplainOneQuery(query, cursorOptions, into, es, queryString,
+								 params, queryEnv);
+#else
+
+		/*
+		 * standard_ExplainOneQuery is not exported before PG17, so replicate
+		 * the core behavior (identical between PG15 and PG16).
+		 */
+		PlannedStmt *plan;
+		instr_time planstart;
+		instr_time planduration;
+		BufferUsage bufusage_start;
+		BufferUsage bufusage;
+
+		if (es->buffers)
+		{
+			bufusage_start = pgBufferUsage;
+		}
+		INSTR_TIME_SET_CURRENT(planstart);
+
+		plan = pg_plan_query(query, queryString, cursorOptions, params);
+
+		INSTR_TIME_SET_CURRENT(planduration);
+		INSTR_TIME_SUBTRACT(planduration, planstart);
+
+		if (es->buffers)
+		{
+			memset(&bufusage, 0, sizeof(BufferUsage));
+			BufferUsageAccumDiff(&bufusage, &pgBufferUsage, &bufusage_start);
+		}
+
+		ExplainOnePlan(plan, into, es, queryString, params, queryEnv,
+					   &planduration, (es->buffers ? &bufusage : NULL));
+#endif
+	}
+
+	if (savedGUCLevel >= 0)
+	{
+		RollbackGUCChange(savedGUCLevel);
+	}
+}
+
+
+/*
+ * BlackboxDBApiPlanner transforms the query tree before passing it
+ * to the planner.
+ */
+PlannedStmt *
+BlackboxDBApiPlanner(Query *parse, const char *queryString, int cursorOptions,
+					 ParamListInfo boundParams)
+{
+	bool hasUnresolvedParams = false;
+	int queryFlags = 0;
+	bool isNonExistentCollection = false;
+	PlannedStmt *plan = NULL;
+	if (IsBlackboxDBApiExtensionActive())
+	{
+		if (IsReadWriteCommand(parse))
+		{
+			ThrowIfWriteCommandNotAllowed();
+		}
+
+		if (parse->commandType != CMD_INSERT)
+		{
+			queryFlags = BlackboxDbQueryFlags(parse);
+		}
+
+		if (queryFlags & HAS_AGGREGATION_FUNCTION)
+		{
+			parse = (Query *) ExpandAggregationFunction(parse, boundParams, &plan,
+														&cursorOptions);
+			if (plan != NULL)
+			{
+				return plan;
+			}
+		}
+
+		if (queryFlags & HAS_NESTED_AGGREGATION_FUNCTION)
+		{
+			parse = (Query *) ExpandNestedAggregationFunction(parse, boundParams);
+		}
+
+		/* replace the @@ operators and inject shard_key_value filters */
+		if (queryFlags & HAS_QUERY_OPERATOR ||
+			queryFlags & HAS_BLACKBOXDB_COLLECTION_RTE ||
+			queryFlags & HAS_QUERY_MATCH_FUNCTION)
+		{
+			parse = (Query *) ReplaceBsonQueryOperators(parse, boundParams);
+		}
+
+		/* the collection replace needs to happen *after* the query rewrite. */
+		/* this is to handle cases where there's an invalid query against a collection */
+		/* that doesn't exist. We need to error out from the invalid query first */
+		if (queryFlags & HAS_BLACKBOXDB_COLLECTION_RTE)
+		{
+			parse = ReplaceBlackboxDbCollectionFunction(parse, boundParams,
+														&isNonExistentCollection);
+		}
+
+		/* replace parameters in cursor_state calls, we need the values during planning */
+		if (queryFlags & HAS_CURSOR_STATE_PARAM)
+		{
+			parse = ReplaceCursorParamValues(parse, boundParams);
+		}
+
+		/* for extension queries with unbound parameters, dissuade the parameter */
+		if (queryFlags != 0)
+		{
+			hasUnresolvedParams =
+				HasUnresolvedExternParamsWalker((Node *) parse, boundParams);
+		}
+	}
+
+	if (ExtensionPreviousPlannerHook != NULL)
+	{
+		plan = ExtensionPreviousPlannerHook(parse, queryString, cursorOptions,
+											boundParams);
+	}
+	else
+	{
+		plan = standard_planner(parse, queryString, cursorOptions, boundParams);
+	}
+
+	if (hasUnresolvedParams)
+	{
+		/*
+		 * When we are doing generic planning for a prepared statement,
+		 * parameters are not yet assigned a specific value and our planner
+		 * optimizations do not know what to do so we fall back to a very
+		 * inefficient or erroring implementation. Signal this to the planner
+		 * by using an ultra-high cost (lowered to avoid overflow when summing
+		 * costs).
+		 */
+		plan->planTree->total_cost = FLT_MAX / 10000000;
+	}
+	else if ((queryFlags & HAS_CURSOR_FUNC) != 0 &&
+			 !isNonExistentCollection)
+	{
+		/*
+		 * Only validate the custom scan checks on collections that exist.
+		 * Also CTE inlining doesn't happen on volatile functions so if the cursor
+		 * projection is still volatile (Pre 1.5-0) then skip validation.
+		 */
+		ValidateCursorCustomScanPlan(plan->planTree);
+	}
+
+	return plan;
+}
+
+
+/*
+ * Extracts Operator information from a given RestrictInfo
+ * gets the AttrNumber, Operator, and Const if and only if
+ * the RestrictInfo is an OpExpr of the form
+ * "Var Op Const"
+ */
+inline static bool
+TryExtractDataFromRestrictInfo(RestrictInfo *rinfo, AttrNumber *leftAttr, Oid *opNo,
+							   Const **rightConst)
+{
+	*leftAttr = InvalidAttrNumber;
+	*opNo = InvalidOid;
+	*rightConst = NULL;
+	if (!IsA(rinfo->clause, OpExpr))
+	{
+		return false;
+	}
+
+	OpExpr *opExpr = (OpExpr *) rinfo->clause;
+	if (list_length(opExpr->args) != 2)
+	{
+		return false;
+	}
+
+	Expr *leftExpr = linitial(opExpr->args);
+	Expr *rightExpr = lsecond(opExpr->args);
+	if (!IsA(leftExpr, Var) || !IsA(rightExpr, Const))
+	{
+		return false;
+	}
+
+	*leftAttr = castNode(Var, leftExpr)->varattno;
+	*opNo = opExpr->opno;
+	*rightConst = castNode(Const, rightExpr);
+
+	return !(*rightConst)->constisnull;
+}
+
+
+inline static bool
+TryExtractObjectIdDataFormFuncExprRestrictInfo(RestrictInfo *rinfo, Oid funcOid,
+											   bson_value_t *filterValue)
+{
+	if (!IsA(rinfo->clause, FuncExpr))
+	{
+		return false;
+	}
+
+	FuncExpr *funcExpr = (FuncExpr *) rinfo->clause;
+
+	if (funcExpr->funcid != funcOid || list_length(funcExpr->args) != 2)
+	{
+		return false;
+	}
+
+	Expr *leftExpr = linitial(funcExpr->args);
+	Expr *rightExpr = lsecond(funcExpr->args);
+	if (!IsA(leftExpr, Var) || !IsA(rightExpr, Const))
+	{
+		return false;
+	}
+
+	if (castNode(Var, leftExpr)->varattno != DOCUMENT_DATA_TABLE_DOCUMENT_VAR_ATTR_NUMBER)
+	{
+		return false;
+	}
+
+	Const *rightConst = castNode(Const, rightExpr);
+
+	pgbsonelement queryElement;
+	if (!rightConst->constisnull &&
+		TryGetSinglePgbsonElementFromPgbson(DatumGetPgBsonPacked(
+												rightConst->constvalue),
+											&queryElement) &&
+		queryElement.pathLength == 3 && strcmp(queryElement.path, "_id") == 0)
+	{
+		*filterValue = queryElement.bsonValue;
+		return true;
+	}
+
+	return false;
+}
+
+
+bool
+InMatchIsEquvalentTo(ScalarArrayOpExpr *opExpr, const bson_value_t *arrayValue)
+{
+	if (opExpr == NULL || arrayValue->value_type != BSON_TYPE_ARRAY)
+	{
+		return false;
+	}
+
+	List *inMatchArgs = opExpr->args;
+	if (list_length(inMatchArgs) != 2)
+	{
+		return false;
+	}
+
+	if (!IsA(lsecond(inMatchArgs), Const))
+	{
+		return false;
+	}
+
+	Const *secondMatch = (Const *) lsecond(inMatchArgs);
+
+	bson_iter_t arrayValueIter;
+	BsonValueInitIterator(arrayValue, &arrayValueIter);
+
+	ArrayType *inArrayValue = DatumGetArrayTypeP(secondMatch->constvalue);
+
+	const int slice_ndim = 0;
+	ArrayMetaState *mState = NULL;
+	ArrayIterator inArrayIterator = array_create_iterator(inArrayValue, slice_ndim,
+														  mState);
+	Datum arrayDatum = { 0 };
+	bool isNull = false;
+	while (array_iterate(inArrayIterator, &arrayDatum, &isNull))
+	{
+		if (!bson_iter_next(&arrayValueIter) || isNull)
+		{
+			array_free_iterator(inArrayIterator);
+			return false;
+		}
+
+		const bson_value_t *rightValue = bson_iter_value(&arrayValueIter);
+		pgbsonelement leftElement = { 0 };
+		pgbson *leftBson = DatumGetPgBsonPacked(arrayDatum);
+		PgbsonToSinglePgbsonElement(leftBson, &leftElement);
+
+		if (!BsonValueEquals(&leftElement.bsonValue, rightValue))
+		{
+			array_free_iterator(inArrayIterator);
+			return false;
+		}
+	}
+
+	array_free_iterator(inArrayIterator);
+	if (bson_iter_next(&arrayValueIter))
+	{
+		return false;
+	}
+
+	return true;
+}
+
+
+static void
+ExtensionRelPathlistHookCore(PlannerInfo *root, RelOptInfo *rel, Index rti,
+							 RangeTblEntry *rte)
+{
+	bool isBlackboxDbDataNamespace = false;
+	uint64 collectionId = 0;
+	bool isShardQuery = IsRTEShardForBlackboxDbCollection(rte, &isBlackboxDbDataNamespace,
+														  &collectionId);
+
+	if (!isBlackboxDbDataNamespace)
+	{
+		/* Skip looking for queries not pertaining to blackboxdb data tables */
+		return;
+	}
+
+	if (!isShardQuery)
+	{
+		return;
+	}
+
+	if (ProcessWorkerWriteQueryPath(root, rel, rti, rte))
+	{
+		return;
+	}
+
+	ReplaceExtensionFunctionContext indexContext = {
+		.queryDataForVectorSearch = { 0 },
+		.hasVectorSearchQuery = false,
+		.hasStreamingContinuationScan = false,
+		.hasDynamicStreamingContinuationScan = false,
+		.primaryKeyLookupPath = NULL,
+		.reservoirSampleExpr = NULL,
+		.inputData = {
+			.collectionId = collectionId,
+			.isShardQuery = isShardQuery,
+			.rteIndex = rti
+		},
+		.forceIndexQueryOpData = {
+			.type = ForceIndexOpType_None,
+			.path = NULL,
+			.opExtraState = NULL
+		}
+	};
+
+	if (ForceDisableSeqScan)
+	{
+		ForceExcludeNonIndexPaths(root, rel, rti, rte);
+	}
+
+	/*
+	 * Before determining anything further, detect any force pushdown scenarios by walking
+	 * the restriction paths.
+	 */
+	WalkPathsForIndexOperations(rel->pathlist, &indexContext);
+	WalkRestrictionPathsForIndexOperations(rel->baserestrictinfo, rel->joininfo,
+										   &indexContext);
+
+	/* Before we *replace* function operators in restriction paths, we should apply the force pushdown
+	 * logic while we still have the FuncExprs available.
+	 */
+	if (indexContext.forceIndexQueryOpData.type != ForceIndexOpType_None)
+	{
+		ForceIndexForQueryOperators(root, rel, &indexContext);
+	}
+
+	/*
+	 * When enabled, run the streaming cursor plan rewrite early — before
+	 * path replacement modifies the paths. This allows the custom scan to
+	 * see the original planner paths (index scan vs bitmap) before they
+	 * are transformed by ReplaceExtensionFunctionOperatorsInPaths.
+	 */
+	bool updatedPaths = false;
+	if (indexContext.hasDynamicStreamingContinuationScan)
+	{
+		updatedPaths = UpdatePathsWithDynamicStreamingCursorPlans(root, rel, rte,
+																  &indexContext);
+	}
+	else if (indexContext.hasStreamingContinuationScan)
+	{
+		updatedPaths = UpdatePathsWithExtensionStreamingCursorPlans(root, rel, rte,
+																	&indexContext);
+	}
+
+	rel->baserestrictinfo =
+		ReplaceExtensionFunctionOperatorsInRestrictionPaths(rel->baserestrictinfo,
+															&indexContext);
+
+	/*
+	 * Replace all function operators that haven't been transformed in indexed
+	 * paths into OpExpr clauses.
+	 */
+	ReplaceExtensionFunctionOperatorsInPaths(root, rel, rel->pathlist, PARENTTYPE_NONE,
+											 &indexContext);
+
+	ConsiderIndexOrderByPushdownForId(root, rel, rte, rti, &indexContext);
+
+	if (EnableMergeSortForInPrefix)
+	{
+		ConsiderMergeSortForInPrefix(root, rel, rte, rti, &indexContext);
+	}
+
+	ConsiderIndexOnlyScan(root, rel, rte, rti, &indexContext);
+
+	/*
+	 * Update any paths with custom scans as appropriate.
+	 * Skip if already done in the early path above.
+	 */
+
+	/* Not a streaming cursor scenario.
+	 * Streaming cursors auto convert into Bitmap Paths.
+	 * Handle force conversion of bitmap paths.
+	 */
+	if (!updatedPaths)
+	{
+		if (indexContext.forceIndexQueryOpData.type == ForceIndexOpType_Text)
+		{
+			/* Text indexes require bitmap paths since we leverage bitmapquals
+			 * to run the meta_qual.
+			 * TODO support indexscan if available.
+			 */
+			UpdatePathsToForceRumIndexScanToBitmapHeapScan(root, rel);
+		}
+	}
+
+	if (EnableDistinctCustomScan || EnableGroupByDistinctScan ||
+		EnableDistinctScanForGroupFirst)
+	{
+		AddDistinctCustomScanWrapper(root, rel, rte);
+	}
+
+	/* For vector, text search inject custom scan path to track lifetime of
+	 * $meta/ivfprobes.
+	 */
+	if (indexContext.hasVectorSearchQuery)
+	{
+		AddExtensionQueryScanForVectorQuery(root, rel, rte,
+											&indexContext.queryDataForVectorSearch);
+	}
+	else if (indexContext.forceIndexQueryOpData.type == ForceIndexOpType_Text)
+	{
+		QueryTextIndexData *textIndexData =
+			(QueryTextIndexData *) indexContext.forceIndexQueryOpData.opExtraState;
+		if (textIndexData != NULL && textIndexData->indexOptions != NULL &&
+			textIndexData->query != (Datum) 0)
+		{
+			AddExtensionQueryScanForTextQuery(root, rel, rte, textIndexData);
+		}
+	}
+	else if (EnableExtendedIndexes &&
+			 indexContext.forceIndexQueryOpData.type == ForceIndexOpType_ExtendedIndex)
+	{
+		if (indexContext.forceIndexQueryOpData.opExtraState != NULL)
+		{
+			QueryExtendedIndexContext *amContext =
+				(QueryExtendedIndexContext *) indexContext.forceIndexQueryOpData.
+				opExtraState;
+
+			if (amContext->indexAmEntry != NULL &&
+				amContext->indexAmEntry->query_index_path_support_funcs != NULL)
+			{
+				QueryIndexPathSupportFuncs *supportFuncs =
+					amContext->indexAmEntry->query_index_path_support_funcs;
+
+				supportFuncs->addExtendedQueryScanFunc(root, rel, rti, rte, amContext);
+			}
+		}
+	}
+
+	/* Wrap paths with ReservoirSample CustomPath (must happen after all path transforms) */
+	if (EnableDollarSampleReservoirScan && indexContext.reservoirSampleExpr != NULL)
+	{
+		AddReservoirSampleCustomPath(root, rel, indexContext.reservoirSampleExpr);
+	}
+
+	if (EnableExtendedExplainPlans)
+	{
+		/* Finally: Add the custom scan wrapper for explain plans */
+		AddExplainCustomScanWrapper(root, rel, rte, indexContext.inputData.collectionId);
+	}
+
+	if (ForceParallelScanIfAvailable)
+	{
+		ListCell *cell;
+		foreach(cell, rel->pathlist)
+		{
+			Path *path = lfirst(cell);
+			path->total_cost += disable_cost;
+		}
+	}
+
+	if (EnableMergeSortForInPrefix)
+	{
+		RemoveMergeSortInPrefixMarkersFromPaths(rel->pathlist);
+		RemoveMergeSortInPrefixMarkersFromPaths(rel->partial_pathlist);
+	}
+}
+
+
+/*
+ * ExtensionRelPathlistHook transforms the query paths after the initial planning phase
+ * before the final logical plan is formed.
+ */
+void
+ExtensionRelPathlistHook(PlannerInfo *root, RelOptInfo *rel, Index rti,
+						 RangeTblEntry *rte)
+{
+	if (IsBlackboxDBApiExtensionActive())
+	{
+		ExtensionRelPathlistHookCore(root, rel, rti, rte);
+	}
+
+	if (ExtensionPreviousSetRelPathlistHook != NULL)
+	{
+		ExtensionPreviousSetRelPathlistHook(root, rel, rti, rte);
+	}
+}
+
+
+/*
+ * GetIndexOptInfoSortOrder determines the sort order for IndexOptInfo based on
+ * the index type and properties. This is used to prioritize indexes in the
+ * relation.
+ *
+ * 0 - Primary key indexes (Btree)
+ * 1 - Composite indexes
+ * 2 - Regular BSON indexes
+ * 3 - Wildcard indexes
+ * 4 - Other index access methods
+ */
+static int
+GetIndexOptInfoSortOrder(const IndexOptInfo *info, int *pathCount)
+{
+	Oid amOid = info->relam;
+	*pathCount = info->ncolumns;
+	if (amOid == BTREE_AM_OID)
+	{
+		return IndexPriorityOrdering_PrimaryKey;
+	}
+
+	/* If the index is not a regular BSON index, we give it the lowest priority. */
+	if (info->ncolumns <= 0 || !IsBsonRegularIndexAm(amOid))
+	{
+		return IndexPriorityOrdering_Other;
+	}
+
+	Oid firstOpClassOid = info->opfamily[0];
+
+	/* If it is composite op class it's the next priority. Since composite indexes have a single column, we just get the first column for the opclass. */
+	if (IsCompositeOpFamilyOid(amOid, firstOpClassOid))
+	{
+		/* Weight single path composite before wildcard */
+		BsonGinCompositePathOptions *options =
+			(BsonGinCompositePathOptions *) info->opclassoptions[0];
+		*pathCount = GetCompositeOpClassPathCount(options);
+		return options->wildcardPathIndex >= 0 ?
+			   IndexPriorityOrdering_Composite_Wildcard : IndexPriorityOrdering_Composite;
+	}
+
+	/* Wildcard indexes should go after exact path indexes. */
+	for (int i = 0; i < info->ncolumns && info->opclassoptions != NULL; i++)
+	{
+		BsonGinIndexOptionsBase *options =
+			(BsonGinIndexOptionsBase *) info->opclassoptions[i];
+
+		if (options == NULL)
+		{
+			continue;
+		}
+
+		if (options->type == IndexOptionsType_Wildcard)
+		{
+			return IndexPriorityOrdering_Wildcard;
+		}
+
+		if (options->type == IndexOptionsType_SinglePath)
+		{
+			BsonGinSinglePathOptions *singlePathOptions =
+				(BsonGinSinglePathOptions *) options;
+
+			if (singlePathOptions->isWildcard)
+			{
+				return IndexPriorityOrdering_Wildcard;
+			}
+		}
+	}
+
+	return IndexPriorityOrdering_Regular;
+}
+
+
+/*
+ * CompareIndexOptionsFunc is a comparison function for sorting IndexOptInfo
+ * based on their sort order. It is used to prioritize indexes in the relation.
+ * The sort order is determined by the index type and its properties.
+ */
+static int
+CompareIndexOptionsFunc(const ListCell *a, const ListCell *b)
+{
+	IndexOptInfo *infoA = (IndexOptInfo *) lfirst(a);
+	IndexOptInfo *infoB = (IndexOptInfo *) lfirst(b);
+
+	int32_t pathCountA, pathCountB;
+	int sortOrderA = GetIndexOptInfoSortOrder(infoA, &pathCountA);
+	int sortOrderB = GetIndexOptInfoSortOrder(infoB, &pathCountB);
+
+	if (sortOrderA != sortOrderB)
+	{
+		return sortOrderA - sortOrderB;
+	}
+
+	/* Prefer smaller indexes that match (pathCount 2 is better than pathCount 3)*/
+	return pathCountA - pathCountB;
+}
+
+
+/*
+ * LogRelationIndexesOrder logs the order of indexes in the relation.
+ * This is useful for debugging and understanding how indexes are prioritized.
+ */
+static void
+LogRelationIndexesOrder(const RelOptInfo *rel)
+{
+	if (rel->indexlist != NIL)
+	{
+		ListCell *cell;
+		foreach(cell, rel->indexlist)
+		{
+			IndexOptInfo *info = (IndexOptInfo *) lfirst(cell);
+			char *indexName = "(unknown)";
+
+			HeapTuple idxTup = SearchSysCache1(RELOID, ObjectIdGetDatum(info->indexoid));
+			if (HeapTupleIsValid(idxTup))
+			{
+				Form_pg_class idxForm = (Form_pg_class) GETSTRUCT(idxTup);
+				indexName = NameStr(idxForm->relname);
+				ReleaseSysCache(idxTup);
+			}
+
+			char *amName = "(unknown)";
+			HeapTuple amTup = SearchSysCache1(AMOID, ObjectIdGetDatum(info->relam));
+			if (HeapTupleIsValid(amTup))
+			{
+				Form_pg_am amForm = (Form_pg_am) GETSTRUCT(amTup);
+				amName = NameStr(amForm->amname);
+				ReleaseSysCache(amTup);
+			}
+
+			char *opfamilyName = "(unknown)";
+
+			int numPaths = info->ncolumns;
+			if (info->ncolumns > 0)
+			{
+				Oid opfamilyOid = info->opfamily[0];
+				HeapTuple ofTup = SearchSysCache1(OPFAMILYOID, ObjectIdGetDatum(
+													  opfamilyOid));
+				if (HeapTupleIsValid(ofTup))
+				{
+					Form_pg_opfamily ofForm = (Form_pg_opfamily) GETSTRUCT(ofTup);
+					opfamilyName = NameStr(ofForm->opfname);
+					ReleaseSysCache(ofTup);
+				}
+
+				if (IsCompositeOpFamilyOid(info->relam, opfamilyOid))
+				{
+					numPaths = GetCompositeOpClassPathCount(info->opclassoptions[0]);
+				}
+			}
+
+			ereport(LOG, errmsg(
+						"Name: %s, access method: %s, 1st opfamily: %s, numPaths %d",
+						indexName, amName, opfamilyName, numPaths));
+		}
+	}
+}
+
+
+/*
+ * ExtensionGetRelationInfoHookCore is the core implementation of the get_relation_info
+ * hook for the BlackboxDB API extension. It modifies the relation info based on the
+ * extension's requirements.
+ *
+ * First it sorts the relation index list if enabled, based on the index priorities to be considered by the planner if their cost is the same or similar.
+ * 1. Primary key indexes are given the highest priority.
+ * 2. Composite indexes are given the next priority.
+ * 3. Regular BSON indexes are given the next priority.
+ * 4. Any other index access method is given the lowest priority.
+ *
+ * Additional things we do in this method:
+ * 1) If parallel scans are supported, we mark the indexam as supporting it if it's capable
+ * 2) If there's PFE we support PFE pushdown based on the baserestrictinfo
+ * 3) Modify the btree cost estimate to the custom cost estimate
+ *
+ */
+static void
+ExtensionGetRelationInfoHookCore(PlannerInfo *root, Oid relationObjectId,
+								 bool inhparent, RelOptInfo *rel)
+{
+	Oid namespaceId = get_rel_namespace(relationObjectId);
+	if (namespaceId != ApiDataNamespaceOid())
+	{
+		/* Not a blackboxdb data namespace, skip */
+		return;
+	}
+
+	if (rel->indexlist != NIL)
+	{
+		list_sort(rel->indexlist, CompareIndexOptionsFunc);
+	}
+
+	/* In this path btree will be first if any
+	 * As we walk the indexes, collect all the PFE indexes if required.
+	 * If there are any PFE indexes, we need to process them for
+	 * predOk based on the custom expressions we may need.
+	 */
+	List *pfeIndexes = NIL;
+	if (list_length(rel->indexlist) > 0)
+	{
+		ListCell *cell;
+		foreach(cell, rel->indexlist)
+		{
+			IndexOptInfo *firstIndex = lfirst(cell);
+			if (firstIndex->relam == BTREE_AM_OID)
+			{
+				firstIndex->amcostestimate = blackboxdb_btcostestimate;
+			}
+			else if (EnableCompositeParallelIndexScan && firstIndex->ncolumns == 1 &&
+					 IsCompositeOpFamilyOidWithParallelSupport(firstIndex->relam,
+															   firstIndex->opfamily[0]))
+			{
+				firstIndex->amcanparallel = true;
+			}
+
+			if (EnablePartialFilterEvalOnPlanner &&
+				list_length(firstIndex->indpred) > 0)
+			{
+				pfeIndexes = lappend(pfeIndexes, firstIndex);
+			}
+		}
+	}
+
+
+	if (EnablePartialFilterEvalOnPlanner &&
+		list_length(pfeIndexes) > 0)
+	{
+		/* Create a temporary memory context for this */
+		MemoryContext tempContext = AllocSetContextCreate(CurrentMemoryContext,
+														  "PFE Context",
+														  ALLOCSET_DEFAULT_MINSIZE,
+														  ALLOCSET_DEFAULT_INITSIZE,
+														  ALLOCSET_DEFAULT_MAXSIZE);
+		MemoryContext oldMemoryContext = MemoryContextSwitchTo(tempContext);
+
+		List *clauselist = AugmentBaseRestrictInfo(root, rel);
+
+		/* If there are partial filter indexes, apply the predOk test here
+		 * This means we need to augment additional clauses in the
+		 * index_restrict_info to ensure that PFE pred_ok works correctly.
+		 */
+		ListCell *cell;
+		foreach(cell, pfeIndexes)
+		{
+			IndexOptInfo *pfeIndex = lfirst(cell);
+			pfeIndex->predOK = predicate_implied_by(pfeIndex->indpred, clauselist,
+													false);
+		}
+
+		MemoryContextSwitchTo(oldMemoryContext);
+		MemoryContextDelete(tempContext);
+
+		list_free(pfeIndexes);
+	}
+
+	if (EnableLogRelationIndexesOrder)
+	{
+		LogRelationIndexesOrder(rel);
+	}
+
+	if (EnableExtendedExplainPlans && EnableExplainScanIndexCosts)
+	{
+		ResetReportedIndexCosts();
+	}
+}
+
+
+/* Implementation for the get_relation_info hook. Calls our hook if the extension is active and then calls the previous info hook if any was defined before we registered ours. */
+void
+ExtensionGetRelationInfoHook(PlannerInfo *root,
+							 Oid relationObjectId,
+							 bool inhparent,
+							 RelOptInfo *rel)
+{
+	if (IsBlackboxDBApiExtensionActive())
+	{
+		ExtensionGetRelationInfoHookCore(root, relationObjectId, inhparent, rel);
+	}
+
+	if (ExtensionPreviousGetRelationInfoHook != NULL)
+	{
+		ExtensionPreviousGetRelationInfoHook(root, relationObjectId, inhparent, rel);
+	}
+}
+
+
+/*
+ * BlackboxDbQueryFlags determines whether the given query tree contains
+ * extension-specific constructs that are relevant to the planner.
+ */
+static int
+BlackboxDbQueryFlags(Query *query)
+{
+	BlackboxDbQueryFlagsState queryFlags = { 0 };
+
+	BlackboxDbQueryFlagsWalker((Node *) query, &queryFlags);
+
+	return queryFlags.blackboxDbQueryFlags;
+}
+
+
+inline static bool
+IsAggregationFunction(Oid funcId)
+{
+	return funcId == ApiCatalogAggregationPipelineFunctionId() ||
+		   funcId == ApiCatalogAggregationFindFunctionId() ||
+		   funcId == ApiCatalogAggregationCountFunctionId() ||
+		   funcId == ApiCatalogAggregationDistinctFunctionId() ||
+		   funcId == ApiCatalogAggregationGetMoreFunctionId();
+}
+
+
+/*
+ * BlackboxDbQueryFlagsWalker determines whether the given expression tree contains
+ * extension-specific constructs that are relevant to the planner.
+ */
+static bool
+BlackboxDbQueryFlagsWalker(Node *node, BlackboxDbQueryFlagsState *queryFlags)
+{
+	CHECK_FOR_INTERRUPTS();
+
+	if (node == NULL)
+	{
+		return false;
+	}
+
+	if (IsA(node, RangeTblEntry))
+	{
+		RangeTblEntry *rte = (RangeTblEntry *) node;
+
+		if (IsBlackboxDbCollectionBasedRTE(rte))
+		{
+			queryFlags->blackboxDbQueryFlags |= HAS_BLACKBOXDB_COLLECTION_RTE;
+		}
+		else if (rte->rtekind == RTE_FUNCTION &&
+				 list_length(rte->functions) == 1)
+		{
+			RangeTblFunction *rangeTblFunc = linitial(rte->functions);
+			if (!IsA(rangeTblFunc->funcexpr, FuncExpr))
+			{
+				return false;
+			}
+
+			FuncExpr *funcExpr = (FuncExpr *) rangeTblFunc->funcexpr;
+
+			/* Defer the func check until we really have to */
+			if (list_length(funcExpr->args) != 2 &&
+				list_length(funcExpr->args) != 3)
+			{
+				return false;
+			}
+
+			if (funcExpr->funcresulttype != BsonTypeId() ||
+				!funcExpr->funcretset)
+			{
+				return false;
+			}
+
+			if (IsAggregationFunction(funcExpr->funcid))
+			{
+				if (queryFlags->queryDepth > 1)
+				{
+					queryFlags->blackboxDbQueryFlags |= HAS_NESTED_AGGREGATION_FUNCTION;
+				}
+				else
+				{
+					queryFlags->blackboxDbQueryFlags |= HAS_AGGREGATION_FUNCTION;
+				}
+
+				return true;
+			}
+		}
+
+		return false;
+	}
+	else if (IsA(node, OpExpr))
+	{
+		OpExpr *opExpr = (OpExpr *) node;
+
+		if (opExpr->opno == BsonQueryOperatorId())
+		{
+			queryFlags->blackboxDbQueryFlags |= HAS_QUERY_OPERATOR;
+		}
+
+		return false;
+	}
+	else if (IsA(node, FuncExpr))
+	{
+		FuncExpr *funcExpr = (FuncExpr *) node;
+
+		if (funcExpr->funcid == ApiCursorStateFunctionId())
+		{
+			queryFlags->blackboxDbQueryFlags |= HAS_CURSOR_FUNC;
+
+			Node *queryNode = lsecond(funcExpr->args);
+			if (IsA(queryNode, Param))
+			{
+				queryFlags->blackboxDbQueryFlags |= HAS_CURSOR_STATE_PARAM;
+			}
+		}
+
+		if (funcExpr->funcid == BsonQueryMatchWithLetAndCollationFunctionId())
+		{
+			queryFlags->blackboxDbQueryFlags |= HAS_QUERY_MATCH_FUNCTION;
+		}
+
+		return false;
+	}
+	else if (IsA(node, Query))
+	{
+		queryFlags->queryDepth++;
+		bool result = query_tree_walker((Query *) node, BlackboxDbQueryFlagsWalker,
+										queryFlags, QTW_EXAMINE_RTES_BEFORE);
+		queryFlags->queryDepth--;
+		return result;
+	}
+
+	return expression_tree_walker(node, BlackboxDbQueryFlagsWalker, queryFlags);
+}
+
+
+/*
+ * Helper method that identifies if a query statement is read-write or read only.
+ */
+static bool
+IsReadWriteCommand(Query *query)
+{
+	CmdType commandType = query->commandType;
+
+	/* This is based on Postgres' logic:
+	 * https://github.com/postgres/postgres/blob/c8e1ba736b2b9e8c98d37a5b77c4ed31baf94147/src/backend/tcop/utility.c#L101
+	 *
+	 * We can't use that method directly since that takes a PlannedStmt and we need to check before calling Citus'
+	 * planner as we want to avoid them throwing the error to have control on our error message and error code.
+	 *
+	 * CMD_UTILITY is not included here, as that is taken care by the process_utilit_hook.c which is called
+	 * before the planner for utility commands.
+	 *
+	 * See: IsUtilityCommandReadWrite
+	 */
+	switch (commandType)
+	{
+		case CMD_SELECT:
+		{
+			if (query->rowMarks != NIL || query->hasModifyingCTE)
+			{
+				return true;
+			}
+			else
+			{
+				return false;
+			}
+		}
+
+		case CMD_UPDATE:
+		case CMD_INSERT:
+		case CMD_DELETE:
+#if PG_VERSION_NUM >= 150000
+		case CMD_MERGE:
+#endif
+			{
+				return true;
+			}
+
+		default:
+		{
+			return false;
+		}
+	}
+}
+
+
+/*
+ * ReplaceBlackboxDbCollectionFunction replaces all occurences of the
+ * ApiSchema.collection() function call with the corresponding
+ * table.
+ */
+static Query *
+ReplaceBlackboxDbCollectionFunction(Query *query, ParamListInfo boundParams,
+									bool *isNonExistentCollection)
+{
+	/*
+	 * We will change a function RTE into a relation RTE so we can use
+	 * a regular walker that does not copy the whole query tree.
+	 */
+	ReplaceBlackboxDbCollectionContext context =
+	{
+		.boundParams = boundParams,
+		.isNonExistentCollection = false,
+		.query = query
+	};
+	ReplaceBlackboxDbCollectionFunctionWalker((Node *) query, &context);
+	*isNonExistentCollection = context.isNonExistentCollection;
+	return query;
+}
+
+
+/*
+ * ReplaceBlackboxDbCollectionFunctionWalker recurses into the input to replace
+ * all occurences of the ApiSchema.collection() function call with the corresponding
+ * table.
+ */
+static bool
+ReplaceBlackboxDbCollectionFunctionWalker(Node *node,
+										  ReplaceBlackboxDbCollectionContext *context)
+{
+	CHECK_FOR_INTERRUPTS();
+
+	if (node == NULL)
+	{
+		return false;
+	}
+
+	if (IsA(node, RangeTblEntry))
+	{
+		RangeTblEntry *rte = (RangeTblEntry *) node;
+
+		if (IsResolvableBlackboxDbCollectionBasedRTE(rte, context->boundParams))
+		{
+			/* extract common arguments for collection-based RTE of the form ApiSchema.*collection*(db, coll, ..) */
+			RangeTblFunction *rangeTableFunc = linitial(rte->functions);
+			FuncExpr *funcExpr = (FuncExpr *) rangeTableFunc->funcexpr;
+			Const *dbConst = GetConstParamValue((Node *) linitial(funcExpr->args),
+												context->boundParams);
+			Const *collectionConst = GetConstParamValue((Node *) lsecond(funcExpr->args),
+														context->boundParams);
+			Datum databaseNameDatum = dbConst->constvalue;
+			Datum collectionNameDatum = collectionConst->constvalue;
+
+			/* retrieve collection details and lock the underlying relation for reads */
+			MongoCollection *collection =
+				GetMongoCollectionByNameDatum(databaseNameDatum, collectionNameDatum,
+											  AccessShareLock);
+
+			if (collection == NULL)
+			{
+				/*
+				 * non-existent collections should be treated as empty.
+				 * Here we replace the ApiSchema.collection() function call
+				 * empty_data_table() which returns an response mimicking SELECT
+				 * from an empty blackboxdb data collection.
+				 */
+				funcExpr->funcid = BsonEmptyDataTableFunctionId();
+				funcExpr->args = NIL;
+				context->isNonExistentCollection = true;
+			}
+			else
+			{
+				/* 1. Perform common actions for Collection-based RTEs*/
+				/* 1.a. change function RTE into a relation RTE */
+				rte->rtekind = RTE_RELATION;
+				rte->relid = collection->relationId;
+				rte->relkind = RELKIND_RELATION;
+				rte->functions = NIL;
+				rte->inh = true;
+#if PG_VERSION_NUM >= 160000
+
+				RTEPermissionInfo *permInfo = addRTEPermissionInfo(
+					&context->query->rteperminfos, rte);
+				permInfo->requiredPerms = ACL_SELECT;
+#else
+				rte->requiredPerms = ACL_SELECT;
+#endif
+				rte->rellockmode = AccessShareLock;
+			}
+		}
+
+		return false;
+	}
+	else if (IsA(node, Query))
+	{
+		Query *originalQuery = context->query;
+		context->query = (Query *) node;
+		bool result = query_tree_walker((Query *) node,
+										ReplaceBlackboxDbCollectionFunctionWalker,
+										context, QTW_EXAMINE_RTES_BEFORE);
+		context->query = originalQuery;
+		return result;
+	}
+
+	return expression_tree_walker(node, ReplaceBlackboxDbCollectionFunctionWalker,
+								  context);
+}
+
+
+/*
+ * Get the Const value of a parameter.
+ */
+Const *
+GetConstParamValue(Node *param, ParamListInfo boundParams)
+{
+	if (!IsA(param, Const))
+	{
+		param = EvaluateBoundParameters(param, boundParams);
+	}
+
+	Assert(IsA(param, Const));
+	return (Const *) param;
+}
+
+
+/*
+ * IsResolvableBlackboxDbCollectionBasedRTE returns whether the given node is a function RTE
+ * of the form ApiSchema.*collection*('db', 'coll', ...).
+ *
+ * Otherwise, we return false, thereby allowing the RTE_FUNCTION to be called directly, and not
+ * changing it to a RTE_RELATION.
+ */
+bool
+IsResolvableBlackboxDbCollectionBasedRTE(RangeTblEntry *rte, ParamListInfo boundParams)
+{
+	if (!IsBlackboxDbCollectionBasedRTE(rte))
+	{
+		return false;
+	}
+
+	RangeTblFunction *rangeTblFunc = linitial(rte->functions);
+	FuncExpr *funcExpr = (FuncExpr *) rangeTblFunc->funcexpr;
+
+	/* Handle the common params (db and coll) for collection-based RTEs */
+	Node *dbArg = (Node *) linitial(funcExpr->args);
+	Node *collectionArg = (Node *) lsecond(funcExpr->args);
+
+	if (!IsA(dbArg, Const))
+	{
+		dbArg = EvaluateBoundParameters(dbArg, boundParams);
+	}
+
+	if (!IsA(collectionArg, Const))
+	{
+		collectionArg = EvaluateBoundParameters(collectionArg, boundParams);
+	}
+
+	if (!IsA(dbArg, Const) || !IsA(collectionArg, Const))
+	{
+		/* in this case, we will call the function directly */
+		return false;
+	}
+
+	/* Perform Function-specific actions */
+	if (funcExpr->funcid == ApiCollectionFunctionId() ||
+		funcExpr->funcid == BlackboxDBApiCollectionFunctionId())
+	{
+		return true;
+	}
+
+	return false;
+}
+
+
+/*
+ * IsBlackboxDbCollectionBasedRTE returns whether the given node is a
+ * collection() RTE.
+ */
+bool
+IsBlackboxDbCollectionBasedRTE(RangeTblEntry *rte)
+{
+	if (rte->rtekind != RTE_FUNCTION)
+	{
+		return false;
+	}
+
+	if (list_length(rte->functions) != 1)
+	{
+		return false;
+	}
+
+	RangeTblFunction *rangeTblFunc = linitial(rte->functions);
+	if (!IsA(rangeTblFunc->funcexpr, FuncExpr))
+	{
+		return false;
+	}
+
+	FuncExpr *funcExpr = (FuncExpr *) rangeTblFunc->funcexpr;
+	if (list_length(funcExpr->args) < 2)
+	{
+		return false;
+	}
+
+	if (funcExpr->funcid != ApiCollectionFunctionId() &&
+		funcExpr->funcid != BlackboxDBApiCollectionFunctionId())
+	{
+		return false;
+	}
+
+	return true;
+}
+
+
+/*
+ * The default implementation of PG get IndexName for an OID.
+ */
+inline static const char *
+IndexIdGetIndexNameDefault(Oid indexId)
+{
+	const char *pgIndexName = get_rel_name(indexId);
+	if (pgIndexName == NULL)
+	{
+		elog(ERROR, "cache lookup failed for index %u", indexId);
+	}
+
+	return pgIndexName;
+}
+
+
+/*
+ * Explain hook to get the index name from a index Object ID.
+ * This checks if the index is an extension index, and if it is,
+ * then looks up the index name from the index options for that
+ * index.
+ */
+const char *
+ExtensionExplainGetIndexName(Oid indexId)
+{
+	if (IsBlackboxDBApiExtensionActive())
+	{
+		bool useLibPQ = true;
+		const char *blackboxDbIndexName = ExtensionIndexOidGetIndexName(indexId,
+																		useLibPQ);
+		if (blackboxDbIndexName != NULL)
+		{
+			return blackboxDbIndexName;
+		}
+	}
+
+	if (ExtensionPreviousIndexNameHook != NULL)
+	{
+		return ExtensionPreviousIndexNameHook(indexId);
+	}
+
+	return IndexIdGetIndexNameDefault(indexId);
+}
+
+
+/*
+ * Given a postgres index name, returns the corresponding blackboxdb index name if available.
+ */
+const char *
+GetBlackboxDBIndexNameFromPostgresIndex(const char *pgIndexName, bool useLibPq)
+{
+	int prefixLength = strlen(DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT_PREFIX);
+	if (strncmp(pgIndexName, DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT_PREFIX,
+				prefixLength) == 0)
+	{
+		int64 indexIdValue = atoll(pgIndexName + prefixLength);
+		StringInfo indexNameQuery = makeStringInfo();
+		const char *indexName = NULL;
+		if (useLibPq)
+		{
+			appendStringInfo(indexNameQuery,
+							 "SELECT (index_spec).index_name FROM %s.collection_indexes WHERE index_id = %ld",
+							 ApiCatalogSchemaName, indexIdValue);
+
+			indexName = ExtensionExecuteQueryOnLocalhostViaLibPQ(indexNameQuery->data);
+		}
+		else
+		{
+			appendStringInfo(indexNameQuery,
+							 "SELECT (index_spec).index_name FROM %s.collection_indexes WHERE index_id = $1",
+							 ApiCatalogSchemaName);
+
+			bool readOnly = true;
+			bool isNull[1] = { true };
+			Datum resultDatum[1] = { 0 };
+
+			Datum args[1] = { Int64GetDatum(indexIdValue) };
+			Oid argTypes[1] = { INT8OID };
+			char argNulls[1] = { ' ' };
+
+			RunMultiValueQueryWithNestedDistribution(indexNameQuery->data, 1, argTypes,
+													 args, argNulls, readOnly,
+													 SPI_OK_SELECT, resultDatum, isNull,
+													 1);
+			if (!isNull[0])
+			{
+				indexName = TextDatumGetCString(resultDatum[0]);
+			}
+		}
+
+		return indexName;
+	}
+	else if (strncmp(pgIndexName, DOCUMENT_DATA_PRIMARY_KEY_FORMAT_PREFIX,
+					 strlen(DOCUMENT_DATA_PRIMARY_KEY_FORMAT_PREFIX)) == 0)
+	{
+		/* this is the _id index */
+		return ID_INDEX_NAME;
+	}
+
+	return NULL;
+}
+
+
+/*
+ * Retrieves the "blackboxdb" index name for a given indexId.
+ * This is retrieved by using the collection_indexes table
+ * every time. Introduces an option to use libPQ or SPI.
+ *
+ * For LibPQ, Note that this should only be used for nested
+ * distributed transaction cases that are not in the hot path
+ * (e.g. EXPLAIN scenarios).
+ */
+const char *
+ExtensionIndexOidGetIndexName(Oid indexId, bool useLibPq)
+{
+	const char *pgIndexName = IndexIdGetIndexNameDefault(indexId);
+	if (pgIndexName == NULL)
+	{
+		return NULL;
+	}
+
+	/* if it's an extension secondary index */
+	const char *indexName = GetBlackboxDBIndexNameFromPostgresIndex(pgIndexName,
+																	useLibPq);
+	if (indexName == NULL)
+	{
+		indexName = IndexIdGetIndexNameDefault(indexId);
+	}
+
+	return indexName;
+}
+
+
+/*
+ * HasUnresolvedExternParamsWalker returns true if the passed in expression
+ * has external parameters that are not contained in boundParams, false
+ * otherwise.
+ *
+ * (Copied from Citus)
+ */
+static bool
+HasUnresolvedExternParamsWalker(Node *expression, ParamListInfo boundParams)
+{
+	if (expression == NULL)
+	{
+		return false;
+	}
+
+	if (IsA(expression, Param))
+	{
+		Param *param = (Param *) expression;
+		int paramId = param->paramid;
+
+		/* only care about user supplied parameters */
+		if (param->paramkind != PARAM_EXTERN)
+		{
+			return false;
+		}
+
+		/* Verify if the parameter is valid */
+		if (boundParams && paramId > 0 && paramId <= boundParams->numParams)
+		{
+			return false;
+		}
+
+		return true;
+	}
+
+	/* keep traversing */
+	if (IsA(expression, Query))
+	{
+		return query_tree_walker((Query *) expression,
+								 HasUnresolvedExternParamsWalker,
+								 boundParams,
+								 0);
+	}
+	else
+	{
+		return expression_tree_walker(expression,
+									  HasUnresolvedExternParamsWalker,
+									  boundParams);
+	}
+}
+
+
+/*
+ * Returns true if the relation of RTE pointed to
+ * is a BlackboxDB table base collection. e.g.
+ * for ApiDataSchemaName.documents_1 -> false (if sharding is enabled)
+ * but
+ * ApiDataSchemaName.documents_1_1034 -> true
+ *
+ * This is because we need to substitute the runtime expression
+ * with the index expression in the planner to avoid re-evaluating
+ * index clauses for index scans. But we also only want to do this in
+ * the shard queries (We need to retain the runtime functions in the
+ * coordinator since index selection should only really happen in the
+ * shards).
+ * For more details see bson_query_index_selection_sharded_tests.sql
+ */
+static bool
+IsRTEShardForBlackboxDbCollection(RangeTblEntry *rte, bool *isBlackboxDbDataNamespace,
+								  uint64 *collectionId)
+{
+	if (rte->rtekind != RTE_RELATION ||
+		rte->relkind != RELKIND_RELATION)
+	{
+		return false;
+	}
+
+	Oid tableOid = rte->relid;
+	Oid relNamespace = get_rel_namespace(tableOid);
+
+	*isBlackboxDbDataNamespace = relNamespace == ApiDataNamespaceOid();
+	if (!*isBlackboxDbDataNamespace)
+	{
+		return false;
+	}
+
+	HeapTuple tp = SearchSysCache1(RELOID, ObjectIdGetDatum(tableOid));
+	if (HeapTupleIsValid(tp))
+	{
+		Form_pg_class reltup = (Form_pg_class) GETSTRUCT(tp);
+		const char *relNameStr = NameStr(reltup->relname);
+		bool validateShardTableName = true;
+		bool isValid = CheckRelNameValidity(relNameStr, collectionId,
+											validateShardTableName);
+		ReleaseSysCache(tp);
+		return isValid;
+	}
+
+	return false;
+}
+
+
+/*
+ * For Insert/Update/Delete queries, we can't use create_distributed_function
+ * directly since that needs a single colocation group. Consequently, we use
+ * a special query - where we write the query as
+ *
+ * SELECT update_worker(collectionId, shardKeyValue, 0, ...) FROM ApiData.documents_1 WHERE shard_key_value = 1;
+ *
+ * In the query coordinator. When that query gets distributed to the shard, it will look like
+ *
+ * SELECT update_worker(collectionId, shardKeyValue, 0, ...) FROM ApiData.documents_1_shardid WHERE shard_key_value = 1;
+ *
+ * In the shard, we then rewrite that query (as below into)
+ * SELECT update_worker(collectionId, shardKeyValue, <oid of shard table>, ...);
+ *
+ * The replacement of the shard table in the function allows the worker function to know that the planner replacement
+ * happened (and error out otherwise).
+ *
+ * In future iterations the worker function can use the shard OID but for now it's only used to indicate that this planner
+ * replacement happened.
+ *
+ * In the future, once distribution works across colo groups this can be removed.
+ *
+ * The same rewrite is applied to the read-side remote dynamic cursor drain
+ * function (cursor_dynamic_drain_page). Like the write workers it returns a
+ * scalar (a bson[] array), so its projector is a Var on the single output
+ * column. Rewriting its shard scan into a function scan ensures the drain runs
+ * exactly once even when the shard is empty (so count returns 0).
+ */
+static bool
+ProcessWorkerWriteQueryPath(PlannerInfo *root, RelOptInfo *rel, Index rti,
+							RangeTblEntry *rte)
+{
+	if (list_length(root->processed_tlist) != 1)
+	{
+		return false;
+	}
+
+	TargetEntry *entry = linitial(root->processed_tlist);
+	if (!IsA(entry->expr, FuncExpr))
+	{
+		return false;
+	}
+
+	/* Reduce the likelihood of doing the Func OID lookup since older
+	 * schemas won't have it. Write-worker functions take 6 arguments.
+	 */
+	FuncExpr *funcExpr = (FuncExpr *) entry->expr;
+	if (list_length(funcExpr->args) != 6)
+	{
+		return false;
+	}
+	if (node_worker_stmt_rewrite_hook &&
+		node_worker_stmt_rewrite_hook(root, rel, rti, rte, entry))
+	{
+		/* Statement rewritten by other plugin */
+		return true;
+	}
+
+	bool isShardWorker = (funcExpr->funcid == UpdateWorkerFunctionOid() ||
+						  funcExpr->funcid == InsertWorkerFunctionOid() ||
+						  funcExpr->funcid == DeleteWorkerFunctionOid() ||
+						  funcExpr->funcid == CommandNodeWorkerFunctionOid() ||
+						  funcExpr->funcid == ApiCursorDynamicDrainPageFunctionId());
+
+	if (!isShardWorker)
+	{
+		return false;
+	}
+
+	/* It's a shard query for a worker projector function.
+	 * Transform this query into a FuncRTE with a Var projector so the
+	 * function is evaluated exactly once instead of once per shard row.
+	 */
+	entry->expr = (Expr *) makeVar(rti, 1, funcExpr->funcresulttype, -1,
+								   InvalidOid, 0);
+
+	rte->rtekind = RTE_FUNCTION;
+	RangeTblFunction *func = makeNode(RangeTblFunction);
+
+	/* Worker projector functions reserve their 3rd argument as a shard-OID slot
+	 * so the C function can detect that the planner rewrite ran.
+	 */
+	Node *shardArg = list_nth(funcExpr->args, 2);
+	if (IsA(shardArg, Const))
+	{
+		Const *shardConst = (Const *) shardArg;
+		shardConst->constvalue = ObjectIdGetDatum(rte->relid);
+	}
+
+	func->funcexpr = (Node *) funcExpr;
+	rte->functions = list_make1(func);
+
+	Path *funcScanPath = create_functionscan_path(root, rel, NIL, 0);
+	rel->pathlist = list_make1(funcScanPath);
+	rel->partial_pathlist = NIL;
+	rel->baserestrictinfo = NIL;
+#if PG_VERSION_NUM >= 160000
+	rte->perminfoindex = 0;
+#endif
+	return true;
+}
+
+
+/*
+ * Walks queries and if it encounters a query that could meet the requirements of the aggregation
+ * query, replaces it with the post-processed query.
+ */
+static Node *
+MutateQueryAggregatorFunction(Node *node, ParamListInfo boundParams)
+{
+	if (node == NULL)
+	{
+		return node;
+	}
+
+	if (IsA(node, Query))
+	{
+		ListCell *cell;
+		Query *query = (Query *) node;
+		foreach(cell, query->rtable)
+		{
+			RangeTblEntry *entry = lfirst(cell);
+			if (entry->rtekind == RTE_FUNCTION &&
+				list_length(entry->functions) == 1)
+			{
+				RangeTblFunction *expr = (RangeTblFunction *) linitial(entry->functions);
+				if (IsA(expr->funcexpr, FuncExpr) &&
+					IsAggregationFunction(castNode(FuncExpr, expr->funcexpr)->funcid))
+				{
+					PlannedStmt *stmt = NULL;
+					int cursorOptions = 0;
+					return (Node *) ExpandAggregationFunction(query, boundParams, &stmt,
+															  &cursorOptions);
+				}
+			}
+		}
+
+		return (Node *) query_tree_mutator((Query *) node, MutateQueryAggregatorFunction,
+										   boundParams, QTW_DONT_COPY_QUERY |
+										   QTW_EXAMINE_RTES_BEFORE);
+	}
+
+	return expression_tree_mutator(node, MutateQueryAggregatorFunction, boundParams);
+}
+
+
+static Query *
+ExpandNestedAggregationFunction(Query *query, ParamListInfo boundParams)
+{
+	return query_tree_mutator(query, MutateQueryAggregatorFunction, boundParams,
+							  QTW_DONT_COPY_QUERY | QTW_EXAMINE_RTES_BEFORE);
+}
+
+
+/*
+ * Traverses the query looking for an aggregation pipeline function.
+ * If it's found, then replaces the function with nothing, and updates the query
+ * to track the contents of the aggregation pipeline.
+ */
+static Query *
+ExpandAggregationFunction(Query *query, ParamListInfo boundParams, PlannedStmt **plan,
+						  int *cursorOptions)
+{
+	/* Top level validations - these are right now during development */
+	*plan = NULL;
+
+	/* Today we only support a query of the form
+	 * SELECT document FROM bson_aggregation_pipeline('db', 'pipeline bson'::bson);
+	 * OR
+	 * SELECT document FROM bson_aggregation_find('db', 'findSpec bson'::bson);
+	 * This restriction exists during the development phase and can change as we move to prod.
+	 */
+	if (list_length(query->rtable) != 1)
+	{
+		ereport(ERROR, (errmsg(
+							"Aggregation pipeline node should have 1 collection. Found %d. This is unexpected",
+							list_length(query->rtable))));
+	}
+
+	if (query->jointree == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Aggregation pipeline node should have at least 1 collection and query. This is unexpected")));
+	}
+
+	if (list_length(query->jointree->fromlist) != 1)
+	{
+		ereport(ERROR, (errmsg(
+							"Aggregation pipeline node should have exactly 1 collection to query from not %d. This is unexpected",
+							list_length(query->jointree->fromlist))));
+	}
+
+	if (list_length(query->cteList) > 0)
+	{
+		ereport(ERROR, (errmsg(
+							"Aggregation pipeline node should have CTEs. This is currently unsupported")));
+	}
+
+	if (list_length(query->targetList) != 1)
+	{
+		ereport(ERROR, (errmsg(
+							"Aggregation pipeline query should not have more than 1 projector Found %d. This is currently unsupported",
+							list_length(query->targetList))));
+	}
+
+	if (query->limitOffset != NULL || query->limitCount != NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Aggregation pipeline query should not have skip/limit. This is currently unsupported")));
+	}
+
+	if (query->sortClause != NIL)
+	{
+		ereport(ERROR, (errmsg(
+							"Aggregation pipeline query should not have sort. This is currently unsupported")));
+	}
+
+	TargetEntry *targetEntry = linitial(query->targetList);
+	if (!IsA(targetEntry->expr, Var))
+	{
+		ereport(ERROR, (errmsg(
+							"Projector must be a single (alias-ed) column. This is unexpected")));
+	}
+
+	if (query->jointree->quals != NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"Query must not have filters. This is unexpected")));
+	}
+
+	RangeTblEntry *rte = (RangeTblEntry *) linitial(query->rtable);
+
+	if (rte->rtekind != RTE_FUNCTION || list_length(rte->functions) != 1)
+	{
+		ereport(ERROR, (errmsg(
+							"Aggregation pipeline node should select from the aggregation function kind %d. This is unexpected",
+							rte->rtekind)));
+	}
+
+	RangeTblFunction *rangeTblFunc = linitial(rte->functions);
+	if (!IsA(rangeTblFunc->funcexpr, FuncExpr))
+	{
+		ereport(ERROR, (errmsg(
+							"Aggregation pipeline node should select is not a function. This is unexpected")));
+	}
+
+	FuncExpr *aggregationFunc = (FuncExpr *) rangeTblFunc->funcexpr;
+
+	if (list_length(aggregationFunc->args) != 2 &&
+		list_length(aggregationFunc->args) != 3)
+	{
+		ereport(ERROR, (errmsg(
+							"Aggregation pipeline node should have 2 or 3 args. This is unexpected")));
+	}
+
+	Node *databaseArg = linitial(aggregationFunc->args);
+	Node *secondArg = lsecond(aggregationFunc->args);
+	Node *thirdArg = NULL;
+
+	if (!IsA(secondArg, Const) || !IsA(databaseArg, Const))
+	{
+		secondArg = EvaluateBoundParameters(secondArg, boundParams);
+		databaseArg = EvaluateBoundParameters(databaseArg, boundParams);
+	}
+
+	if (!IsA(secondArg, Const) || !IsA(databaseArg, Const))
+	{
+		/* Let the runtime deal with this (This will either go to the runtime function and fail, or noop due to prepared and come back here
+		 * to be evaluated during the EXECUTE)
+		 */
+		return query;
+	}
+
+	if (list_length(aggregationFunc->args) == 3)
+	{
+		thirdArg = lthird(aggregationFunc->args);
+		if (!IsA(thirdArg, Const))
+		{
+			thirdArg = EvaluateBoundParameters(thirdArg, boundParams);
+		}
+
+		if (!IsA(thirdArg, Const))
+		{
+			/* Let the runtime deal with this (This will either go to the runtime function and fail,
+			 * or noop due to prepared and come back here
+			 * to be evaluated during the EXECUTE)*/
+			return query;
+		}
+	}
+
+	Const *databaseConst = (Const *) databaseArg;
+	Const *aggregationConst = (Const *) secondArg;
+	if (aggregationConst->constisnull)
+	{
+		ereport(ERROR, (errmsg(
+							"Aggregation pipeline arguments should not be null. This is unexpected")));
+	}
+
+	pgbson *pipeline = DatumGetPgBson(aggregationConst->constvalue);
+
+	QueryData queryData = GenerateFirstPageQueryData();
+	CursorParamKind cursorParams = CursorParamKind_Persistent;
+
+	if (EnableCursorsOnAggregationQueryRewrite)
+	{
+		queryData.cursorStateConst = PgbsonInitEmpty();
+		queryData.isAggregationQueryCursorRewrite = true;
+		if (EnableDynamicCursors)
+		{
+			cursorParams = CursorParamKind_Dynamic;
+			if (EnableDynamicCursorFastStartupScan)
+			{
+				/* ensure that in this path, the plan follows what cursors do */
+				*cursorOptions |= CURSOR_OPT_FAST_PLAN;
+			}
+		}
+	}
+
+	bool setStatementTimeout = false;
+	text *databaseName = databaseConst->constisnull ? NULL : DatumGetTextPP(
+		databaseConst->constvalue);
+	Query *finalQuery;
+	if (aggregationFunc->funcid == ApiCatalogAggregationPipelineFunctionId())
+	{
+		finalQuery = GenerateAggregationQuery(databaseName,
+											  pipeline,
+											  &queryData,
+											  cursorParams, setStatementTimeout);
+	}
+	else if (aggregationFunc->funcid == ApiCatalogAggregationFindFunctionId())
+	{
+		finalQuery = GenerateFindQuery(databaseName,
+									   pipeline, &queryData,
+									   cursorParams, setStatementTimeout);
+	}
+	else if (aggregationFunc->funcid == ApiCatalogAggregationCountFunctionId())
+	{
+		finalQuery = GenerateCountQuery(databaseName,
+										pipeline,
+										setStatementTimeout);
+	}
+	else if (aggregationFunc->funcid == ApiCatalogAggregationDistinctFunctionId())
+	{
+		finalQuery = GenerateDistinctQuery(databaseName,
+										   pipeline,
+										   setStatementTimeout);
+	}
+	else if (aggregationFunc->funcid == ApiCatalogAggregationGetMoreFunctionId())
+	{
+		Const *thirdConst = (Const *) thirdArg;
+		if (thirdConst->constisnull)
+		{
+			ereport(ERROR, (errmsg(
+								"Aggregation pipeline arguments should not be null. This is unexpected")));
+		}
+
+		finalQuery = GenerateGetMoreQuery(databaseName,
+										  pipeline, DatumGetPgBson(
+											  thirdConst->constvalue),
+										  &queryData, setStatementTimeout);
+	}
+	else
+	{
+		ereport(ERROR, (errmsg(
+							"Unrecognized pipeline functionid provided. This is unexpected")));
+	}
+
+	if (queryData.cursorKind == QueryCursorType_PointRead)
+	{
+		/* Assert we're a shard query */
+		bool isBlackboxDbDataNamespace;
+		uint64_t collectionId;
+		bool isShardQuery = IsRTEShardForBlackboxDbCollection(linitial(
+																  finalQuery->rtable),
+															  &isBlackboxDbDataNamespace,
+															  &collectionId);
+
+		if (!isShardQuery)
+		{
+			ereport(ERROR, (errcode(ERRCODE_BLACKBOXDB_INTERNALERROR),
+							errmsg(
+								"Unexpected - found point read plan on a non-direct-shard collection")));
+		}
+
+		/* For point reads, allow for fast path planning */
+		*plan = TryCreatePointReadPlan(finalQuery);
+	}
+
+	if (EnableCursorsOnAggregationQueryRewrite)
+	{
+		ereport(DEBUG1, (errmsg("Aggregation cursorKind is %d", queryData.cursorKind)));
+	}
+
+	return finalQuery;
+}
+
+
+static bool
+IsPrimaryKeyScanOnJustShardKey(Path *path)
+{
+	if (path->pathtype != T_IndexScan)
+	{
+		return false;
+	}
+
+	IndexPath *indexPath = (IndexPath *) path;
+	if (indexPath->indexinfo->relam == BTREE_AM_OID)
+	{
+		if (list_length(indexPath->indexclauses) == 1)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+
+static List *
+TrimPathListForSeqTypeScans(List *pathList)
+{
+	ListCell *cell;
+	foreach(cell, pathList)
+	{
+		Path *path = (Path *) lfirst(cell);
+
+		if (path->pathtype != T_IndexScan &&
+			path->pathtype != T_BitmapHeapScan &&
+			path->pathtype != T_IndexOnlyScan)
+		{
+			ereport(DEBUG1, errmsg("Excluding path non-index path %d for scan",
+								   path->pathtype));
+			pathList = foreach_delete_current(pathList, cell);
+			continue;
+		}
+
+		/*
+		 * Now validate it's not just a scan on the primary key
+		 * with the shard key value.
+		 */
+		if (IsPrimaryKeyScanOnJustShardKey(path))
+		{
+			ereport(DEBUG1, errmsg(
+						"Excluding primary key scan on just shard key %d for scan",
+						path->pathtype));
+			pathList = foreach_delete_current(pathList, cell);
+			continue;
+		}
+		if (path->pathtype == T_BitmapHeapScan)
+		{
+			BitmapHeapPath *bitmapHeapPath = (BitmapHeapPath *) path;
+			if (bitmapHeapPath->bitmapqual != NULL &&
+				IsPrimaryKeyScanOnJustShardKey(bitmapHeapPath->bitmapqual))
+			{
+				ereport(DEBUG1, errmsg(
+							"Excluding bitmap heap scan on just shard key %d for scan",
+							path->pathtype));
+				pathList = foreach_delete_current(pathList, cell);
+				continue;
+			}
+		}
+	}
+
+	return pathList;
+}
+
+
+static void
+ForceExcludeNonIndexPaths(PlannerInfo *root, RelOptInfo *rel,
+						  Index rti, RangeTblEntry *rte)
+{
+	if (rel->pathlist == NIL)
+	{
+		return;
+	}
+
+	rel->pathlist = TrimPathListForSeqTypeScans(rel->pathlist);
+	rel->partial_pathlist = TrimPathListForSeqTypeScans(rel->partial_pathlist);
+
+	if (rel->pathlist == NIL)
+	{
+		/* Try a round of planning with no sequential paths and another round of trimming
+		 * before failing.
+		 */
+		create_index_paths(root, rel);
+
+		rel->pathlist = TrimPathListForSeqTypeScans(rel->pathlist);
+		rel->partial_pathlist = TrimPathListForSeqTypeScans(rel->partial_pathlist);
+
+		if (rel->pathlist == NIL && rel->partial_pathlist == NIL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_BLACKBOXDB_INVALIDOPTIONS),
+							errmsg(
+								"Could not find any valid index to push down for query")));
+		}
+	}
+}
+
+
+static Node *
+AugmentBaseRestrictInfoCore(Node *node, void *context)
+{
+	CHECK_FOR_INTERRUPTS();
+	check_stack_depth();
+	if (node == NULL)
+	{
+		return node;
+	}
+
+	if (IsA(node, FuncExpr))
+	{
+		/* For $in, we want to track for PFE as a scalar array operator */
+		FuncExpr *func = (FuncExpr *) node;
+		if (list_length(func->args) < 2)
+		{
+			return node;
+		}
+
+		Expr *firstArg = linitial(func->args);
+		Expr *secondArg = lsecond(func->args);
+		if (!IsA(secondArg, Const))
+		{
+			return node;
+		}
+
+		if (func->funcid == BsonInMatchFunctionId())
+		{
+			Const *secondConst = (Const *) secondArg;
+			pgbson *inBson = DatumGetPgBson(secondConst->constvalue);
+
+			pgbsonelement inElement;
+			const char *collation = PgbsonToSinglePgbsonElementWithCollation(inBson,
+																			 &
+																			 inElement);
+
+			bson_iter_t arrayIterator;
+			BsonValueInitIterator(&inElement.bsonValue, &arrayIterator);
+
+			Expr *expr = CreateScalarArrayOpExprForInWithBsonIndexBounds(firstArg,
+																		 inElement.path,
+																		 collation,
+																		 &arrayIterator);
+			if (expr != NULL)
+			{
+				return (Node *) expr;
+			}
+		}
+		else if (func->funcid == BsonRegexMatchFunctionId())
+		{
+			Const *secondConst = (Const *) secondArg;
+			pgbson *regexBson = DatumGetPgBson(secondConst->constvalue);
+
+			pgbsonelement regexElement;
+			PgbsonToSinglePgbsonElementWithCollation(regexBson, &regexElement);
+
+			/* Create an OR expr that has the ranges for all strings and all regexes.
+			 * $regex implies the field exists with either a string or regex value.
+			 * Build: (@>= string_min) OR (@>= regex_min)
+			 */
+			const char *path = regexElement.path;
+			uint32_t pathLen = regexElement.pathLength;
+
+			/* Build string lower bound using GetLowerBound */
+			bson_value_t stringLower = GetLowerBound(BSON_TYPE_UTF8);
+
+			pgbson_writer stringWriter;
+			PgbsonWriterInit(&stringWriter);
+			PgbsonWriterAppendValue(&stringWriter, path, pathLen, &stringLower);
+			pgbson *stringMinBson = PgbsonWriterGetPgbson(&stringWriter);
+			Const *stringMinConst = MakeBsonConst(stringMinBson);
+			stringMinConst->consttype = GetClusterBsonQueryTypeId();
+
+			OpExpr *stringGte = (OpExpr *) make_opclause(
+				BsonGreaterThanEqualMatchRuntimeOperatorId(), BOOLOID, false,
+				firstArg, (Expr *) stringMinConst, InvalidOid, InvalidOid);
+			stringGte->opfuncid = BsonGreaterThanEqualMatchRuntimeFunctionId();
+
+			/* Build regex lower bound using GetLowerBound */
+			bson_value_t regexLower = GetLowerBound(BSON_TYPE_REGEX);
+
+			pgbson_writer regexWriter;
+			PgbsonWriterInit(&regexWriter);
+			PgbsonWriterAppendValue(&regexWriter, path, pathLen, &regexLower);
+			pgbson *regexMinBson = PgbsonWriterGetPgbson(&regexWriter);
+			Const *regexMinConst = MakeBsonConst(regexMinBson);
+			regexMinConst->consttype = GetClusterBsonQueryTypeId();
+
+			OpExpr *regexGte = (OpExpr *) make_opclause(
+				BsonGreaterThanEqualMatchRuntimeOperatorId(), BOOLOID, false,
+				firstArg, (Expr *) regexMinConst, InvalidOid, InvalidOid);
+			regexGte->opfuncid = BsonGreaterThanEqualMatchRuntimeFunctionId();
+
+			/* Build OR expression: string_gte OR regex_gte */
+			return (Node *) make_orclause(list_make2(stringGte, regexGte));
+		}
+	}
+
+	return expression_tree_mutator(node, AugmentBaseRestrictInfoCore, context);
+}
+
+
+static List *
+AugmentBaseRestrictInfo(PlannerInfo *root, RelOptInfo *rel)
+{
+	List *clauselist = make_ands_implicit((Expr *) root->parse->jointree->quals);
+
+	/* This function is a placeholder for the actual implementation */
+	return (List *) expression_tree_mutator((Node *) clauselist,
+											AugmentBaseRestrictInfoCore, 0);
+}

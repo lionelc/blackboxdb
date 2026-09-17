@@ -1,0 +1,111 @@
+SET search_path TO blackboxdb_api, blackboxdb_api_catalog,blackboxdb_core;
+SET blackboxdb.next_collection_id TO 1300;
+SET blackboxdb.next_collection_index_id TO 1300;
+
+CREATE OR REPLACE FUNCTION blackboxdb_test_helpers.blackboxdb_explain(
+    p_explain_spec bson,
+    p_append_cursor_params boolean DEFAULT FALSE)
+ RETURNS bson
+ LANGUAGE c
+ VOLATILE
+AS 'pg_blackboxdb', $$blackboxdb_explain$$;
+
+
+CREATE OR REPLACE FUNCTION blackboxdb_test_helpers.explain_and_mask_numbers(
+    p_explain_spec bson,
+    p_append_cursor_params boolean DEFAULT FALSE)
+ RETURNS SETOF text AS $$
+ DECLARE
+     explain_result bson;
+ BEGIN
+    SELECT blackboxdb_test_helpers.blackboxdb_explain(p_explain_spec, p_append_cursor_params) INTO explain_result;
+
+    SELECT regexp_replace(explain_result::text, '"startupCost" : { "\$numberDouble" : "[0-9eE\.]+" }', '"startupCost" : { "$numberDouble" : "0.0" }', 1, 0, 'g')::bson INTO explain_result;
+    SELECT regexp_replace(explain_result::text, '"totalCost" : { "\$numberDouble" : "[0-9eE\.]+" }', '"totalCost" : { "$numberDouble" : "0.0" }', 1, 0, 'g')::bson INTO explain_result;
+    SELECT regexp_replace(explain_result::text, '"executionStartAtTimeMillis" : { "\$numberDouble" : "[0-9eE\.]+" }', '"executionStartAtTimeMillis" : { "$numberDouble" : "0.0" }', 1, 0, 'g')::bson INTO explain_result;
+    SELECT regexp_replace(explain_result::text, '"executionTimeMillis" : { "\$numberDouble" : "[0-9eE\.]+" }', '"executionTimeMillis" : { "$numberDouble" : "0.0" }', 1, 0, 'g')::bson INTO explain_result;
+    SELECT regexp_replace(explain_result::text, '"numBlocksFromCache" : { "\$numberDouble" : "[0-9eE\.]+" }', '"numBlocksFromCache" : { "$numberDouble" : "0.0" }', 1, 0, 'g')::bson INTO explain_result;
+    SELECT regexp_replace(explain_result::text, '"numBlocksFromDisk" : { "\$numberDouble" : "[0-9eE\.]+" }', '"numBlocksFromDisk" : { "$numberDouble" : "0.0" }', 1, 0, 'g')::bson INTO explain_result;
+    SELECT regexp_replace(explain_result::text, '"ioReadTimeMillis" : { "\$numberDouble" : "[0-9eE\.]+" }', '"ioReadTimeMillis" : { "$numberDouble" : "0.0" }', 1, 0, 'g')::bson INTO explain_result;
+    SELECT regexp_replace(explain_result::text, '"totalDataSizeSortedBytesEstimate" : { "\$numberDouble" : "[0-9eE\.]+" }', '"totalDataSizeSortedBytesEstimate" : { "$numberDouble" : "0.0" }', 1, 0, 'g')::bson INTO explain_result;
+    SELECT regexp_replace(explain_result::text, '"estimatedTotalKeysExamined" : { "\$numberDouble" : "[0-9eE\.]+" }', '"estimatedTotalKeysExamined" : { "$numberDouble" : "0.0" }', 1, 0, 'g')::bson INTO explain_result;
+
+    RETURN QUERY WITH r1 AS (SELECT explain_result AS explain_val),
+        r2 AS (SELECT regexp_split_to_table(explain_val::text, ',') AS line from r1),
+        r3 AS ( SELECT row_number() over () as rn, line FROM r2)
+        SELECT STRING_AGG(line, ',' ORDER BY rn ASC) || ',' FROM r3 GROUP BY round(rn / 4);
+ END;
+ $$ LANGUAGE plpgsql;
+
+-- basic invalid inputs on spec.
+SELECT blackboxdb_test_helpers.blackboxdb_explain('{}'::bson);
+SELECT blackboxdb_test_helpers.blackboxdb_explain('{ "$db": "expdb" }'::bson);
+SELECT blackboxdb_test_helpers.blackboxdb_explain('{ "explain": { "find": "foo" } }'::bson);
+SELECT blackboxdb_test_helpers.blackboxdb_explain('{ "explain": { "find": "foo" }, "$db": "expdb" }'::bson);
+SELECT blackboxdb_test_helpers.blackboxdb_explain('{ "explain": { "find": "foo" }, "verbosity": "queryPlanner" }'::bson);
+SELECT blackboxdb_test_helpers.blackboxdb_explain('{ "explain": { "find": "foo" },  "$db": "expdb", "verbosity": "queryPlannerInvalid" }'::bson);
+
+-- test find (with multiple combos) on non-existent collection.
+SELECT blackboxdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent" }, "$db": "expdb", "verbosity": "queryPlanner" }'::bson);
+SELECT blackboxdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent" }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+SELECT blackboxdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent", "limit": 1 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+SELECT blackboxdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent", "limit": 1, "skip": 1 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+SELECT blackboxdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent", "sort": { "a": 1 }, "limit": 1, "skip": 1 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+SELECT blackboxdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent", "filter": { "b": { "$gt": 1 } }, "sort": { "a": 1 }, "limit": 1, "skip": 1 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+
+-- last one with all options
+SELECT blackboxdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent", "projection": { "c": 1 }, "filter": { "b": { "$gt": 1 } }, "sort": { "a": 1 }, "limit": 1, "skip": 1 }, "$db": "expdb", "verbosity": "queryPlanner" }'::bson);
+SELECT blackboxdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "nonexistent", "projection": { "c": 1 }, "filter": { "b": { "$gt": 1 } }, "sort": { "a": 1 }, "limit": 1, "skip": 1 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+
+-- now do the same with a simple COLLSCAN (runtime scan) on a collection that exists.
+SELECT blackboxdb_api.insert_one('expdb', 'coll1', '{ "_id": 1, "a": 1, "b": 2 }');
+SELECT blackboxdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "coll1", "projection": { "c": 1 }, "filter": { "b": { "$gt": 1 } }, "sort": { "a": 1 }, "limit": 1, "skip": 1 }, "$db": "expdb", "verbosity": "queryPlanner" }'::bson);
+SELECT blackboxdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "coll1", "projection": { "c": 1 }, "filter": { "b": { "$gt": 1 } }, "sort": { "a": 1 }, "limit": 1, "skip": 1 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+
+-- sort on the index (_id index)
+SELECT blackboxdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "coll1", "projection": { "c": 1 }, "filter": { "_id": { "$gt": 1 } }, "sort": { "_id": -1 }, "limit": 2 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+
+-- incremental sort on the index (_id index)
+SELECT blackboxdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "coll1", "projection": { "c": 1 }, "filter": { "_id": { "$gt": 1 } }, "sort": { "_id": 1, "b": 1 }, "limit": 2 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+
+-- now do with a RUM index.
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('expdb', '{ "createIndexes": "coll1", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_b_1" } ] }'::bson, TRUE);
+
+set enable_seqscan to off;
+set blackboxdb.forceDisableSeqScan to on;
+SELECT blackboxdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "coll1", "projection": { "c": 1 }, "filter": { "a": { "$gt": 1 }, "d": 1 }, "limit": 2 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+
+-- cannot test sort pushdown here (or Idxos)
+SELECT blackboxdb_test_helpers.explain_and_mask_numbers('{ "explain": { "find": "coll1", "projection": { "c": 1 }, "filter": { "a": { "$gt": 1 }, "d": 1 }, "sort": { "a": 1, "d": 1 }, "limit": 2 }, "$db": "expdb", "verbosity": "executionStats" }'::bson);
+
+-- Sanity test: the EXPLAIN hook enables extended explain plans by default.
+-- Returns whether a raw SQL EXPLAIN emits the extended explain custom scan node.
+CREATE OR REPLACE FUNCTION blackboxdb_test_helpers.explain_uses_extended(p_query text)
+ RETURNS boolean AS $$
+ DECLARE
+     line text;
+     found boolean := false;
+ BEGIN
+     FOR line IN EXECUTE 'EXPLAIN (COSTS OFF) ' || p_query LOOP
+         IF position('BlackboxDBApiExplainQueryScan' in line) > 0 THEN
+             found := true;
+         END IF;
+     END LOOP;
+     RETURN found;
+ END;
+ $$ LANGUAGE plpgsql;
+
+-- The base extended-explain GUC is off; the hook is what turns it on for EXPLAIN.
+SHOW blackboxdb.enableExtendedExplainPlans;
+
+-- With the guard on, the hook injects extended explain even though the base GUC is off.
+SET blackboxdb.enable_default_extended_explain TO on;
+SELECT blackboxdb_test_helpers.explain_uses_extended($Q$ SELECT document FROM blackboxdb_api.collection('expdb', 'coll1') WHERE document OPERATOR(blackboxdb_api_catalog.@@) '{ "a": { "$gt": 1 } }' $Q$) AS extended_when_guard_on;
+
+-- With the guard off, the hook does not inject extended explain.
+SET blackboxdb.enable_default_extended_explain TO off;
+SELECT blackboxdb_test_helpers.explain_uses_extended($Q$ SELECT document FROM blackboxdb_api.collection('expdb', 'coll1') WHERE document OPERATOR(blackboxdb_api_catalog.@@) '{ "a": { "$gt": 1 } }' $Q$) AS extended_when_guard_off;
+
+-- Running EXPLAIN through the hook must not leak the base GUC onto later queries.
+SHOW blackboxdb.enableExtendedExplainPlans;
+RESET blackboxdb.enable_default_extended_explain;

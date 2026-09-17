@@ -1,0 +1,5 @@
+[unstable]
+registry-auth = false
+
+[target.'cfg(target_arch = "x86_64")']
+rustflags = ["-C", "target-cpu=x86-64-v3", "-C", "force-frame-pointers=yes", "-C", "target_feature=+avx2"]

@@ -1,0 +1,97 @@
+/*-------------------------------------------------------------------------
+ * Copyright (c) Anonymous.  All rights reserved.
+ *
+ * include/index_am/index_am_exports.h
+ *
+ * Common exports for index extensibility.
+ *
+ *-------------------------------------------------------------------------
+ */
+
+#ifndef INDEX_AM_EXPORTS_H
+#define INDEX_AM_EXPORTS_H
+
+#include <postgres.h>
+#include <utils/rel.h>
+
+struct IndexScanDescData;
+typedef struct ExplainWriterFuncs
+{
+	void (*writeBool)(const char *name, bool value, void *writer);
+	void (*writeString)(const char *name, const char *value, void *writer);
+	void (*writeStringList)(const char *name, List *list, void *writer);
+	void (*writeInteger)(const char *name, const char *label, int32_t value,
+						 void *writer);
+} ExplainWriterFuncs;
+
+typedef bool (*GetTruncationStatusFunc)(Relation indexRelation);
+
+typedef struct CreateIndexesSupportFuncs CreateIndexesSupportFuncs;
+typedef struct QueryIndexPathSupportFuncs QueryIndexPathSupportFuncs;
+
+/*
+ * Data structure for an alternative index acess method for indexing bosn.
+ * It contains the indexing capability and various utility function.
+ */
+typedef struct
+{
+	bool is_single_path_index_supported;
+	bool is_wild_card_supported;
+	bool is_wild_card_projection_supported;
+	bool is_order_by_supported;
+	bool is_backwards_scan_supported;
+	bool is_index_only_scan_supported;
+	bool can_support_parallel_scans;
+	Oid (*get_am_oid)(void);
+	Oid (*get_single_path_op_family_oid)(void);
+	Oid (*get_composite_path_op_family_oid)(void);
+	Oid (*get_text_path_op_family_oid)(void);
+	Oid (*get_hashed_path_op_family_oid)(void);
+	Oid (*get_unique_path_op_family_oid)(void);
+
+	/* optional func to add explain output */
+	PGFunction add_explain_output;
+
+	/* The am name for create indexes */
+	const char *am_name;
+
+	/* The opclass primary catalog schema name */
+	const char *(*get_opclass_catalog_schema)(void);
+
+	/* An alternate internal schema name for op classes if not the catalog schema */
+	const char *(*get_opclass_internal_catalog_schema)(void);
+
+	/* Optional function that handles getting multi-key status for an index */
+	PGFunction get_multikey_status;
+
+	/* Optional function that handles getting per-path multi-key status for an index */
+	PGFunction get_opclass_metadata;
+
+	/* Optional function to that returns the truncation status of an index */
+	GetTruncationStatusFunc get_truncation_status;
+
+	/* Indicates whether the index supports ordered operator scans */
+	bool supports_ordered_operator_scans;
+
+	/* Optional struct including create index support functions */
+	CreateIndexesSupportFuncs *create_indexes_support_funcs;
+
+	/* Optional struct including force index path support functions */
+	QueryIndexPathSupportFuncs *query_index_path_support_funcs;
+
+	/* Optional function to get the current index key */
+	PGFunction get_current_index_key;
+
+	/* Optional function to skip TIDs on the current entry */
+	PGFunction skip_tids_on_current_entry;
+
+	/* Whether or not the indexam has forced pathkey summarization */
+	bool force_path_key_summarization;
+} BsonIndexAmEntry;
+
+/*
+ * Registers an bson index access method at system start time.
+ */
+void RegisterIndexAm(BsonIndexAmEntry indexAmEntry);
+
+#endif

@@ -1,0 +1,500 @@
+/*-------------------------------------------------------------------------
+ * Copyright (c) Anonymous.  All rights reserved.
+ *
+ * include/metadata/metadata_cache.h
+ *
+ * Common declarations for metadata caching functions.
+ *
+ *-------------------------------------------------------------------------
+ */
+
+#ifndef METADATA_CACHE_H
+#define METADATA_CACHE_H
+
+#include <nodes/parsenodes.h>
+
+#include "utils/type_cache.h"
+
+extern PGDLLIMPORT char *ApiCatalogSchemaName;
+extern PGDLLIMPORT char *ApiCatalogSchemaNameV2;
+extern PGDLLIMPORT char *ApiCatalogToApiInternalSchemaName;
+extern PGDLLIMPORT char *ApiCatalogToCoreSchemaName;
+extern PGDLLIMPORT char *ApiDataSchemaName;
+extern PGDLLIMPORT char *ApiSchemaName;
+extern PGDLLIMPORT char *ApiInternalAdminSchemaName;
+extern PGDLLIMPORT char *ApiInternalBgworkerSchemaName;
+extern PGDLLIMPORT char *ApiInternalReadOnlySchemaName;
+extern PGDLLIMPORT char *ApiInternalReadWriteSchemaName;
+extern PGDLLIMPORT char *ApiInternalSchemaName;
+extern PGDLLIMPORT char *ApiInternalSchemaNameV2;
+extern PGDLLIMPORT char *ApiSchemaNameV2;
+extern PGDLLIMPORT char *ApiToApiInternalSchemaName;
+extern PGDLLIMPORT char *CoreSchemaName;
+extern PGDLLIMPORT char *CoreSchemaNameV2;
+extern PGDLLIMPORT char *BlackboxDBApiInternalSchemaName;
+extern PGDLLIMPORT char *ExtensionObjectPrefix;
+extern PGDLLIMPORT char *ExtensionObjectPrefixV2;
+extern PGDLLIMPORT char *FullBsonTypeName;
+extern PGDLLIMPORT char *PostgisSchemaName;
+
+/* Roles */
+extern PGDLLIMPORT char *ApiAdminRole;
+extern PGDLLIMPORT char *ApiAdminRoleV2;
+extern PGDLLIMPORT char *ApiBgWorkerRole;
+extern PGDLLEXPORT char *ApiClusterAdminRole;
+extern PGDLLIMPORT char *ApiReadOnlyRole;
+extern PGDLLEXPORT char *ApiReadWriteRole;
+extern PGDLLEXPORT char *ApiReplicationRole;
+extern PGDLLEXPORT char *ApiRootInternalRole;
+extern PGDLLIMPORT char *ApiRootRole;
+extern PGDLLEXPORT char *ApiSettingsManagerRole;
+extern PGDLLEXPORT char *ApiUserAdminRole;
+
+/* Privileged Action System Roles */
+extern PGDLLEXPORT char *ApiCollectionFindRole;
+extern PGDLLEXPORT char *ApiCollectionInsertRole;
+extern PGDLLEXPORT char *ApiCollectionUpdateRole;
+extern PGDLLEXPORT char *ApiCollectionRemoveRole;
+
+extern MemoryContext BlackboxDBApiMetadataCacheContext;
+
+/* functions related with pg_blackboxdb "extension" itself */
+void InitializeBlackboxDBApiExtensionCache(void);
+void InvalidateCollectionsCache(void);
+bool IsBlackboxDBApiExtensionActive(void);
+Oid BlackboxDBApiExtensionOwner(void);
+char * GetExtensionApplicationName(void);
+
+/* functions and procedures */
+Oid ApiCollectionFunctionId(void);
+Oid BlackboxDBApiCollectionFunctionId(void);
+Oid ApiCreateIndexesProcedureId(void);
+Oid ApiReIndexProcedureId(void);
+Oid BsonEqualMatchRuntimeFunctionId(void);
+Oid BsonEqualMatchObjectIdRuntimeFunctionId(void);
+Oid BsonEqualMatchRuntimeOperatorId(void);
+Oid BsonEqualMatchIndexFunctionId(void);
+Oid BsonGreaterThanMatchRuntimeFunctionId(void);
+Oid BsonGreaterThanMatchObjectIdRuntimeFunctionId(void);
+Oid BsonGreaterThanMatchRuntimeOperatorId(void);
+Oid BsonGreaterThanMatchIndexFunctionId(void);
+Oid BsonGreaterThanEqualMatchRuntimeFunctionId(void);
+Oid BsonGreaterThanEqualMatchObjectIdRuntimeFunctionId(void);
+Oid BsonGreaterThanEqualMatchRuntimeOperatorId(void);
+Oid BsonGreaterThanEqualMatchIndexFunctionId(void);
+Oid BsonLessThanMatchRuntimeFunctionId(void);
+Oid BsonLessThanMatchObjectIdRuntimeFunctionId(void);
+Oid BsonLessThanMatchRuntimeOperatorId(void);
+Oid BsonLessThanMatchIndexFunctionId(void);
+Oid BsonLessThanEqualMatchRuntimeFunctionId(void);
+Oid BsonLessThanEqualMatchObjectIdRuntimeFunctionId(void);
+Oid BsonLessThanEqualMatchRuntimeOperatorId(void);
+Oid BsonLessThanEqualMatchIndexFunctionId(void);
+Oid BsonRangeMatchFunctionId(void);
+Oid BsonRangeMatchOperatorOid(void);
+Oid BsonFullScanFunctionOid(void);
+Oid BsonDollarDistinctExistsFunctionOid(void);
+Oid BsonIndexHintFunctionOid(void);
+Oid BsonInMatchFunctionId(void);
+Oid BsonInObjectIdMatchFunctionId(void);
+Oid BsonNinMatchFunctionId(void);
+Oid BsonNotEqualMatchFunctionId(void);
+Oid BsonElemMatchMatchFunctionId(void);
+Oid BsonAllMatchFunctionId(void);
+Oid BsonBitsAllClearFunctionId(void);
+Oid BsonBitsAnyClearFunctionId(void);
+Oid BsonBitsAllSetFunctionId(void);
+Oid BsonBitsAnySetFunctionId(void);
+Oid BsonRegexMatchFunctionId(void);
+Oid BsonModMatchFunctionId(void);
+Oid BsonSizeMatchFunctionId(void);
+Oid BsonTypeMatchFunctionId(void);
+Oid BsonExistsMatchFunctionId(void);
+Oid BsonExprFunctionId(void);
+Oid BsonExprWithLetFunctionId(void);
+Oid BsonJsonSchemaFunctionId(void);
+Oid BsonTextFunctionId(void);
+Oid BsonEmptyDataTableFunctionId(void);
+Oid IndexSpecAsBsonFunctionId(void);
+Oid IndexBuildIsInProgressFunctionId(void);
+Oid ApiCursorStateFunctionId(void);
+Oid ApiCurrentCursorStateFunctionId(void);
+Oid ApiCursorTrackerFunctionId(void);
+Oid ApiCursorDynamicDrainPageFunctionId(void);
+Oid ExtensionTableSampleSystemRowsFunctionId(void);
+Oid BsonInRangeNumericFunctionId(void);
+Oid BsonInRangeIntervalFunctionId(void);
+Oid BsonQueryMatchWithLetAndCollationFunctionId(void);
+
+/* object_id functions */
+Oid BsonRegexObjectIdMatchFunctionId(void);
+
+/* bson_value functions */
+Oid BsonValueEqualMatchFunctionId(void);
+Oid BsonValueGreaterThanMatchFunctionId(void);
+Oid BsonValueGreaterThanEqualMatchFunctionId(void);
+Oid BsonValueLessThanMatchFunctionId(void);
+Oid BsonValueLessThanEqualMatchFunctionId(void);
+Oid BsonValueSizeMatchFunctionId(void);
+Oid BsonValueTypeMatchFunctionId(void);
+Oid BsonValueInMatchFunctionId(void);
+Oid BsonValueNinMatchFunctionId(void);
+Oid BsonValueNotEqualMatchFunctionId(void);
+Oid BsonValueExistsMatchFunctionId(void);
+Oid BsonValueElemMatchMatchFunctionId(void);
+Oid BsonValueAllMatchFunctionId(void);
+Oid BsonValueRegexMatchFunctionId(void);
+Oid BsonValueModMatchFunctionId(void);
+Oid BsonValueBitsAllClearFunctionId(void);
+Oid BsonValueBitsAnyClearFunctionId(void);
+Oid BsonValueBitsAllSetFunctionId(void);
+Oid BsonValueBitsAnySetFunctionId(void);
+Oid BsonNotLessThanEqualFunctionId(void);
+Oid BsonNotLessThanFunctionId(void);
+Oid BsonNotGreaterThanFunctionId(void);
+Oid BsonNotGreaterThanEqualFunctionId(void);
+Oid BsonIndexBoundsEqualOperatorId(void);
+Oid BsonIndexBoundsEqualOperatorFuncId(void);
+
+/* operators */
+Oid BigintEqualOperatorId(void);
+Oid BigIntGreaterOperatorId(void);
+Oid BigIntGreaterEqualOperatorId(void);
+Oid BigIntLessOperatorId(void);
+Oid BigIntLessEqualOperatorId(void);
+Oid TextEqualOperatorId(void);
+Oid TextNotEqualOperatorId(void);
+Oid TextLessOperatorId(void);
+Oid BsonEqualOperatorId(void);
+Oid BsonEqualFunctionOid(void);
+Oid BsonEqualMatchOperatorId(void);
+Oid BsonInOperatorId(void);
+Oid BsonQueryOperatorId(void);
+Oid BsonTrueFunctionId(void);
+Oid BsonQueryMatchFunctionId(void);
+Oid BsonIndexSpecSelectionFunctionId(void);
+Oid BsonIndexSpecEqualOperatorId(void);
+Oid BsonGreaterThanOperatorId(void);
+Oid BsonLessThanOperatorId(void);
+Oid BsonGreaterThanEqualOperatorId(void);
+Oid BsonLessThanEqualOperatorId(void);
+Oid BsonGetValueFunctionOid(void);
+Oid BsonUniqueIndexEqualOperatorId(void);
+Oid BsonUniqueShardPathEqualOperatorId(void);
+Oid PostgresInt4PlusFunctionOid(void);
+Oid PostgresInt4LessOperatorOid(void);
+Oid PostgresInt4LessOperatorFunctionOid(void);
+Oid PostgresInt4EqualOperatorOid(void);
+
+/* Opclass */
+Oid IntegerOpsOpFamilyOid(void);
+Oid BsonBtreeOpFamilyOid(void);
+Oid BsonRumCompositeIndexOperatorFamily(void);
+
+/* types */
+Oid BsonQueryTypeId(void);
+Oid VectorTypeId(void);
+Oid HalfVectorTypeId(void);
+Oid IndexSpecTypeId(void);
+Oid ApiCatalogCollectionsTypeOid(void);
+Oid GetClusterBsonQueryTypeId(void);
+Oid GetClusterBsonQueryArrayTypeId(void);
+Oid GetBsonArrayTypeOid(void);
+Oid BsonIndexBoundsTypeId(void);
+Oid GetBsonIndexBoundsArrayTypeOid(void);
+Oid BsonIndexTermTypeId(void);
+
+/* sequences */
+Oid ApiCatalogCollectionIdSequenceId(void);
+Oid ApiCatalogCollectionIndexIdSequenceId(void);
+
+/* order by */
+Oid BsonOrderByFunctionOid(void);
+Oid BsonOrderByWithCollationFunctionOid(void);
+Oid BsonOrderByIndexFunctionOid(void);
+Oid BsonOrderByIndexReverseFunctionOid(void);
+Oid BsonOrderByIndexWithCollationFunctionOid(void);
+Oid BsonOrderByIndexWithCollationReverseFunctionOid(void);
+Oid BsonOrderByPartitionFunctionOid(void);
+Oid BsonOrderByPartitionWithCollationFunctionOid(void);
+Oid BsonOrderByCompareFunctionOId(void);
+Oid BsonOrderByLtFunctionOId(void);
+Oid BsonOrderByEqFunctionOId(void);
+Oid BsonOrderByGtFunctionOId(void);
+Oid BsonOrderyByLtOperatorId(void);
+Oid BsonOrderyByEqOperatorId(void);
+Oid BsonOrderyByGtOperatorId(void);
+Oid BsonOrderByIndexOperatorId(void);
+Oid BsonOrderByReverseIndexOperatorId(void);
+Oid BsonOrderByBsonIndexTypeOperatorId(void);
+
+/* Postgres internal functions */
+Oid PostgresDrandomFunctionId(void);
+Oid PostgresToTimestamptzFunctionId(void);
+Oid PostgresDatePartFunctionId(void);
+Oid PostgresTimestampToZoneFunctionId(void);
+Oid PostgresAddIntervalToTimestampFunctionId(void);
+Oid PostgresAddIntervalToDateFunctionId(void);
+Oid PostgresTimestampToZoneWithoutTzFunctionId(void);
+Oid PostgresToDateFunctionId(void);
+Oid Float8EqualOperatorId(void);
+Oid Float8LessThanEqualOperatorId(void);
+Oid Float8GreaterThanEqualOperatorId(void);
+Oid Float4ToFloat8FunctionOid(void);
+Oid PostgresArrayAppendFunctionOid(void);
+Oid PostgresMakeIntervalFunctionId(void);
+Oid PostgresDateBinFunctionId(void);
+Oid PostgresAgeBetweenTimestamp(void);
+Oid PostgresDatePartFromInterval(void);
+
+/* Index AM */
+Oid RumIndexAmId(void);
+Oid PgVectorIvfFlatIndexAmId(void);
+Oid PgVectorHNSWIndexAmId(void);
+
+/* IndexAM Support functions */
+Oid BsonExclusionPreConsistentFunctionId(void);
+
+/* Operator Class*/
+Oid VectorIVFFlatCosineSimilarityOperatorFamilyId(void);
+Oid VectorIVFFlatIPSimilarityOperatorFamilyId(void);
+Oid VectorIVFFlatL2SimilarityOperatorFamilyId(void);
+Oid VectorHNSWCosineSimilarityOperatorFamilyId(void);
+Oid VectorHNSWIPSimilarityOperatorFamilyId(void);
+Oid VectorHNSWL2SimilarityOperatorFamilyId(void);
+Oid BsonRumTextPathOperatorFamily(void);
+Oid BsonGistGeographyOperatorFamily(void);
+Oid BsonGistGeometryOperatorFamily(void);
+Oid BsonRumSinglePathOperatorFamily(void);
+Oid Float8PlusOperatorId(void);
+Oid Float8MinusOperatorId(void);
+Oid Float8MultiplyOperatorId(void);
+Oid BsonRumHashPathOperatorFamily(void);
+Oid BsonRumUniquePathOperatorFamily(void);
+
+/* Vector Functions */
+Oid PgDoubleToVectorFunctionOid(void);
+Oid PgDoubleToSparseVecFunctionOid(bool missingOK);
+Oid VectorAsVectorFunctionOid(void);
+Oid VectorAsHalfVecFunctionOid(bool missingOK);
+Oid ApiCatalogBsonExtractVectorFunctionId(void);
+Oid ApiBsonSearchParamFunctionId(void);
+Oid ApiBsonDocumentAddScoreFieldFunctionId(void);
+
+/* Vector Operators */
+Oid VectorOrderByQueryOperatorId(void);
+Oid VectorCosineSimilarityOperatorId(void);
+Oid VectorL2SimilarityOperatorId(void);
+Oid VectorIPSimilarityOperatorId(void);
+Oid VectorCosineSimilarityFunctionId(void);
+Oid VectorL2SimilarityFunctionId(void);
+Oid VectorIPSimilarityFunctionId(void);
+
+/* Half Vector Operators */
+Oid VectorHalfCosineSimilarityOperatorId(void);
+Oid VectorHalfL2SimilarityOperatorId(void);
+Oid VectorHalfIPSimilarityOperatorId(void);
+Oid VectorHalfCosineSimilarityFunctionId(void);
+Oid VectorHalfL2SimilarityFunctionId(void);
+Oid VectorHalfIPSimilarityFunctionId(void);
+
+/* Geospatial data/type/support functions */
+Oid Box2dfTypeId(void);
+Oid GeometryTypeId(void);
+Oid GeographyTypeId(void);
+Oid GIDXTypeId(void);
+Oid GeometryArrayTypeId(void);
+Oid BsonGeonearDistanceOperatorId(void);
+Oid BsonGeonearDistanceRangeOperatorId(void);
+Oid BsonDollarGeoIntersectsFunctionOid(void);
+Oid BsonDollarGeowithinFunctionOid(void);
+Oid BsonValidateGeometryFunctionId(void);
+Oid BsonValidateGeographyFunctionId(void);
+Oid BsonGistGeographyDistanceFunctionOid(void);
+Oid BsonGistGeographyConsistentFunctionOid(void);
+Oid PostgisGeometryBufferFunctionId(void);
+Oid PostgisGeographyBufferFunctionId(void);
+Oid PostgisGeometryAreaFunctionId(void);
+Oid PostgisGeometryFromEWKBFunctionId(void);
+Oid PostgisGeometryAsGeography(void);
+Oid PostgisGeometryIsValidDetailFunctionId(void);
+Oid PostgisGeometryMakeValidFunctionId(void);
+Oid PostgisGeometryGistCompress2dFunctionId(void);
+Oid PostgisGeometryGistConsistent2dFunctionId(void);
+Oid PostgisGeographyFromWKBFunctionId(void);
+Oid PostgisForcePolygonCWFunctionId(void);
+Oid PostgisGeometryAsBinaryFunctionId(void);
+Oid PostgisGeographyGistCompressFunctionId(void);
+Oid PostgisGeographyGistConsistentFunctionId(void);
+Oid PostgisMakeEnvelopeFunctionId(void);
+Oid PostgisMakePointFunctionId(void);
+Oid PostgisMakePolygonFunctionId(void);
+Oid PostgisMakeLineFunctionId(void);
+Oid PostgisGeographyCoversFunctionId(void);
+Oid PostgisGeographyDWithinFunctionId(void);
+Oid PostgisGeometryDistanceCentroidFunctionId(void);
+Oid PostgisGeographyDistanceKNNFunctionId(void);
+Oid PostgisGeometryGistDistanceFunctionId(void);
+Oid PostgisGeographyGistDistanceFunctionId(void);
+Oid PostgisGeometryDWithinFunctionId(void);
+Oid PostgisBox2dfGeometryOverlapsFunctionId(void);
+Oid PostgisGIDXGeographyOverlapsFunctionId(void);
+Oid PostgisGeometryCoversFunctionId(void);
+Oid PostgisGeographyIntersectsFunctionId(void);
+Oid PostgisGeometryIntersectsFunctionId(void);
+Oid PostgisSetSRIDFunctionId(void);
+Oid PostgisGeometryExpandFunctionId(void);
+Oid PostgisGeographyExpandFunctionId(void);
+
+/* Text search functions */
+Oid WebSearchToTsQueryFunctionId(void);
+Oid WebSearchToTsQueryWithRegConfigFunctionId(void);
+Oid BsonTextSearchMetaQualFuncId(void);
+Oid TsRankFunctionId(void);
+Oid TsVectorConcatFunctionId(void);
+Oid TsMatchFunctionOid(void);
+
+
+/* Aggregation functions */
+Oid ApiCatalogAggregationPipelineFunctionId(void);
+Oid ApiCatalogAggregationFindFunctionId(void);
+Oid ApiCatalogAggregationCountFunctionId(void);
+Oid ApiCatalogAggregationDistinctFunctionId(void);
+Oid ApiCatalogAggregationGetMoreFunctionId(void);
+Oid BsonCovariancePopAggregateFunctionOid(void);
+Oid BsonCovarianceSampAggregateFunctionOid(void);
+Oid BsonDollarAddFieldsFunctionOid(void);
+Oid BsonDollarAddFieldsWithLetFunctionOid(void);
+Oid BsonDollarAddFieldsWithLetAndCollationFunctionOid(void);
+Oid BsonDollarMergeDocumentAtPathFunctionOid(void);
+Oid BsonDollaMergeDocumentsFunctionOid(void);
+Oid BsonDollarProjectGeonearFunctionOid(void);
+Oid BsonDollarInverseMatchFunctionId(void);
+Oid BsonDollarProjectFunctionOid(void);
+Oid BsonDollarProjectWithLetFunctionOid(void);
+Oid BsonDollarProjectWithLetAndCollationFunctionOid(void);
+Oid BsonDollarRedactWithLetFunctionOid(void);
+Oid BsonDollarRedactWithLetAndCollationFunctionOid(void);
+Oid BsonDollarMergeHandleWhenMatchedFunctionOid(void);
+Oid BsonDollarMergeAddObjectIdFunctionOid(void);
+Oid BsonDollarMergeGenerateObjectId(void);
+Oid BsonDollarMergeFailWhenNotMatchedFunctionOid(void);
+Oid BsonDollarMergeExtractFilterFunctionOid(void);
+Oid BsonDollarMergeJoinFunctionOid(void);
+Oid BsonDollarProjectFindFunctionOid(void);
+Oid BsonDollarProjectFindWithLetFunctionOid(void);
+Oid BsonDollarProjectFindWithLetAndCollationFunctionOid(void);
+Oid BsonDollarUnwindFunctionOid(void);
+Oid BsonDollarUnwindWithOptionsFunctionOid(void);
+Oid BsonDollarReplaceRootFunctionOid(void);
+Oid BsonDollarReplaceRootWithLetFunctionOid(void);
+Oid BsonDollarReplaceRootWithLetAndCollationFunctionOid(void);
+Oid BsonSumAggregateFunctionOid(void);
+Oid BsonCommandCountAggregateFunctionOid(void);
+Oid BsonCountAggregateFunctionOid(void);
+Oid BsonIntegralAggregateFunctionOid(void);
+Oid BsonDerivativeAggregateFunctionOid(void);
+Oid BsonAvgAggregateFunctionOid(void);
+Oid BsonRepathAndBuildFunctionOid(void);
+Oid BsonBuildDocumentFunctionOid(void);
+Oid BsonExpressionGetFunctionOid(void);
+Oid BsonExpressionGetWithLetFunctionOid(void);
+Oid BsonExpressionGetWithLetAndCollationFunctionOid(void);
+Oid BsonExpressionPartitionGetFunctionOid(void);
+Oid BsonExpressionPartitionByFieldsGetFunctionOid(void);
+Oid BsonExpressionPartitionGetWithLetFunctionOid(void);
+Oid BsonExpressionPartitionGetWithLetAndCollationFunctionOid(void);
+Oid BsonExpressionMapFunctionOid(void);
+Oid BsonExpressionMapWithLetFunctionOid(void);
+Oid BsonExpressionAppendCollationFunctionOid(void);
+Oid BsonMaxAggregateFunctionOid(void);
+Oid BsonMaxWithExprAggregateFunctionOid(void);
+Oid BsonMinAggregateFunctionOid(void);
+Oid BsonMinWithExprAggregateFunctionOid(void);
+Oid BsonFirstWithExprAggregateFunctionOid(void);
+Oid BsonLastWithExprAggregateFunctionOid(void);
+Oid BsonSumWithExprAggregateFunctionOid(void);
+Oid BsonAvgWithExprAggregateFunctionOid(void);
+Oid PgRandomFunctionOid(void);
+Oid BsonArrayAggregateFunctionOid(void);
+Oid BsonArrayAggregateAllArgsFunctionOid(void);
+Oid BsonExpMovingAvgAggregateFunctionOid(void);
+Oid BsonObjectAggregateFunctionOid(void);
+Oid BsonMergeObjectsOnSortedFunctionOid(void);
+Oid BsonMergeObjectsFunctionOid(void);
+Oid BsonDollarFacetProjectFunctionOid(void);
+Oid BsonFirstOnSortedAggregateFunctionOid(void);
+Oid BsonFirstOnSortedAggregateAllArgsFunctionOid(void);
+Oid BsonLastOnSortedAggregateFunctionOid(void);
+Oid BsonLastOnSortedAggregateAllArgsFunctionOid(void);
+Oid BsonFirstAggregateFunctionOid(void);
+Oid BsonFirstAggregateAllArgsFunctionOid(void);
+Oid BsonLastAggregateFunctionOid(void);
+Oid BsonLastAggregateAllArgsFunctionOid(void);
+Oid BsonFirstNAggregateFunctionOid(void);
+Oid BsonFirstNAggregateAllArgsFunctionOid(void);
+Oid BsonFirstNOnSortedAggregateFunctionOid(void);
+Oid BsonFirstNOnSortedAggregateAllArgsFunctionOid(void);
+Oid BsonLastNAggregateFunctionOid(void);
+Oid BsonLastNAggregateAllArgsFunctionOid(void);
+Oid BsonLastNOnSortedAggregateFunctionOid(void);
+Oid BsonLastNOnSortedAggregateAllArgsFunctionOid(void);
+Oid BsonAddToSetAggregateFunctionOid(void);
+Oid BsonStdDevPopAggregateFunctionOid(void);
+Oid BsonStdDevSampAggregateFunctionOid(void);
+Oid PostgresAnyValueFunctionOid(void);
+Oid BsonLookupExtractFilterExpressionFunctionOid(void);
+Oid BsonDollarLookupExpressionEvalMergeOid(void);
+Oid BlackboxDBApiInternalBsonLookupExtractFilterExpressionFunctionOid(void);
+Oid BsonDollarLookupJoinFilterFunctionOid(void);
+Oid BsonLookupExtractFilterArrayFunctionOid(void);
+Oid BsonLookupUnwindFunctionOid(void);
+Oid BsonDistinctUnwindFunctionOid(void);
+Oid BsonDollarBucketAutoFunctionOid(void);
+Oid BsonDistinctAggregateFunctionOid(void);
+Oid RowGetBsonFunctionOid(void);
+Oid ApiChangeStreamAggregationFunctionOid(void);
+Oid ApiCollStatsAggregationFunctionOid(void);
+Oid ApiIndexStatsAggregationFunctionOid(void);
+Oid BsonCurrentOpAggregationFunctionId(void);
+Oid BsonMaxNAggregateFunctionOid(void);
+Oid BsonMinNAggregateFunctionOid(void);
+Oid BsonMedianAggregateFunctionOid(void);
+Oid BsonPercentileAggregateFunctionOid(void);
+
+/* Window functions*/
+Oid BsonLinearFillFunctionOid(void);
+Oid BsonLocfFillFunctionOid(void);
+Oid BsonConstFillFunctionOid(void);
+Oid BsonRankFunctionOid(void);
+Oid BsonDenseRankFunctionOid(void);
+Oid BsonShiftFunctionOid(void);
+Oid BsonDocumentNumberFunctionOid(void);
+
+/* Window functions */
+Oid BsonDensifyRangeWindowFunctionOid(void);
+Oid BsonDensifyPartitionWindowFunctionOid(void);
+Oid BsonDensifyFullWindowFunctionOid(void);
+
+
+/* Catalog */
+Oid ApiDataNamespaceOid(void);
+
+/* CRUD functions */
+Oid UpdateWorkerFunctionOid(void);
+Oid InsertWorkerFunctionOid(void);
+Oid DeleteWorkerFunctionOid(void);
+Oid CommandNodeWorkerFunctionOid(void);
+Oid CursorGetMoreFunctionOid(void);
+
+/* Compat functions*/
+Oid BlackboxDBCoreBsonToBsonFunctionOId(void);
+
+/* Helper functions */
+TypeName * ParseTypeNameCore(const char *typeName);
+
+
+/* Statistics functions */
+Oid BsonStatsProjectFuncOid(void);
+
+#endif

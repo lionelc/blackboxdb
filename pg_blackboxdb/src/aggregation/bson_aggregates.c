@@ -1,0 +1,2771 @@
+/*-------------------------------------------------------------------------
+ * Copyright (c) Anonymous.  All rights reserved.
+ *
+ * src/bson/bson_aggregates.c
+ *
+ * Aggregation implementations of BSON.
+ *
+ *-------------------------------------------------------------------------
+ */
+
+#include <postgres.h>
+#include <fmgr.h>
+#include <catalog/pg_type.h>
+#include <common/int.h>
+
+#include "aggregation/bson_aggregate.h"
+#include "io/bson_core.h"
+#include "query/bson_compare.h"
+#include <utils/array.h>
+#include <utils/builtins.h>
+#include <utils/heap_utils.h>
+#include "utils/blackboxdb_errors.h"
+#include "metadata/collection.h"
+#include "commands/insert.h"
+#include "sharding/sharding.h"
+#include "utils/hashset_utils.h"
+#include "aggregation/bson_aggregation_pipeline.h"
+#include "aggregation/bson_tree.h"
+#include "aggregation/bson_tree_write.h"
+#include "aggregation/bson_sorted_accumulator.h"
+#include "operators/bson_expression_operators.h"
+#include "collation/collation.h"
+
+extern bool EnableAddToSetAggregationRewrite;
+extern bool EnableMinMaxSkipNullValues;
+extern bool BsonTextUseJsonRepresentation;
+
+/* --------------------------------------------------------- */
+/* Data-types */
+/* --------------------------------------------------------- */
+
+typedef struct BsonNumericAggState
+{
+	bson_value_t sum;
+	int64_t count;
+} BsonNumericAggState;
+
+typedef struct BsonArrayAggState
+{
+	/* The total size of documents accumulated so far */
+	int32 currentSizeWritten;
+
+	/* The list of accumulated documents */
+	List *aggregateList;
+
+	char *path;
+
+	bool isWindowAggregation;
+
+	bool handleSingleValueElement;
+} BsonArrayAggState;
+
+
+typedef struct BsonObjectAggState
+{
+	BsonIntermediatePathNode *tree;
+	int64_t currentSizeWritten;
+	bool addEmptyPath;
+} BsonObjectAggState;
+
+typedef struct BsonAddToSetState
+{
+	HTAB *set;
+
+	/* The total size of documents accumulated so far */
+	int64_t currentSizeWritten;
+
+	/* The list of accumulated documents */
+	List *aggregateList;
+
+	bool isWindowAggregation;
+} BsonAddToSetState;
+
+/* state used for maxN and minN both */
+typedef struct DynamicHeapState
+{
+	BinaryHeap *heap;
+	bool isMaxN;
+	int64_t maxElements;
+	int32_t currentSizeWritten;
+} DynamicHeapState;
+
+const char charset[] = "abcdefghijklmnopqrstuvwxyz0123456789";
+
+
+/* --------------------------------------------------------- */
+/* Forward declaration */
+/* --------------------------------------------------------- */
+
+static MaxAlignedVarlena * AllocateBsonNumericAggState(void);
+static void CheckAggregateIntermediateResultSize(uint32_t size);
+static void CreateObjectAggTreeNodes(BsonObjectAggState *currentState,
+									 pgbson *currentValue);
+static void ValidateMergeObjectsInput(pgbson *input);
+static Datum ParseAndReturnMergeObjectsTree(BsonObjectAggState *state);
+static Datum bson_maxminn_transition(PG_FUNCTION_ARGS, bool isMaxN);
+static void BsonArrayAggFinalCore(BsonArrayAggState *state,
+								  pgbson_array_writer *arrayWriter);
+static bool CanSkipNullInMinMax(void);
+
+void DeserializeBinaryHeapState(bytea *byteArray, DynamicHeapState *state);
+bytea * SerializeBinaryHeapState(MemoryContext aggregateContext, DynamicHeapState *state,
+								 bytea *byteArray);
+
+/* --------------------------------------------------------- */
+/* Top level exports */
+/* --------------------------------------------------------- */
+
+PG_FUNCTION_INFO_V1(bson_sum_avg_transition);
+PG_FUNCTION_INFO_V1(bson_sum_final);
+PG_FUNCTION_INFO_V1(bson_avg_final);
+PG_FUNCTION_INFO_V1(bson_sum_avg_combine);
+PG_FUNCTION_INFO_V1(bson_sum_avg_minvtransition);
+PG_FUNCTION_INFO_V1(bson_min_transition);
+PG_FUNCTION_INFO_V1(bson_max_transition);
+PG_FUNCTION_INFO_V1(bson_min_max_final);
+PG_FUNCTION_INFO_V1(bson_min_combine);
+PG_FUNCTION_INFO_V1(bson_max_combine);
+PG_FUNCTION_INFO_V1(bson_build_distinct_response);
+PG_FUNCTION_INFO_V1(bson_array_agg_transition);
+PG_FUNCTION_INFO_V1(bson_array_agg_minvtransition);
+PG_FUNCTION_INFO_V1(bson_array_agg_final);
+PG_FUNCTION_INFO_V1(bson_distinct_array_agg_transition);
+PG_FUNCTION_INFO_V1(bson_distinct_array_agg_final);
+PG_FUNCTION_INFO_V1(bson_object_agg_transition);
+PG_FUNCTION_INFO_V1(bson_object_agg_final);
+PG_FUNCTION_INFO_V1(bson_out_transition);
+PG_FUNCTION_INFO_V1(bson_out_final);
+PG_FUNCTION_INFO_V1(bson_add_to_set_transition);
+PG_FUNCTION_INFO_V1(bson_add_to_set_final);
+PG_FUNCTION_INFO_V1(bson_merge_objects_transition_on_sorted);
+PG_FUNCTION_INFO_V1(bson_merge_objects_transition);
+PG_FUNCTION_INFO_V1(bson_merge_objects_final);
+PG_FUNCTION_INFO_V1(bson_maxn_transition);
+PG_FUNCTION_INFO_V1(bson_maxminn_final);
+PG_FUNCTION_INFO_V1(bson_minn_transition);
+PG_FUNCTION_INFO_V1(bson_maxminn_combine);
+PG_FUNCTION_INFO_V1(bson_count_transition);
+PG_FUNCTION_INFO_V1(bson_count_combine);
+PG_FUNCTION_INFO_V1(bson_count_final);
+PG_FUNCTION_INFO_V1(bson_command_count_final);
+PG_FUNCTION_INFO_V1(bson_max_with_expr_transition);
+PG_FUNCTION_INFO_V1(bson_max_with_expr_combine);
+PG_FUNCTION_INFO_V1(bson_min_with_expr_transition);
+PG_FUNCTION_INFO_V1(bson_min_with_expr_combine);
+PG_FUNCTION_INFO_V1(bson_min_max_with_expr_final);
+PG_FUNCTION_INFO_V1(bson_sum_avg_with_expr_transition);
+PG_FUNCTION_INFO_V1(bson_sum_avg_with_expr_minvtransition);
+
+/* BsonAggValue type I/O functions */
+PG_FUNCTION_INFO_V1(bsonaggvalue_in);
+PG_FUNCTION_INFO_V1(bsonaggvalue_out);
+PG_FUNCTION_INFO_V1(bsonaggvalue_send);
+PG_FUNCTION_INFO_V1(bsonaggvalue_recv);
+
+Datum
+bson_out_transition(PG_FUNCTION_ARGS)
+{
+	ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					errmsg("bson_out_transition is not deprecated")));
+}
+
+
+Datum
+bson_out_final(PG_FUNCTION_ARGS)
+{
+	ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					errmsg("bson_out_final is not deprecated")));
+}
+
+
+inline static Datum
+BsonArrayAggTransitionCore(PG_FUNCTION_ARGS, bool handleSingleValueElement,
+						   const char *path)
+{
+	BsonArrayAggState *currentState = { 0 };
+	MaxAlignedVarlena *bytes;
+	MemoryContext aggregateContext;
+	int aggregationContext = AggCheckCallContext(fcinfo, &aggregateContext);
+	if (aggregationContext == 0)
+	{
+		ereport(ERROR, errmsg(
+					"Aggregate function invoked in non-aggregate context"));
+	}
+
+	bool isWindowAggregation = (aggregationContext == AGG_CONTEXT_WINDOW);
+
+	/* Create the aggregate state in the aggregate context. */
+	MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
+
+	/* If the intermediate state has never been initialized, create it */
+	if (PG_ARGISNULL(0)) /* First arg is the running aggregated state*/
+	{
+		bytes = AllocateMaxAlignedVarlena(sizeof(BsonArrayAggState));
+
+		currentState = (BsonArrayAggState *) bytes->state;
+		currentState->isWindowAggregation = isWindowAggregation;
+		currentState->currentSizeWritten = 0;
+		currentState->aggregateList = NIL;
+		currentState->handleSingleValueElement = handleSingleValueElement;
+		currentState->path = pstrdup(path);
+	}
+	else
+	{
+		bytes = GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+		currentState = (BsonArrayAggState *) bytes->state;
+	}
+
+	pgbson *currentValue = PG_GETARG_MAYBE_NULL_PGBSON_PACKED(1);
+
+	if (currentValue == NULL)
+	{
+		currentState->aggregateList = lappend(currentState->aggregateList, NULL);
+	}
+	else
+	{
+		uint32 currentValueSize = PgbsonGetBsonSize(currentValue);
+		CheckAggregateIntermediateResultSize(currentState->currentSizeWritten +
+											 currentValueSize);
+		pgbson *copiedPgbson = CopyPgbsonIntoMemoryContext(currentValue,
+														   aggregateContext);
+		currentState->aggregateList = lappend(currentState->aggregateList,
+											  copiedPgbson);
+		currentState->currentSizeWritten += currentValueSize;
+	}
+
+	if (currentValue != NULL)
+	{
+		PG_FREE_IF_COPY(currentValue, 1);
+	}
+	MemoryContextSwitchTo(oldContext);
+	PG_RETURN_POINTER(bytes);
+}
+
+
+Datum
+bson_array_agg_transition(PG_FUNCTION_ARGS)
+{
+	char *path = text_to_cstring(PG_GETARG_TEXT_P(2));
+
+	/* We currently have 2 implementations of bson_array_agg. The newest has a parameter for handleSingleValueElement. */
+	bool handleSingleValueElement = PG_NARGS() == 4 ? PG_GETARG_BOOL(3) : false;
+
+	return BsonArrayAggTransitionCore(fcinfo, handleSingleValueElement, path);
+}
+
+
+Datum
+bson_array_agg_minvtransition(PG_FUNCTION_ARGS)
+{
+	MemoryContext aggregateContext;
+	if (AggCheckCallContext(fcinfo, &aggregateContext) != AGG_CONTEXT_WINDOW)
+	{
+		ereport(ERROR, errmsg(
+					"window aggregate function called in non-window-aggregate context"));
+	}
+
+	if (PG_ARGISNULL(0))
+	{
+		/* Returning NULL is an indiacation that inverse can't be applied and the aggregation needs to be redone */
+		PG_RETURN_NULL();
+	}
+
+	MaxAlignedVarlena *bytes = GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+	BsonArrayAggState *currentState = (BsonArrayAggState *) bytes->state;
+
+	if (!currentState->isWindowAggregation)
+	{
+		ereport(ERROR, errmsg(
+					"window aggregate function received an invalid state for $push"));
+	}
+
+	MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
+
+	pgbson *currentValue = PG_GETARG_MAYBE_NULL_PGBSON(1);
+
+	if (currentValue != NULL)
+	{
+		/*
+		 * Inverse function is called in sequence in which the row are added using the transition function,
+		 * so we don't need to find the `currentValue` pgbson in the list, it can be safely assume that this
+		 * is always present at the head of the list.
+		 * We only assert that these values are equal to make sure that we are deleting the correct value
+		 *
+		 * TODO: Maybe move to DLL in future to avoid memory moves when removing first entry
+		 */
+
+		Assert(PgbsonEquals(currentValue, (pgbson *) linitial(
+								currentState->aggregateList)));
+		currentState->currentSizeWritten -= PgbsonGetBsonSize(currentValue);
+	}
+
+	currentState->aggregateList = list_delete_first(currentState->aggregateList);
+
+	MemoryContextSwitchTo(oldContext);
+
+	PG_RETURN_POINTER(bytes);
+}
+
+
+Datum
+bson_distinct_array_agg_transition(PG_FUNCTION_ARGS)
+{
+	bool handleSingleValueElement = true;
+	char *path = "values";
+	return BsonArrayAggTransitionCore(fcinfo, handleSingleValueElement, path);
+}
+
+
+Datum
+bson_array_agg_final(PG_FUNCTION_ARGS)
+{
+	MaxAlignedVarlena *currentArrayAgg =
+		PG_ARGISNULL(0) ? NULL : GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+
+	if (currentArrayAgg != NULL)
+	{
+		BsonArrayAggState *state = (BsonArrayAggState *) currentArrayAgg->state;
+
+		/* Initialize the writes to make final aggregated BSON array */
+		pgbson_writer writer;
+		pgbson_array_writer arrayWriter;
+		PgbsonWriterInit(&writer);
+		PgbsonWriterStartArray(&writer, state->path, strlen(state->path), &arrayWriter);
+		BsonArrayAggFinalCore(state, &arrayWriter);
+		PgbsonWriterEndArray(&writer, &arrayWriter);
+		PG_RETURN_POINTER(PgbsonWriterGetPgbson(&writer));
+	}
+	else
+	{
+		MemoryContext aggregateContext;
+		int aggContext = AggCheckCallContext(fcinfo, &aggregateContext);
+		if (aggContext == AGG_CONTEXT_WINDOW)
+		{
+			/*
+			 * We will need to return the default value of $push accumulator which is empty array in case
+			 * where the window doesn't select any document.
+			 *
+			 * e.g ["unbounded", -1] => For the first row it doesn't select any rows.
+			 */
+			pgbson_writer writer;
+			PgbsonWriterInit(&writer);
+			PgbsonWriterAppendEmptyArray(&writer, "", 0);
+			PG_RETURN_POINTER(PgbsonWriterGetPgbson(&writer));
+		}
+		PG_RETURN_NULL();
+	}
+}
+
+
+/*
+ * The finalfunc for distinct array aggregation.
+ * Similar to array_agg but also writes "ok": 1
+ * Also returns an empty array with "ok": 1 if never initialized.
+ */
+Datum
+bson_distinct_array_agg_final(PG_FUNCTION_ARGS)
+{
+	MaxAlignedVarlena *currentArrayAgg =
+		PG_ARGISNULL(0) ? NULL : GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+
+	if (currentArrayAgg != NULL)
+	{
+		BsonArrayAggState *state = (BsonArrayAggState *) currentArrayAgg->state;
+		if (state->isWindowAggregation)
+		{
+			ereport(ERROR, errmsg(
+						"distinct array aggregate can't be used in a window context"));
+		}
+		pgbson_writer writer;
+		pgbson_array_writer arrayWriter;
+		PgbsonWriterInit(&writer);
+		PgbsonWriterStartArray(&writer, state->path, strlen(state->path), &arrayWriter);
+		BsonArrayAggFinalCore(state, &arrayWriter);
+		PgbsonWriterEndArray(&writer, &arrayWriter);
+		PgbsonWriterAppendDouble(&writer, "ok", 2, 1);
+		PG_RETURN_POINTER(PgbsonWriterGetPgbson(&writer));
+	}
+	else
+	{
+		pgbson_writer emptyWriter;
+		PgbsonWriterInit(&emptyWriter);
+		PgbsonWriterAppendEmptyArray(&emptyWriter, "values", 6);
+
+		PgbsonWriterAppendDouble(&emptyWriter, "ok", 2, 1);
+		PG_RETURN_POINTER(PgbsonWriterGetPgbson(&emptyWriter));
+	}
+}
+
+
+/*
+ * Core implementation of the object aggregation stage. This is used by both object_agg and merge_objects.
+ * Both have the same implementation but differ in validations made inside the caller method.
+ */
+inline static Datum
+AggregateObjectsCore(PG_FUNCTION_ARGS)
+{
+	BsonObjectAggState *currentState;
+	MaxAlignedVarlena *bytes;
+
+	MemoryContext aggregateContext;
+	if (!AggCheckCallContext(fcinfo, &aggregateContext))
+	{
+		ereport(ERROR, errmsg(
+					"Aggregate function invoked in non-aggregate context"));
+	}
+
+	/* Create the aggregate state in the aggregate context. */
+	MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
+
+	/* If the intermediate state has never been initialized, create it */
+	if (PG_ARGISNULL(0)) /* First arg is the running aggregated state*/
+	{
+		bytes = AllocateMaxAlignedVarlena(sizeof(BsonObjectAggState));
+
+		currentState = (BsonObjectAggState *) bytes->state;
+		currentState->currentSizeWritten = 0;
+		currentState->tree = MakeRootNode();
+		currentState->addEmptyPath = false;
+	}
+	else
+	{
+		bytes = GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+		currentState = (BsonObjectAggState *) bytes->state;
+	}
+
+	pgbson *currentValue = PG_GETARG_MAYBE_NULL_PGBSON(1);
+	if (currentValue != NULL)
+	{
+		CheckAggregateIntermediateResultSize(currentState->currentSizeWritten +
+											 PgbsonGetBsonSize(currentValue));
+
+		/*
+		 * We need to copy the whole pgbson because otherwise the pointers we store
+		 * in the tree will reference an address in the stack. These are released after
+		 * the function resolves and will point to garbage.
+		 */
+		currentValue = PgbsonCloneFromPgbson(currentValue);
+		CreateObjectAggTreeNodes(currentState, currentValue);
+		currentState->currentSizeWritten += PgbsonGetBsonSize(currentValue);
+	}
+
+	MemoryContextSwitchTo(oldContext);
+	PG_RETURN_POINTER(bytes);
+}
+
+
+Datum
+bson_object_agg_transition(PG_FUNCTION_ARGS)
+{
+	return AggregateObjectsCore(fcinfo);
+}
+
+
+/*
+ * Merge objects transition function for pipelines without a sort spec.
+ */
+Datum
+bson_merge_objects_transition_on_sorted(PG_FUNCTION_ARGS)
+{
+	pgbson *input = PG_GETARG_MAYBE_NULL_PGBSON(1);
+	ValidateMergeObjectsInput(input);
+	return AggregateObjectsCore(fcinfo);
+}
+
+
+/*
+ * Merge objects transition function for pipelines that contain a sort spec.
+ */
+Datum
+bson_merge_objects_transition(PG_FUNCTION_ARGS)
+{
+	bool isLast = false;
+	bool isSingle = false;
+	bool storeInputExpression = true;
+
+	/* If there is a sort spec, we push it to the mergeObjects accumulator stage. */
+	return BsonOrderTransition(fcinfo, isLast, isSingle, storeInputExpression);
+}
+
+
+/*
+ * Merge objects final function for aggregation pipelines that contain a sort spec.
+ */
+Datum
+bson_merge_objects_final(PG_FUNCTION_ARGS)
+{
+	BsonOrderAggState orderState = { 0 };
+	BsonObjectAggState mergeObjectsState = { 0 };
+
+	/*
+	 * Here we initialize BsonObjectAggState.
+	 * It is necessary to build the bson tree used by $mergeObjects.
+	 */
+	mergeObjectsState.currentSizeWritten = 0;
+	mergeObjectsState.tree = MakeRootNode();
+	mergeObjectsState.addEmptyPath = false;
+
+	/* Deserializing the structure used to sort data. */
+	DeserializeOrderState(PG_GETARG_BYTEA_P(0), &orderState);
+
+	/* Preparing expressionData to evaluate expression against each sorted bson value. */
+	pgbsonelement expressionElement;
+	pgbson_writer writer;
+
+	AggregationExpressionData expressionData;
+	memset(&expressionData, 0, sizeof(AggregationExpressionData));
+	ParseAggregationExpressionContext parseContext = { 0 };
+	PgbsonToSinglePgbsonElement(orderState.inputExpression, &expressionElement);
+	ParseAggregationExpressionData(&expressionData, &expressionElement.bsonValue,
+								   &parseContext);
+	const AggregationExpressionData *state = &expressionData;
+	StringView path = {
+		.length = expressionElement.pathLength,
+		.string = expressionElement.path,
+	};
+
+	/* Populate tree with sorted documents. */
+	for (int i = 0; i < orderState.currentCount; i++)
+	{
+		/* No more results*/
+		if (orderState.currentResult[i] == NULL)
+		{
+			break;
+		}
+
+		/* Check for null value*/
+		if (orderState.currentResult[i]->value != NULL)
+		{
+			PgbsonWriterInit(&writer);
+			EvaluateAggregationExpressionDataToWriter(state,
+													  orderState.currentResult[i]->value,
+													  path, &writer,
+													  NULL, false);
+
+			pgbson *evaluatedDoc = PgbsonWriterGetPgbson(&writer);
+
+			/* We need to validate the result here since we sorted the original documents first. */
+			ValidateMergeObjectsInput(evaluatedDoc);
+
+			/* Feed the tree with the evaluated bson. */
+			CreateObjectAggTreeNodes(&mergeObjectsState,
+									 evaluatedDoc);
+		}
+	}
+
+	return ParseAndReturnMergeObjectsTree(&mergeObjectsState);
+}
+
+
+Datum
+bson_object_agg_final(PG_FUNCTION_ARGS)
+{
+	MaxAlignedVarlena *currentArrayAgg =
+		PG_ARGISNULL(0) ? NULL : GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+
+	if (currentArrayAgg != NULL)
+	{
+		BsonObjectAggState *state = (BsonObjectAggState *) currentArrayAgg->state;
+		return ParseAndReturnMergeObjectsTree(state);
+	}
+	else
+	{
+		PG_RETURN_POINTER(PgbsonInitEmpty());
+	}
+}
+
+
+/*
+ * Applies the "state transition" (SFUNC) for sum and average.
+ * This counts the sum of the values encountered as well as the count
+ * It ignores non-numeric values, and manages type upgrades and coercion
+ * to the right types as documents are encountered.
+ */
+Datum
+bson_sum_avg_transition(PG_FUNCTION_ARGS)
+{
+	MaxAlignedVarlena *bytes;
+	BsonNumericAggState *currentState;
+
+	/* If the intermediate state has never been initialized, create it */
+	if (PG_ARGISNULL(0))
+	{
+		MemoryContext aggregateContext;
+		if (!AggCheckCallContext(fcinfo, &aggregateContext))
+		{
+			ereport(ERROR, errmsg(
+						"Aggregate function invoked in non-aggregate context"));
+		}
+
+		/* Create the aggregate state in the aggregate context. */
+		MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
+
+		bytes = AllocateBsonNumericAggState();
+
+		currentState = (BsonNumericAggState *) bytes->state;
+		currentState->count = 0;
+		currentState->sum.value_type = BSON_TYPE_INT32;
+		currentState->sum.value.v_int32 = 0;
+
+		MemoryContextSwitchTo(oldContext);
+	}
+	else
+	{
+		bytes = GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+		currentState = (BsonNumericAggState *) bytes->state;
+	}
+	pgbson *currentValue = PG_GETARG_MAYBE_NULL_PGBSON(1);
+
+	if (currentValue == NULL)
+	{
+		PG_RETURN_POINTER(bytes);
+	}
+
+	if (IsPgbsonEmptyDocument(currentValue))
+	{
+		PG_RETURN_POINTER(bytes);
+	}
+
+	pgbsonelement currentValueElement;
+	PgbsonToSinglePgbsonElement(currentValue, &currentValueElement);
+
+	bool overflowedFromInt64Ignore = false;
+
+	if (AddNumberToBsonValue(&currentState->sum, &currentValueElement.bsonValue,
+							 &overflowedFromInt64Ignore))
+	{
+		currentState->count++;
+	}
+
+	PG_RETURN_POINTER(bytes);
+}
+
+
+/*
+ * Applies the "inverse state transition" for sum and average.
+ * This subtracts the sum of the values leaving the group and decrements the count
+ * It ignores non-numeric values, and manages type upgrades and coercion
+ * to the right types as documents are encountered.
+ */
+Datum
+bson_sum_avg_minvtransition(PG_FUNCTION_ARGS)
+{
+	MemoryContext aggregateContext;
+	if (AggCheckCallContext(fcinfo, &aggregateContext) != AGG_CONTEXT_WINDOW)
+	{
+		ereport(ERROR, errmsg(
+					"window aggregate function called in non-window-aggregate context"));
+	}
+
+	MaxAlignedVarlena *bytes;
+	BsonNumericAggState *currentState;
+
+	if (PG_ARGISNULL(0))
+	{
+		/* Returning NULL is an indiacation that inverse can't be applied and the aggregation needs to be redone */
+		PG_RETURN_NULL();
+	}
+	else
+	{
+		bytes = GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+		currentState = (BsonNumericAggState *) bytes->state;
+	}
+	pgbson *currentValue = PG_GETARG_MAYBE_NULL_PGBSON(1);
+
+	if (currentValue == NULL || IsPgbsonEmptyDocument(currentValue))
+	{
+		PG_RETURN_POINTER(bytes);
+	}
+
+	pgbsonelement currentValueElement;
+	PgbsonToSinglePgbsonElement(currentValue, &currentValueElement);
+
+	bool overflowedFromInt64Ignore = false;
+
+	/* Aply the inverse of $sum and $avg */
+	if (currentState->count > 0 &&
+		SubtractNumberFromBsonValue(&currentState->sum, &currentValueElement.bsonValue,
+									&overflowedFromInt64Ignore))
+	{
+		currentState->count--;
+	}
+
+	PG_RETURN_POINTER(bytes);
+}
+
+
+/*
+ * Applies the "final calculation" (FINALFUNC) for sum.
+ * This takes the final value created and outputs a bson "sum"
+ * with the appropriate type.
+ */
+Datum
+bson_sum_final(PG_FUNCTION_ARGS)
+{
+	MaxAlignedVarlena *currentSum = PG_ARGISNULL(0) ?
+									NULL :
+									GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+
+	pgbsonelement finalValue;
+	finalValue.path = "";
+	finalValue.pathLength = 0;
+	if (currentSum != NULL)
+	{
+		BsonNumericAggState *state = (BsonNumericAggState *) currentSum->state;
+		finalValue.bsonValue = state->sum;
+	}
+	else
+	{
+		/* Mongo returns 0 for empty sets */
+		finalValue.bsonValue.value_type = BSON_TYPE_INT32;
+		finalValue.bsonValue.value.v_int32 = 0;
+	}
+
+	PG_RETURN_POINTER(PgbsonElementToPgbson(&finalValue));
+}
+
+
+/*
+ * Applies the "final calculation" (FINALFUNC) for average.
+ * This takes the final value created and outputs a bson "average"
+ */
+Datum
+bson_avg_final(PG_FUNCTION_ARGS)
+{
+	MaxAlignedVarlena *avgIntermediateState = PG_ARGISNULL(0) ? NULL :
+											  GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+
+	pgbsonelement finalValue;
+	finalValue.path = "";
+	finalValue.pathLength = 0;
+	if (avgIntermediateState != NULL)
+	{
+		BsonNumericAggState *averageState =
+			(BsonNumericAggState *) avgIntermediateState->state;
+		if (averageState->count == 0)
+		{
+			/* Mongo returns $null for empty sets */
+			finalValue.bsonValue.value_type = BSON_TYPE_NULL;
+		}
+		else
+		{
+			double sum = BsonValueAsDouble(&averageState->sum);
+			finalValue.bsonValue.value_type = BSON_TYPE_DOUBLE;
+			finalValue.bsonValue.value.v_double = sum / averageState->count;
+		}
+	}
+	else
+	{
+		/* Mongo returns $null for empty sets */
+		finalValue.bsonValue.value_type = BSON_TYPE_NULL;
+	}
+
+	PG_RETURN_POINTER(PgbsonElementToPgbson(&finalValue));
+}
+
+
+/*
+ * Gate null-skipping on the cluster version so all nodes change behavior together
+ * during a rolling upgrade.
+ */
+static bool
+CanSkipNullInMinMax(void)
+{
+	return EnableMinMaxSkipNullValues &&
+		   IsClusterVersionAtleast(DocDB_V0, 115, 0);
+}
+
+
+/*
+ * Applies the "final calculation" (FINALFUNC) for min and max.
+ * This takes the final value fills in a null bson for empty sets
+ */
+Datum
+bson_min_max_final(PG_FUNCTION_ARGS)
+{
+	pgbson *current = PG_GETARG_MAYBE_NULL_PGBSON(0);
+
+	if (current != NULL)
+	{
+		PG_RETURN_POINTER(current);
+	}
+	else
+	{
+		/* Mongo returns $null for empty sets */
+		pgbsonelement finalValue;
+		finalValue.path = "";
+		finalValue.pathLength = 0;
+		finalValue.bsonValue.value_type = BSON_TYPE_NULL;
+
+		PG_RETURN_POINTER(PgbsonElementToPgbson(&finalValue));
+	}
+}
+
+
+/*
+ * Applies the "state transition" (SFUNC) for max.
+ * This returns the max value of the currently computed max
+ * and the next candidate value.
+ * if the current max is null, returns the next candidate value
+ * If the candidate is null, returns the current max.
+ */
+Datum
+bson_max_transition(PG_FUNCTION_ARGS)
+{
+	pgbson *left = PG_GETARG_MAYBE_NULL_PGBSON(0);
+	pgbson *right = PG_GETARG_MAYBE_NULL_PGBSON(1);
+
+	/*
+	 * Treat an explicit null candidate as a skipped value so only non-null,
+	 * non-missing values are considered. Missing values already arrive as null
+	 * here (projected with isNullOnEmpty), so this covers both cases.
+	 */
+	if (right != NULL && CanSkipNullInMinMax())
+	{
+		pgbsonelement candidateElement;
+		PgbsonToSinglePgbsonElement(right, &candidateElement);
+		if (candidateElement.bsonValue.value_type == BSON_TYPE_NULL)
+		{
+			right = NULL;
+		}
+	}
+
+	if (left == NULL)
+	{
+		if (right == NULL)
+		{
+			PG_RETURN_NULL();
+		}
+
+		PG_RETURN_POINTER(right);
+	}
+	else if (right == NULL)
+	{
+		PG_RETURN_POINTER(left);
+	}
+
+	int32_t compResult = ComparePgbson(left, right);
+	if (compResult > 0)
+	{
+		PG_RETURN_POINTER(left);
+	}
+
+	PG_RETURN_POINTER(right);
+}
+
+
+/*
+ * Applies the "state transition" (SFUNC) for min.
+ * This returns the min value of the currently computed min
+ * and the next candidate value.
+ * if the current min is null, returns the next candidate value
+ * If the candidate is null, returns the current min.
+ */
+Datum
+bson_min_transition(PG_FUNCTION_ARGS)
+{
+	pgbson *left = PG_GETARG_MAYBE_NULL_PGBSON(0);
+	pgbson *right = PG_GETARG_MAYBE_NULL_PGBSON(1);
+
+	/*
+	 * Treat an explicit null candidate as a skipped value so only non-null,
+	 * non-missing values are considered. Missing values already arrive as null
+	 * here (projected with isNullOnEmpty), so this covers both cases.
+	 */
+	if (right != NULL && CanSkipNullInMinMax())
+	{
+		pgbsonelement candidateElement;
+		PgbsonToSinglePgbsonElement(right, &candidateElement);
+		if (candidateElement.bsonValue.value_type == BSON_TYPE_NULL)
+		{
+			right = NULL;
+		}
+	}
+
+	if (left == NULL)
+	{
+		if (right == NULL)
+		{
+			PG_RETURN_NULL();
+		}
+
+		PG_RETURN_POINTER(right);
+	}
+	else if (right == NULL)
+	{
+		PG_RETURN_POINTER(left);
+	}
+
+	int32_t compResult = ComparePgbson(left, right);
+	if (compResult < 0)
+	{
+		PG_RETURN_POINTER(left);
+	}
+
+	PG_RETURN_POINTER(right);
+}
+
+
+/*
+ * Applies the "combine function" (COMBINEFUNC) for sum and average.
+ * takes two of the aggregate state structures (bson_numeric_agg_state)
+ * and combines them to form a new bson_numeric_agg_state that has the combined
+ * sum and count.
+ */
+Datum
+bson_sum_avg_combine(PG_FUNCTION_ARGS)
+{
+	MemoryContext aggregateContext;
+	if (!AggCheckCallContext(fcinfo, &aggregateContext))
+	{
+		ereport(ERROR, errmsg(
+					"Aggregate function invoked in non-aggregate context"));
+	}
+
+	/* Create the aggregate state in the aggregate context. */
+	MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
+
+	MaxAlignedVarlena *combinedStateBytes = AllocateBsonNumericAggState();
+	BsonNumericAggState *currentState =
+		(BsonNumericAggState *) combinedStateBytes->state;
+
+	MemoryContextSwitchTo(oldContext);
+
+	/* Handle either left or right being null. A new state needs to be allocated regardless */
+	currentState->count = 0;
+
+	if (PG_ARGISNULL(0))
+	{
+		if (PG_ARGISNULL(1))
+		{
+			PG_RETURN_NULL();
+		}
+		MaxAlignedVarlena *rightBytes =
+			GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(1));
+		memcpy(currentState, rightBytes->state, sizeof(BsonNumericAggState));
+	}
+	else if (PG_ARGISNULL(1))
+	{
+		if (PG_ARGISNULL(0))
+		{
+			PG_RETURN_NULL();
+		}
+		MaxAlignedVarlena *leftBytes =
+			GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+		memcpy(currentState, leftBytes->state, sizeof(BsonNumericAggState));
+	}
+	else
+	{
+		MaxAlignedVarlena *leftBytes =
+			GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+		MaxAlignedVarlena *rightBytes =
+			GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(1));
+		BsonNumericAggState *leftState = (BsonNumericAggState *) leftBytes->state;
+		BsonNumericAggState *rightState = (BsonNumericAggState *) rightBytes->state;
+
+		currentState->count = leftState->count + rightState->count;
+		currentState->sum = leftState->sum;
+
+		bool overflowedFromInt64Ignore = false;
+
+		AddNumberToBsonValue(&currentState->sum, &rightState->sum,
+							 &overflowedFromInt64Ignore);
+	}
+
+	PG_RETURN_POINTER(combinedStateBytes);
+}
+
+
+/*
+ * Applies the "combine function" (COMBINEFUNC) for min.
+ * takes two bsons
+ * makes a new bson equal to the minimum
+ */
+Datum
+bson_min_combine(PG_FUNCTION_ARGS)
+{
+	MemoryContext aggregateContext;
+	if (!AggCheckCallContext(fcinfo, &aggregateContext))
+	{
+		ereport(ERROR, errmsg(
+					"Aggregate function invoked in non-aggregate context"));
+	}
+
+	/* Create the aggregate state in the aggregate context. */
+	MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
+
+	pgbson *left = PG_GETARG_MAYBE_NULL_PGBSON(0);
+	pgbson *right = PG_GETARG_MAYBE_NULL_PGBSON(1);
+	pgbson *result;
+	if (left == NULL)
+	{
+		if (right == NULL)
+		{
+			result = NULL;
+		}
+		else
+		{
+			result = PgbsonCloneFromPgbson(right);
+		}
+	}
+	else if (right == NULL)
+	{
+		result = PgbsonCloneFromPgbson(left);
+	}
+	else
+	{
+		int32_t compResult = ComparePgbson(left, right);
+		if (compResult < 0)
+		{
+			result = PgbsonCloneFromPgbson(left);
+		}
+		else
+		{
+			result = PgbsonCloneFromPgbson(right);
+		}
+	}
+
+	MemoryContextSwitchTo(oldContext);
+
+	if (result == NULL)
+	{
+		PG_RETURN_NULL();
+	}
+
+	PG_RETURN_POINTER(result);
+}
+
+
+/*
+ * Applies the "combine function" (COMBINEFUNC) for max.
+ * takes two bsons
+ * makes a new bson equal to the maximum
+ */
+Datum
+bson_max_combine(PG_FUNCTION_ARGS)
+{
+	MemoryContext aggregateContext;
+	if (!AggCheckCallContext(fcinfo, &aggregateContext))
+	{
+		ereport(ERROR, errmsg(
+					"Aggregate function invoked in non-aggregate context"));
+	}
+
+	/* Create the aggregate state in the aggregate context. */
+	MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
+
+	pgbson *left = PG_GETARG_MAYBE_NULL_PGBSON(0);
+	pgbson *right = PG_GETARG_MAYBE_NULL_PGBSON(1);
+	pgbson *result;
+	if (left == NULL)
+	{
+		if (right == NULL)
+		{
+			result = NULL;
+		}
+		else
+		{
+			result = PgbsonCloneFromPgbson(right);
+		}
+	}
+	else if (right == NULL)
+	{
+		result = PgbsonCloneFromPgbson(left);
+	}
+	else
+	{
+		int32_t compResult = ComparePgbson(left, right);
+		if (compResult > 0)
+		{
+			result = PgbsonCloneFromPgbson(left);
+		}
+		else
+		{
+			result = PgbsonCloneFromPgbson(right);
+		}
+	}
+
+	MemoryContextSwitchTo(oldContext);
+
+	if (result == NULL)
+	{
+		PG_RETURN_NULL();
+	}
+
+	PG_RETURN_POINTER(result);
+}
+
+
+/*
+ * Builds the final distinct response to be sent to the client.
+ * Formats the response as
+ * { "value": [ array_elements ], "ok": 1 }
+ * This allows the gateway to serialize the response directly to the client
+ * without reconverting the response on the Gateway.
+ */
+Datum
+bson_build_distinct_response(PG_FUNCTION_ARGS)
+{
+	ArrayType *val_array = PG_GETARG_ARRAYTYPE_P(0);
+
+	Datum *val_datums;
+	bool *val_is_null_marker;
+	int val_count;
+
+	deconstruct_array(val_array,
+					  ARR_ELEMTYPE(val_array), -1, false, TYPALIGN_INT,
+					  &val_datums, &val_is_null_marker, &val_count);
+
+	/* Distinct never has SQL NULL in the array */
+	pfree(val_is_null_marker);
+
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+
+	pgbson_array_writer arrayWriter;
+	PgbsonWriterStartArray(&writer, "values", 6, &arrayWriter);
+	for (int i = 0; i < val_count; i++)
+	{
+		pgbsonelement singleElement;
+		PgbsonToSinglePgbsonElement((pgbson *) val_datums[i], &singleElement);
+		PgbsonArrayWriterWriteValue(&arrayWriter, &singleElement.bsonValue);
+	}
+
+	PgbsonWriterEndArray(&writer, &arrayWriter);
+
+	PgbsonWriterAppendDouble(&writer, "ok", 2, 1);
+
+	PG_RETURN_POINTER(PgbsonWriterGetPgbson(&writer));
+}
+
+
+/*
+ * Transition function for the BSON_ADD_TO_SET aggregate.
+ */
+Datum
+bson_add_to_set_transition(PG_FUNCTION_ARGS)
+{
+	BsonAddToSetState *currentState = { 0 };
+	MaxAlignedVarlena *bytes;
+	MemoryContext aggregateContext;
+
+	int aggregationContext = AggCheckCallContext(fcinfo, &aggregateContext);
+	if (aggregationContext == 0)
+	{
+		ereport(ERROR, errmsg(
+					"Aggregate function invoked in non-aggregate context"));
+	}
+
+	bool isWindowAggregation = (aggregationContext == AGG_CONTEXT_WINDOW);
+
+	/* Create the aggregate state in the aggregate context. */
+	MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
+
+	/* If the intermediate state has never been initialized, create it */
+	if (PG_ARGISNULL(0)) /* First arg is the running aggregated state*/
+	{
+		bytes = AllocateMaxAlignedVarlena(sizeof(BsonAddToSetState));
+
+		currentState = (BsonAddToSetState *) bytes->state;
+		currentState->currentSizeWritten = 0;
+		currentState->aggregateList = NIL;
+		currentState->set = CreateBsonValueHashSet();
+		currentState->isWindowAggregation = isWindowAggregation;
+	}
+	else
+	{
+		bytes = GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+		currentState = (BsonAddToSetState *) bytes->state;
+	}
+
+	pgbson *currentValue = PG_GETARG_MAYBE_NULL_PGBSON(1);
+	if (currentValue != NULL && !IsPgbsonEmptyDocument(currentValue))
+	{
+		uint32 currentValueSize = PgbsonGetBsonSize(currentValue);
+		CheckAggregateIntermediateResultSize(currentState->currentSizeWritten +
+											 currentValueSize);
+
+		/*
+		 * We need to copy the whole pgbson because otherwise the pointers we store
+		 * in the hash table will reference an address in the stack. These are released
+		 * after the function resolves and will point to garbage.
+		 */
+		currentValue = PgbsonCloneFromPgbson(currentValue);
+		pgbsonelement singleBsonElement;
+
+		/* If it's a bson that's { "": value } */
+		if (TryGetSinglePgbsonElementFromPgbson(currentValue, &singleBsonElement) &&
+			singleBsonElement.pathLength == 0)
+		{
+			bool found = false;
+			hash_search(currentState->set, &singleBsonElement.bsonValue,
+						HASH_ENTER, &found);
+
+			/*
+			 * If the BSON was not found in the hash table, add its size to the current
+			 * state object.
+			 */
+			if (!found)
+			{
+				currentState->currentSizeWritten += PgbsonGetBsonSize(currentValue);
+			}
+
+			/*
+			 * If rewrite is enabled, append to list to avoid hash table iteration in final function.
+			 */
+			if (!found && EnableAddToSetAggregationRewrite)
+			{
+				bson_value_t *bsonValueCopy = palloc(sizeof(bson_value_t));
+				*bsonValueCopy = singleBsonElement.bsonValue;
+				currentState->aggregateList = lappend(currentState->aggregateList,
+													  bsonValueCopy);
+			}
+		}
+		else
+		{
+			ereport(ERROR, (errcode(ERRCODE_BLACKBOXDB_INTERNALERROR),
+							errmsg("Bad input format for addToSet transition.")));
+		}
+	}
+
+	MemoryContextSwitchTo(oldContext);
+	PG_RETURN_POINTER(bytes);
+}
+
+
+/*
+ * Final function for the BSON_ADD_TO_SET aggregate.
+ */
+Datum
+bson_add_to_set_final(PG_FUNCTION_ARGS)
+{
+	MaxAlignedVarlena *currentState = PG_ARGISNULL(0) ? NULL :
+									  GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+	if (currentState != NULL)
+	{
+		BsonAddToSetState *state = (BsonAddToSetState *) currentState->state;
+
+		pgbson_writer writer;
+		PgbsonWriterInit(&writer);
+
+		pgbson_array_writer arrayWriter;
+		PgbsonWriterStartArray(&writer, "", 0, &arrayWriter);
+
+		if (EnableAddToSetAggregationRewrite)
+		{
+			ListCell *cell;
+			foreach(cell, state->aggregateList)
+			{
+				bson_value_t *currentValue = (bson_value_t *) lfirst(cell);
+				PgbsonArrayWriterWriteValue(&arrayWriter, currentValue);
+			}
+
+			/*
+			 * For window aggregation, we must not destroy the hash table as it may be needed
+			 * for subsequent calls to this final function when processing other groups with
+			 * certain window bounds such as ["unbounded", constant]. In such cases, the window
+			 * frame head does not advance and the aggregation state is not reinitialized, so
+			 * the table must remain valid for continued use.
+			 *
+			 * For non-window aggregation, we can safely destroy the hash table here if it exists.
+			 * However, we intentionally do not free the aggregateList. This list may need to be
+			 * traversed again if a ReScan operation occurs following a HoldPortal operation.
+			 * Since the aggregateList is allocated within the aggregation memory context, it
+			 * will be automatically freed when that context is destroyed after aggregation completes.
+			 */
+			if (!state->isWindowAggregation && state->set != NULL)
+			{
+				hash_destroy(state->set);
+				state->set = NULL;
+			}
+		}
+		else
+		{
+			HASH_SEQ_STATUS seq_status;
+			const bson_value_t *entry;
+			hash_seq_init(&seq_status, state->set);
+
+			while ((entry = hash_seq_search(&seq_status)) != NULL)
+			{
+				PgbsonArrayWriterWriteValue(&arrayWriter, entry);
+			}
+
+			/*
+			 * For window aggregation, with the HASHCTL destroyed (on the call for the first group),
+			 * subsequent calls to this final function for other groups will fail
+			 * for certain bounds such as ["unbounded", constant].
+			 * This is because the head never moves and the aggregation is not restarted.
+			 * Thus, the table is expected to hold something valid.
+			 */
+			if (!state->isWindowAggregation)
+			{
+				hash_destroy(state->set);
+			}
+		}
+
+		PgbsonWriterEndArray(&writer, &arrayWriter);
+
+		PG_RETURN_POINTER(PgbsonWriterGetPgbson(&writer));
+	}
+	else
+	{
+		MemoryContext aggregateContext;
+		int aggContext = AggCheckCallContext(fcinfo, &aggregateContext);
+		if (aggContext == AGG_CONTEXT_WINDOW)
+		{
+			/*
+			 * We will need to return the default value of $addToSet accumulator which is empty array in case
+			 * where the window doesn't select any document.
+			 *
+			 * e.g ["unbounded", -1] => For the first row it doesn't select any rows.
+			 */
+			pgbson_writer writer;
+			PgbsonWriterInit(&writer);
+			PgbsonWriterAppendEmptyArray(&writer, "", 0);
+			PG_RETURN_POINTER(PgbsonWriterGetPgbson(&writer));
+		}
+		PG_RETURN_NULL();
+	}
+}
+
+
+/* --------------------------------------------------------- */
+/* Private helper methods */
+/* --------------------------------------------------------- */
+
+static MaxAlignedVarlena *
+AllocateBsonNumericAggState()
+{
+	MaxAlignedVarlena *combinedStateBytes =
+		AllocateMaxAlignedVarlena(sizeof(BsonNumericAggState));
+	return combinedStateBytes;
+}
+
+
+/*
+ * Core implementation of finalizing the bson array aggregation from
+ * the state.
+ * array_writer should be initialized correctly at the caller.
+ */
+static void
+BsonArrayAggFinalCore(BsonArrayAggState *state, pgbson_array_writer *arrayWriter)
+{
+	ListCell *cell;
+	foreach(cell, state->aggregateList)
+	{
+		pgbson *currentValue = lfirst(cell);
+		if (currentValue == NULL)
+		{
+			if (!state->isWindowAggregation)
+			{
+				PgbsonArrayWriterWriteNull(arrayWriter);
+			}
+		}
+		else
+		{
+			/* Empty pgbson values are missing field values which should not be pushed to the array */
+			bool isMissingValue = IsPgbsonEmptyDocument(currentValue);
+			if (!isMissingValue)
+			{
+				pgbsonelement singleBsonElement;
+				if (state->handleSingleValueElement &&
+					TryGetSinglePgbsonElementFromPgbson(currentValue,
+														&singleBsonElement) &&
+					singleBsonElement.pathLength == 0)
+				{
+					/* If it's a bson that's { "": value } */
+					PgbsonArrayWriterWriteValue(arrayWriter,
+												&singleBsonElement.bsonValue);
+				}
+				else
+				{
+					PgbsonArrayWriterWriteDocument(arrayWriter, currentValue);
+				}
+			}
+		}
+	}
+}
+
+
+void
+CheckAggregateIntermediateResultSize(uint32_t size)
+{
+	if (size > BSON_MAX_ALLOWED_SIZE_INTERMEDIATE)
+	{
+		ereport(ERROR, (errcode(ERRCODE_BLACKBOXDB_INTERMEDIATERESULTTOOLARGE),
+						errmsg(
+							"Size %u is larger than maximum size allowed for an intermediate document %u",
+							size, BSON_MAX_ALLOWED_SIZE_INTERMEDIATE)));
+	}
+}
+
+
+/*
+ * Helper method that iterates a pgbson writing its values to a bson tree. If a key already
+ * exists in the tree, then it's overwritten.
+ */
+static void
+CreateObjectAggTreeNodes(BsonObjectAggState *currentState, pgbson *currentValue)
+{
+	bson_iter_t docIter;
+	pgbsonelement singleBsonElement;
+	bool treatLeafDataAsConstant = true;
+	ParseAggregationExpressionContext parseContext = { 0 };
+
+	/*
+	 * If currentValue has the form of { "": value } and value is a bson document,
+	 * write only the value in the BsonTree. We need this because of how accumulators work
+	 * with bson_repath_and_build.
+	 */
+	if (TryGetSinglePgbsonElementFromPgbson(currentValue, &singleBsonElement) &&
+		singleBsonElement.pathLength == 0 &&
+		singleBsonElement.bsonValue.value_type == BSON_TYPE_DOCUMENT)
+	{
+		BsonValueInitIterator(&singleBsonElement.bsonValue, &docIter);
+		currentState->addEmptyPath = true;
+	}
+	else
+	{
+		PgbsonInitIterator(currentValue, &docIter);
+	}
+
+	while (bson_iter_next(&docIter))
+	{
+		StringView pathView = bson_iter_key_string_view(&docIter);
+		const bson_value_t *docValue = bson_iter_value(&docIter);
+
+		bool nodeCreated = false;
+		const BsonLeafPathNode *treeNode = TraverseDottedPathAndGetOrAddLeafFieldNode(
+			&pathView, docValue,
+			currentState->tree, BsonDefaultCreateLeafNode,
+			treatLeafDataAsConstant, &nodeCreated, &parseContext);
+
+		/* If the node already exists we need to update the value as object agg and merge objects
+		 * have the behavior that the last path spec (if duplicate) takes precedence. */
+		if (!nodeCreated)
+		{
+			ResetNodeWithField(treeNode, NULL, docValue, BsonDefaultCreateLeafNode,
+							   treatLeafDataAsConstant, &parseContext);
+		}
+	}
+}
+
+
+/*
+ * Validates $mergeObject input. It must be a non-null document.
+ */
+static void
+ValidateMergeObjectsInput(pgbson *input)
+{
+	pgbsonelement singleBsonElement;
+
+	/*
+	 * The $mergeObjects accumulator expects a document in the form of
+	 * { "": <document> }. This required by the bson_repath_and_build function.
+	 * Hence we check for a document with a single element below.
+	 */
+	if (input == NULL || !TryGetSinglePgbsonElementFromPgbson(input, &singleBsonElement))
+	{
+		ereport(ERROR, (errcode(ERRCODE_BLACKBOXDB_INTERNALERROR),
+						errmsg("Bad input format for mergeObjects transition.")));
+	}
+
+
+	/*
+	 * We fail if the bson value type is not DOCUMENT or NULL.
+	 */
+	if (singleBsonElement.bsonValue.value_type != BSON_TYPE_DOCUMENT &&
+		singleBsonElement.bsonValue.value_type != BSON_TYPE_NULL)
+	{
+		ereport(ERROR,
+				errcode(ERRCODE_BLACKBOXDB_DOLLARMERGEOBJECTSINVALIDTYPE),
+				errmsg(
+					"$mergeObjects needs both inputs to be objects, but the provided input %s has the type %s",
+					BsonValueToJsonForLogging(&singleBsonElement.bsonValue),
+					BsonTypeName(singleBsonElement.bsonValue.value_type)),
+				errdetail_log(
+					"$mergeObjects needs both inputs to be objects, but the provided input has the type %s",
+					BsonTypeName(singleBsonElement.bsonValue.value_type)));
+	}
+}
+
+
+/*
+ * Function used to parse and return a mergeObjects tree.
+ */
+static Datum
+ParseAndReturnMergeObjectsTree(BsonObjectAggState *state)
+{
+	if (state != NULL)
+	{
+		pgbson_writer writer;
+		PgbsonWriterInit(&writer);
+
+		/*
+		 * If we removed the original empty path, then we need to include it
+		 * again for bson_repath_and_build.
+		 */
+		if (state->addEmptyPath)
+		{
+			pgbson_writer childWriter;
+			PgbsonWriterStartDocument(&writer, "", 0, &childWriter);
+			TraverseTreeAndWrite(state->tree, &childWriter, NULL);
+			PgbsonWriterEndDocument(&writer, &childWriter);
+		}
+		else
+		{
+			TraverseTreeAndWrite(state->tree, &writer, NULL);
+		}
+
+
+		pgbson *result = PgbsonWriterGetPgbson(&writer);
+		FreeTree(state->tree);
+
+		PG_RETURN_POINTER(result);
+	}
+	else
+	{
+		PG_RETURN_POINTER(PgbsonInitEmpty());
+	}
+}
+
+
+/*
+ * Comparator function for heap utils. For MaxN, we need to build min-heap
+ */
+static bool
+HeapSortComparatorMaxN(const bson_value_t *first, const bson_value_t *second)
+{
+	bool ignoreIsComparisonValid = false; /* IsComparable ensures this is taken care of */
+	return CompareBsonValueAndType((const bson_value_t *) first,
+								   (const bson_value_t *) second,
+								   &ignoreIsComparisonValid) < 0;
+}
+
+
+/*
+ * Comparator function for heap utils. For MinN, we need to build max-heap
+ */
+static bool
+HeapSortComparatorMinN(const bson_value_t *first, const bson_value_t *second)
+{
+	bool ignoreIsComparisonValid = false; /* IsComparable ensures this is taken care of */
+	return CompareBsonValueAndType((const bson_value_t *) first,
+								   (const bson_value_t *) second,
+								   &ignoreIsComparisonValid) > 0;
+}
+
+
+/*
+ * Applies the "state transition" (SFUNC) for maxN/minN accumulators.
+ * The args in PG_FUNCTION_ARGS:
+ *		Evaluated expression: input and N.
+ *
+ * For maxN:
+ * we need to maintain a small root heap and compare the current value with the top of the heap (minimum value).
+ * If the current value is greater than the top of the heap (minimum value), then we will pop the top of the heap and insert the current value.
+ *
+ * For minN:
+ * we need to maintain a big root heap and compare the current value with the top of the heap (minimum value).
+ * If the current value is less than the top of the heap (minimum value), then we will pop the top of the heap and insert the current value.
+ */
+Datum
+bson_maxminn_transition(PG_FUNCTION_ARGS, bool isMaxN)
+{
+	bytea *bytes = NULL;
+	MemoryContext aggregateContext;
+	if (!AggCheckCallContext(fcinfo, &aggregateContext))
+	{
+		ereport(ERROR, errmsg(
+					"Aggregate function %s transition invoked in non-aggregate context",
+					isMaxN ? "maxN" : "minN"));
+	}
+
+	/* Create the aggregate state in the aggregate context. */
+	pgbson *copiedPgbson = PG_GETARG_MAYBE_NULL_PGBSON(1);
+	pgbson *currentValue = CopyPgbsonIntoMemoryContext(copiedPgbson, aggregateContext);
+
+	pgbsonelement currentValueElement;
+	PgbsonToSinglePgbsonElement(currentValue, &currentValueElement);
+	bson_value_t currentBsonValue = currentValueElement.bsonValue;
+
+	/*input and N are both expression, so we evaluate them togather.*/
+	bson_iter_t docIter;
+	BsonValueInitIterator(&currentBsonValue, &docIter);
+	bson_value_t inputBsonValue = { 0 };
+	bson_value_t elementBsonValue = { 0 };
+	while (bson_iter_next(&docIter))
+	{
+		const char *key = bson_iter_key(&docIter);
+		if (strcmp(key, "input") == 0)
+		{
+			inputBsonValue = *bson_iter_value(&docIter);
+		}
+		else if (strcmp(key, "n") == 0)
+		{
+			elementBsonValue = *bson_iter_value(&docIter);
+		}
+	}
+
+	/* Ensure that N is a valid integer value. */
+	ValidateElementForNGroupAccumulators(&elementBsonValue, isMaxN == true ? "maxN" :
+										 "minN");
+	bool throwIfFailed = true;
+	int64_t element = BsonValueAsInt64WithRoundingMode(&elementBsonValue,
+													   ConversionRoundingMode_Floor,
+													   throwIfFailed);
+
+	DynamicHeapState *currentState = (DynamicHeapState *) palloc0(
+		sizeof(DynamicHeapState));
+
+	/* If the intermediate state has never been initialized, create it */
+	if (PG_ARGISNULL(0))
+	{
+		currentState->isMaxN = isMaxN;
+		currentState->maxElements = element;
+		currentState->currentSizeWritten = 0;
+
+		/*
+		 * For maxN, we need to maintain a small root heap.
+		 * When currentValue is greater than the top of the heap, we need to remove the top of the heap and insert currentValue.
+		 *
+		 * For minN, we need to maintain a large root heap.
+		 * When currentValue is less than the top of the heap, we need to remove the top of the heap and insert currentValue.
+		 */
+
+		int initialCapacity = 64;
+		currentState->heap = AllocateDynamicHeap(initialCapacity, element, isMaxN ==
+												 true ?
+												 HeapSortComparatorMaxN :
+												 HeapSortComparatorMinN);
+	}
+	else
+	{
+		bytes = PG_GETARG_BYTEA_P(0);
+		DeserializeBinaryHeapState(bytes, currentState);
+	}
+
+	/*if the input is null or an undefined path, ignore it */
+	if (!IsExpressionResultNullOrUndefined(&inputBsonValue))
+	{
+		/* Heap should not be full, insert value. */
+		if (currentState->heap->heapSize < currentState->maxElements)
+		{
+			currentState->currentSizeWritten += sizeof(inputBsonValue);
+			CheckAggregateIntermediateResultSize(currentState->currentSizeWritten);
+
+			PushToDynamicHeap(currentState->heap, &inputBsonValue);
+		}
+		else
+		{
+			/* Heap should be full, replace the top if the new value should be included instead */
+			bson_value_t topHeap = TopHeap(currentState->heap);
+
+			if (!currentState->heap->heapComparator(&inputBsonValue, &topHeap))
+			{
+				currentState->currentSizeWritten = currentState->currentSizeWritten -
+												   sizeof(topHeap) +
+												   sizeof(inputBsonValue);
+				CheckAggregateIntermediateResultSize(currentState->currentSizeWritten);
+
+				PopFromDynamicHeap(currentState->heap);
+				PushToDynamicHeap(currentState->heap, &inputBsonValue);
+			}
+		}
+	}
+
+	bytes = SerializeBinaryHeapState(aggregateContext, currentState, PG_ARGISNULL(0) ?
+									 NULL : bytes);
+
+	PG_RETURN_POINTER(bytes);
+}
+
+
+/*
+ * Converts a DynamicHeapState into a serialized form to allow the internal type to be bytea
+ * Resulting bytes look like:
+ * | Varlena Header | isMaxN | maxElements | currentSizeWritten | heapType | heapSize | heapSpace | maximumHeapSpace | heapNode * heapSpace |
+ */
+bytea *
+SerializeBinaryHeapState(MemoryContext aggregateContext,
+						 DynamicHeapState *state,
+						 bytea *byteArray)
+{
+	int heapNodesSize = 0;
+	pgbson **heapNodeList = NULL;
+
+	if (state->heap->heapSize > 0)
+	{
+		heapNodeList = (pgbson **) palloc(sizeof(pgbson *) *
+										  state->heap->heapSize);
+		for (int i = 0; i < state->heap->heapSize; i++)
+		{
+			heapNodeList[i] = BsonValueToDocumentPgbson(
+				&state->heap->heapNodes[i]);
+
+			heapNodesSize += VARSIZE(heapNodeList[i]);
+		}
+	}
+
+	int requiredByteSize = VARHDRSZ +
+						   sizeof(bool) +
+						   sizeof(int64) +
+						   sizeof(uint32_t) +
+						   sizeof(int32) +
+						   sizeof(int64) +
+						   sizeof(int64) +
+						   sizeof(int64) +
+						   heapNodesSize;
+
+	char *bytes;
+	int existingByteSize = (byteArray == NULL) ? 0 : VARSIZE(byteArray);
+
+	if (existingByteSize >= requiredByteSize)
+	{
+		/* Reuse existing bytes */
+		bytes = (char *) byteArray;
+	}
+	else
+	{
+		bytes = (char *) MemoryContextAlloc(aggregateContext, requiredByteSize);
+		SET_VARSIZE(bytes, requiredByteSize);
+	}
+
+	/* Copy in the currentValue */
+	char *byteAllocationPointer = (char *) VARDATA(bytes);
+
+	memcpy(byteAllocationPointer, &state->isMaxN, sizeof(bool));
+	byteAllocationPointer += sizeof(bool);
+
+	memcpy(byteAllocationPointer, &state->maxElements, sizeof(int64));
+	byteAllocationPointer += sizeof(int64);
+
+	memcpy(byteAllocationPointer, &state->currentSizeWritten, sizeof(uint32_t));
+	byteAllocationPointer += sizeof(uint32_t);
+
+	memcpy(byteAllocationPointer, &state->heap->type, sizeof(int32));
+	byteAllocationPointer += sizeof(int32);
+
+	memcpy(byteAllocationPointer, &state->heap->heapSize, sizeof(int64));
+	byteAllocationPointer += sizeof(int64);
+
+	memcpy(byteAllocationPointer, &state->heap->heapSpace, sizeof(int64));
+	byteAllocationPointer += sizeof(int64);
+
+	memcpy(byteAllocationPointer, &state->heap->maximumHeapSpace, sizeof(int64));
+	byteAllocationPointer += sizeof(int64);
+
+	if (state->heap->heapSize > 0)
+	{
+		for (int i = 0; i < state->heap->heapSize; i++)
+		{
+			memcpy(byteAllocationPointer, heapNodeList[i], VARSIZE(heapNodeList[i]));
+			byteAllocationPointer += VARSIZE(heapNodeList[i]);
+		}
+	}
+
+	return (bytea *) bytes;
+}
+
+
+/*
+ * Converts a DynamicHeapState from a serialized form to allow the internal type to be bytea
+ * Incoming bytes look like:
+ * | Varlena Header | isMaxN | maxElements | currentSizeWritten | heapType |heapSize | heapSpace | maximumHeapSpace | heapNode * heapSpace |
+ */
+void
+DeserializeBinaryHeapState(bytea *byteArray,
+						   DynamicHeapState *state)
+{
+	if (byteArray == NULL)
+	{
+		return;
+	}
+
+	char *bytes = (char *) VARDATA(byteArray);
+
+	bool isMaxN;
+	memcpy(&isMaxN, bytes, sizeof(bool));
+	state->isMaxN = isMaxN;
+	bytes += sizeof(bool);
+
+	int64 maxElements;
+	memcpy(&maxElements, bytes, sizeof(int64));
+	state->maxElements = maxElements;
+	bytes += sizeof(int64);
+
+	uint32_t currentSizeWritten;
+	memcpy(&currentSizeWritten, bytes, sizeof(uint32_t));
+	state->currentSizeWritten = currentSizeWritten;
+	bytes += sizeof(uint32_t);
+
+	int32 heapTypeValue;
+	memcpy(&heapTypeValue, bytes, sizeof(int32));
+	HeapType heapType = (HeapType) heapTypeValue;
+	bytes += sizeof(int32);
+
+	int64 heapSize;
+	memcpy(&heapSize, bytes, sizeof(int64));
+	bytes += sizeof(int64);
+
+	int64 heapSpace;
+	memcpy(&heapSpace, bytes, sizeof(int64));
+	bytes += sizeof(int64);
+
+	int64 maximumHeapSpace;
+	memcpy(&maximumHeapSpace, bytes, sizeof(int64));
+	bytes += sizeof(int64);
+
+	state->heap = (BinaryHeap *) palloc(sizeof(BinaryHeap));
+	state->heap->heapSize = heapSize;
+	state->heap->heapSpace = heapSpace;
+	state->heap->maximumHeapSpace = maximumHeapSpace;
+	state->heap->type = heapType;
+	if (heapSpace > 0)
+	{
+		state->heap->heapNodes = (bson_value_t *) palloc(sizeof(bson_value_t) *
+														 heapSpace);
+	}
+	else
+	{
+		state->heap->heapNodes = NULL;
+	}
+
+	if (state->heap->heapSize > 0)
+	{
+		for (int i = 0; i < state->heap->heapSize; i++)
+		{
+			/*
+			 * bytes may not be aligned properly for pgbson access.
+			 * Read the varlena header using memcpy to avoid alignment issues,
+			 * then copy the pgbson to an aligned buffer.
+			 */
+			uint32 header;
+			memcpy(&header, bytes, sizeof(uint32));
+
+			/* Extract size from the 4-byte varlena header (size is stored in upper 30 bits, shifted right by 2) */
+			int pgbsonSize = (header >> 2) & 0x3FFFFFFF;
+
+			/* Copy to an aligned buffer */
+			pgbson *pgbsonValue = (pgbson *) palloc(pgbsonSize);
+			memcpy(pgbsonValue, bytes, pgbsonSize);
+
+			pgbsonelement element;
+			PgbsonToSinglePgbsonElement(pgbsonValue, &element);
+			state->heap->heapNodes[i] = element.bsonValue;
+
+			bytes += pgbsonSize;
+		}
+	}
+	state->heap->heapComparator = state->isMaxN ? HeapSortComparatorMaxN :
+								  HeapSortComparatorMinN;
+}
+
+
+/*
+ * Applies the "final" (FINALFUNC) for maxN/minN.
+ * This takes the final value created and outputs a bson "maxN/minN"
+ * with the appropriate type.
+ */
+Datum
+bson_maxminn_final(PG_FUNCTION_ARGS)
+{
+	bytea *maxNIntermediateState = PG_ARGISNULL(0) ? NULL : PG_GETARG_BYTEA_P(0);
+
+	pgbson *finalPgbson = NULL;
+
+	pgbson_writer writer;
+	pgbson_array_writer arrayWriter;
+	PgbsonWriterInit(&writer);
+	PgbsonWriterStartArray(&writer, "", 0, &arrayWriter);
+
+	if (maxNIntermediateState != NULL)
+	{
+		DynamicHeapState *maxNState = (DynamicHeapState *) palloc(
+			sizeof(DynamicHeapState));
+
+		DeserializeBinaryHeapState(maxNIntermediateState, maxNState);
+
+		int64_t numEntries = maxNState->heap->heapSize;
+		bson_value_t *valueArray = (bson_value_t *) palloc(sizeof(bson_value_t) *
+														   numEntries);
+
+		while (maxNState->heap->heapSize > 0)
+		{
+			valueArray[maxNState->heap->heapSize - 1] = PopFromDynamicHeap(
+				maxNState->heap);
+		}
+
+		for (int64_t i = 0; i < numEntries; i++)
+		{
+			PgbsonArrayWriterWriteValue(&arrayWriter, &valueArray[i]);
+		}
+
+		pfree(valueArray);
+		FreeHeap(maxNState->heap);
+	}
+
+	PgbsonWriterEndArray(&writer, &arrayWriter);
+	finalPgbson = PgbsonWriterGetPgbson(&writer);
+
+	PG_RETURN_POINTER(finalPgbson);
+}
+
+
+/*
+ * Applies the "state transition" (SFUNC) for maxN.
+ * For maxN, we need to maintain a small root heap.
+ * When currentValue is greater than the top of the heap, we need to remove the top of the heap and insert currentValue.
+ */
+Datum
+bson_maxn_transition(PG_FUNCTION_ARGS)
+{
+	bool isMaxN = true;
+	return bson_maxminn_transition(fcinfo, isMaxN);
+}
+
+
+/*
+ * Applies the "state transition" (SFUNC) for minN.
+ * For minN, we need to maintain a large root heap.
+ * When currentValue is less than the top of the heap, we need to remove the top of the heap and insert currentValue.
+ */
+Datum
+bson_minn_transition(PG_FUNCTION_ARGS)
+{
+	bool isMaxN = false;
+	return bson_maxminn_transition(fcinfo, isMaxN);
+}
+
+
+/*
+ * Applies the "combine" (COMBINEFUNC) for maxN/minN.
+ */
+Datum
+bson_maxminn_combine(PG_FUNCTION_ARGS)
+{
+	MemoryContext aggregateContext;
+	if (!AggCheckCallContext(fcinfo, &aggregateContext))
+	{
+		ereport(ERROR, errmsg(
+					"Aggregate functions maxN or minN have been invoked within a non-aggregation context."));
+	}
+
+	if (PG_ARGISNULL(0) && PG_ARGISNULL(1))
+	{
+		PG_RETURN_NULL();
+	}
+
+	if (PG_ARGISNULL(0))
+	{
+		return PG_GETARG_DATUM(1);
+	}
+
+	if (PG_ARGISNULL(1))
+	{
+		return PG_GETARG_DATUM(0);
+	}
+
+	bytea *bytesLeft;
+	bytea *bytesRight;
+	DynamicHeapState *currentLeftState = (DynamicHeapState *) palloc(
+		sizeof(DynamicHeapState));
+	DynamicHeapState *currentRightState = (DynamicHeapState *) palloc(
+		sizeof(DynamicHeapState));
+
+	bytesLeft = PG_GETARG_BYTEA_P(0);
+	DeserializeBinaryHeapState(bytesLeft, currentLeftState);
+
+	bytesRight = PG_GETARG_BYTEA_P(1);
+	DeserializeBinaryHeapState(bytesRight, currentRightState);
+
+
+	/* Merge the left heap into the currentRightState heap. */
+	while (currentLeftState->heap->heapSize > 0)
+	{
+		bson_value_t leftBsonValue = TopHeap(currentLeftState->heap);
+		bson_value_t rightBsonValue = TopHeap(currentRightState->heap);
+
+		/*
+		 * For maxN, If the root of the left heap is greater than the root of the currentState heap,
+		 * remove the root of the currentState heap and insert the root of the left heap.
+		 *
+		 * For minN, If the root of the left heap is less than the root of the currentState heap,
+		 * remove the root of the currentState heap and insert the root of the left heap.
+		 *
+		 */
+		if (currentRightState->heap->heapSize < currentRightState->maxElements)
+		{
+			PushToDynamicHeap(currentRightState->heap, &leftBsonValue);
+
+			currentLeftState->currentSizeWritten -= sizeof(leftBsonValue);
+			CheckAggregateIntermediateResultSize(currentRightState->currentSizeWritten +
+												 sizeof(leftBsonValue));
+			currentRightState->currentSizeWritten += sizeof(leftBsonValue);
+		}
+		else if (!currentLeftState->heap->heapComparator(&leftBsonValue,
+														 &rightBsonValue))
+		{
+			currentRightState->currentSizeWritten -= sizeof(TopHeap(
+																currentRightState->heap));
+			PopFromDynamicHeap(currentRightState->heap);
+
+			CheckAggregateIntermediateResultSize(currentRightState->currentSizeWritten +
+												 sizeof(leftBsonValue));
+			currentRightState->currentSizeWritten += sizeof(leftBsonValue);
+
+			PushToDynamicHeap(currentRightState->heap, &leftBsonValue);
+		}
+
+		currentLeftState->currentSizeWritten -= sizeof(TopHeap(
+														   currentLeftState->heap));
+
+		PopFromDynamicHeap(currentLeftState->heap);
+	}
+	FreeHeap(currentLeftState->heap);
+
+	bytesRight = SerializeBinaryHeapState(aggregateContext, currentRightState,
+										  bytesRight);
+	PG_RETURN_POINTER(bytesRight);
+}
+
+
+Datum
+bson_count_transition(PG_FUNCTION_ARGS)
+{
+	int64_t currentCount = PG_GETARG_INT64(0);
+	int64_t result = 0;
+
+	if (unlikely(pg_add_s64_overflow(currentCount, 1, &result)))
+	{
+		ereport(ERROR, errcode(ERRCODE_BLACKBOXDB_OVERFLOW),
+				errmsg("Count overflowed"));
+	}
+
+	PG_RETURN_INT64(result);
+}
+
+
+Datum
+bson_count_combine(PG_FUNCTION_ARGS)
+{
+	int64_t leftCount = PG_GETARG_INT64(0);
+	int64_t rightCount = PG_GETARG_INT64(1);
+	int64_t result = 0;
+
+	if (unlikely(pg_add_s64_overflow(leftCount, rightCount, &result)))
+	{
+		ereport(ERROR, errcode(ERRCODE_BLACKBOXDB_OVERFLOW),
+				errmsg("Count overflowed when combining the result"));
+	}
+
+	PG_RETURN_INT64(result);
+}
+
+
+static inline pgbson *
+CreateCountBson(int64_t count, bool isCommandCount)
+{
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+
+	const char *path = isCommandCount ? "n" : "";
+	const int pathLength = isCommandCount ? 1 : 0;
+
+	if (count <= INT32_MAX)
+	{
+		PgbsonWriterAppendInt32(&writer, path, pathLength, (int32_t) count);
+	}
+	else
+	{
+		PgbsonWriterAppendInt64(&writer, path, pathLength, count);
+	}
+
+	if (isCommandCount)
+	{
+		PgbsonWriterAppendDouble(&writer, "ok", 2, 1.0);
+	}
+
+	return PgbsonWriterGetPgbson(&writer);
+}
+
+
+Datum
+bson_count_final(PG_FUNCTION_ARGS)
+{
+	int64_t finalCount = PG_GETARG_INT64(0);
+	bool isCommandCount = false;
+
+	PG_RETURN_POINTER(CreateCountBson(finalCount, isCommandCount));
+}
+
+
+Datum
+bson_command_count_final(PG_FUNCTION_ARGS)
+{
+	int64_t finalCount = PG_GETARG_INT64(0);
+	bool isCommandCount = true;
+
+	PG_RETURN_POINTER(CreateCountBson(finalCount, isCommandCount));
+}
+
+
+/*
+ * Helper function to get or create a cached expression state.
+ * Checks if a valid cached state exists in fn_extra, and if not, parses
+ * the expression and caches it for reuse across calls.
+ *
+ * @param flinfo: The function info containing fn_extra for caching.
+ * @param expressionBson: The expression pgbson pointer (used for cache validation and parsing).
+ * @param variableSpec: Optional variable specification pgbson.
+ * @param collationText: Optional collation text datum pointer (used for cache validation).
+ * @return: Pointer to the cached BsonExpressionState.
+ */
+const BsonExpressionState *
+GetOrCreateCachedExpressionState(FmgrInfo *flinfo,
+								 pgbson *expressionBson,
+								 pgbson *variableSpec,
+								 text *collationText)
+{
+	/*
+	 * Check if we have a cached expression state and if it's still valid.
+	 * We compare the source expression pointer to determine validity -
+	 * if the pointer is the same, it's the same expression within this query.
+	 * We cannot use SetCachedFunctionStateMultiArgsWithAggContext->IsSafeToReuseFmgrFunctionExtraMultiArgs
+	 * as the params are always called as PARAM_EXEC and thus considered unsafe to reuse.
+	 * (See parse_agg.c -> make_agg_arg)
+	 */
+	CachedExpressionState *cachedState = (CachedExpressionState *) flinfo->fn_extra;
+
+	if (cachedState != NULL)
+	{
+		/* Check if the cached expression pointer matches the current one */
+		bool expressionMatches = (cachedState->sourceExpression == expressionBson);
+		bool variableSpecMatches = (cachedState->sourceVariableSpec == variableSpec);
+		bool collationMatches = (cachedState->sourceCollationText == collationText);
+
+		if (expressionMatches && variableSpecMatches && collationMatches)
+		{
+			return &cachedState->expressionState;
+		}
+
+		/*
+		 * Expression changed - free the old cached state.
+		 * Note: The memory was allocated in flinfo->fn_mcxt which will be cleaned
+		 * up automatically, but we free explicitly to avoid memory growth if
+		 * expressions change within a query.
+		 */
+		pfree(cachedState);
+		flinfo->fn_extra = NULL;
+		cachedState = NULL;
+	}
+
+	/* No valid cache - parse the expression */
+	MemoryContext originalContext = MemoryContextSwitchTo(flinfo->fn_mcxt);
+
+	CachedExpressionState *newCachedState = palloc0(sizeof(CachedExpressionState));
+
+	/* Store the source pointers for future comparison */
+	newCachedState->sourceExpression = expressionBson;
+	newCachedState->sourceVariableSpec = variableSpec;
+	newCachedState->sourceCollationText = collationText;
+
+	const char *collationString = collationText != NULL ?
+								  text_to_cstring(collationText) : NULL;
+
+	pgbsonelement expressionElement;
+	PgbsonToSinglePgbsonElement(expressionBson, &expressionElement);
+
+	/* Parse the expression state */
+	ParseBsonExpressionState(&newCachedState->expressionState,
+							 &expressionElement.bsonValue,
+							 variableSpec,
+							 collationString);
+
+	flinfo->fn_extra = newCachedState;
+
+	MemoryContextSwitchTo(originalContext);
+
+	return &newCachedState->expressionState;
+}
+
+
+static Datum
+BsonMinMaxWithExprTransitionCore(PG_FUNCTION_ARGS, bool isMax)
+{
+	MemoryContext aggregateContext;
+	if (!AggCheckCallContext(fcinfo, &aggregateContext))
+	{
+		ereport(ERROR, errmsg(
+					"aggregate function BsonMinMaxWithExprTransitionCore called in non-aggregate context"));
+	}
+
+	pgbson *inputDocument = PG_GETARG_MAYBE_NULL_PGBSON_PACKED(1);
+	pgbson *expressionBson = PG_GETARG_PGBSON(2);
+
+	/* If input document is null, return current accumulated state (or NULL if no state) */
+	if (inputDocument == NULL)
+	{
+		if (PG_ARGISNULL(0))
+		{
+			PG_RETURN_NULL();
+		}
+		PG_RETURN_POINTER(PG_GETARG_POINTER(0));
+	}
+
+	pgbson *variableSpec = NULL;
+	if (PG_NARGS() > 3)
+	{
+		variableSpec = PG_GETARG_MAYBE_NULL_PGBSON(3);
+	}
+
+	text *collationText = NULL;
+	const char *collationString = NULL;
+	if (PG_NARGS() > 4 && !PG_ARGISNULL(4))
+	{
+		collationText = PG_GETARG_TEXT_PP(4);
+		collationString = text_to_cstring(collationText);
+	}
+
+	const BsonExpressionState *expressionState = GetOrCreateCachedExpressionState(
+		fcinfo->flinfo,
+		expressionBson,
+		variableSpec,
+		collationText);
+
+	/* Evaluate the expression on the document directly to bson_value_t */
+	ExpressionLifetimeTracker tracker = { 0 };
+	ExpressionResultPrivate resultPrivate;
+	memset(&resultPrivate, 0, sizeof(ExpressionResultPrivate));
+	resultPrivate.tracker = &tracker;
+	resultPrivate.variableContext.parent = expressionState->variableContext;
+
+	ExpressionResult expressionResult = { { 0 }, false, false, resultPrivate };
+
+	EvaluateAggregationExpressionData(expressionState->expressionData, inputDocument,
+									  &expressionResult, false /* isNullOnEmpty */);
+	bson_value_t evaluatedValue = expressionResult.value;
+
+	/*
+	 * Skip missing values (BSON_TYPE_EOD), and explicit null values when
+	 * null-skipping is enabled, so only non-null, non-missing values are
+	 * considered. If all values are skipped the state stays NULL and the final
+	 * function returns null.
+	 */
+	if (evaluatedValue.value_type == BSON_TYPE_EOD ||
+		(evaluatedValue.value_type == BSON_TYPE_NULL && CanSkipNullInMinMax()))
+	{
+		if (PG_ARGISNULL(0))
+		{
+			PG_RETURN_NULL();
+		}
+		PG_RETURN_POINTER(PG_GETARG_POINTER(0));
+	}
+
+	/* If state is NULL, create new state with this value */
+	if (PG_ARGISNULL(0))
+	{
+		/* First non-null value - allocate BsonAggValue and store value directly */
+		MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
+		BsonAggValue *newState = (BsonAggValue *) palloc0(sizeof(BsonAggValue));
+		SET_VARSIZE(newState, sizeof(BsonAggValue));
+		bson_value_copy(&evaluatedValue, &newState->value);
+		newState->collationString = IsCollationValid(collationString) ?
+									pstrdup(collationString) : NULL;
+		MemoryContextSwitchTo(oldContext);
+
+		PG_RETURN_POINTER(newState);
+	}
+
+	/* Get existing state and compare values directly */
+	BsonAggValue *existingState = (BsonAggValue *) PG_GETARG_POINTER(0);
+
+	/* 'isComparisonValidIgnored' to maintain compatibility with older BSONMAX implementation */
+	bool isComparisonValidIgnored = false;
+	int32_t compResult = CompareBsonValueAndTypeWithCollation(
+		&existingState->value,
+		&evaluatedValue,
+		&isComparisonValidIgnored,
+		collationString);
+
+	/* Older max/min behavior, takes incoming document on equality so preserving same behavior here */
+	bool shouldReplace = isMax ? (compResult <= 0) : (compResult >= 0);
+	if (!shouldReplace)
+	{
+		/* Current state wins - no allocation needed */
+		PG_RETURN_POINTER(existingState);
+	}
+
+	/* New value wins - copy new value in aggregate context */
+	MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
+	bson_value_destroy(&existingState->value);
+	bson_value_copy(&evaluatedValue, &existingState->value);
+	MemoryContextSwitchTo(oldContext);
+
+	PG_RETURN_POINTER(existingState);
+}
+
+
+static Datum
+BsonMinMaxWithExprCombineCore(PG_FUNCTION_ARGS, bool isMax)
+{
+	MemoryContext aggregateContext;
+	if (!AggCheckCallContext(fcinfo, &aggregateContext))
+	{
+		ereport(ERROR, errmsg(
+					"aggregate function bson_min_max_with_expr_combine called in non-aggregate context"));
+	}
+
+	/* Handle null states - matches BSONMAX behavior */
+	if (PG_ARGISNULL(0) && PG_ARGISNULL(1))
+	{
+		PG_RETURN_NULL();
+	}
+
+	BsonAggValue *result;
+	if (PG_ARGISNULL(0))
+	{
+		result = (BsonAggValue *) PG_GETARG_POINTER(1);
+	}
+	else if (PG_ARGISNULL(1))
+	{
+		result = (BsonAggValue *) PG_GETARG_POINTER(0);
+	}
+	else
+	{
+		BsonAggValue *leftState = (BsonAggValue *) PG_GETARG_POINTER(0);
+		BsonAggValue *rightState = (BsonAggValue *) PG_GETARG_POINTER(1);
+
+		/* Collation must be same for both left and right, if any */
+		const char *leftCollation = leftState->collationString;
+		Assert((leftCollation == NULL && rightState->collationString == NULL) ||
+			   (leftCollation != NULL && rightState->collationString != NULL &&
+				strcmp(leftCollation, rightState->collationString) == 0));
+
+		/* Compare values directly */
+		bool isComparisonValidIgnored = false;
+		int32_t compResult = CompareBsonValueAndTypeWithCollation(
+			&leftState->value,
+			&rightState->value,
+			&isComparisonValidIgnored,
+			leftCollation);
+
+		result = isMax ? (compResult >= 0 ? leftState : rightState) :
+				 (compResult <= 0 ? leftState : rightState);
+	}
+
+	MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
+	BsonAggValue *finalResult = (BsonAggValue *) palloc0(sizeof(BsonAggValue));
+
+	SET_VARSIZE(finalResult, sizeof(BsonAggValue));
+	bson_value_copy(&result->value, &finalResult->value);
+	finalResult->collationString = IsCollationValid(result->collationString) ?
+								   pstrdup(result->collationString) : NULL;
+
+	MemoryContextSwitchTo(oldContext);
+
+	PG_RETURN_POINTER(finalResult);
+}
+
+
+Datum
+bson_max_with_expr_transition(PG_FUNCTION_ARGS)
+{
+	bool isMax = true;
+	return BsonMinMaxWithExprTransitionCore(fcinfo, isMax);
+}
+
+
+Datum
+bson_min_with_expr_transition(PG_FUNCTION_ARGS)
+{
+	bool isMax = false;
+	return BsonMinMaxWithExprTransitionCore(fcinfo, isMax);
+}
+
+
+Datum
+bson_max_with_expr_combine(PG_FUNCTION_ARGS)
+{
+	bool isMax = true;
+	return BsonMinMaxWithExprCombineCore(fcinfo, isMax);
+}
+
+
+Datum
+bson_min_with_expr_combine(PG_FUNCTION_ARGS)
+{
+	bool isMax = false;
+	return BsonMinMaxWithExprCombineCore(fcinfo, isMax);
+}
+
+
+Datum
+bson_min_max_with_expr_final(PG_FUNCTION_ARGS)
+{
+	if (PG_ARGISNULL(0))
+	{
+		/* Mongo returns $null for empty sets */
+		pgbsonelement finalValue;
+		finalValue.path = "";
+		finalValue.pathLength = 0;
+		finalValue.bsonValue.value_type = BSON_TYPE_NULL;
+		PG_RETURN_POINTER(PgbsonElementToPgbson(&finalValue));
+	}
+
+	/* Get value directly from BsonAggValue state */
+	BsonAggValue *state = (BsonAggValue *) PG_GETARG_POINTER(0);
+
+	pgbsonelement finalValue;
+	finalValue.path = "";
+	finalValue.pathLength = 0;
+	finalValue.bsonValue = state->value;
+	PG_RETURN_POINTER(PgbsonElementToPgbson(&finalValue));
+}
+
+
+/*
+ * Applies the "state transition" (SFUNC) for sum and average with inline
+ * expression evaluation. Instead of receiving a pre-evaluated bson value,
+ * this function takes the raw document and expression spec, evaluates the
+ * expression inline, and accumulates the numeric result.
+ *
+ * Arguments: (state bytea, document bson, expressionSpec bson, variableSpec bson)
+ */
+Datum
+bson_sum_avg_with_expr_transition(PG_FUNCTION_ARGS)
+{
+	MemoryContext aggregateContext;
+	if (!AggCheckCallContext(fcinfo, &aggregateContext))
+	{
+		ereport(ERROR, errmsg(
+					"aggregate function bson_sum_avg_with_expr_transition called in non-aggregate context"));
+	}
+
+	pgbson *inputDocument = PG_GETARG_MAYBE_NULL_PGBSON_PACKED(1);
+	pgbson *expressionBson = PG_GETARG_PGBSON(2);
+
+	/* If input document is null, return current accumulated state (or NULL if no state) */
+	if (inputDocument == NULL)
+	{
+		if (PG_ARGISNULL(0))
+		{
+			PG_RETURN_NULL();
+		}
+		PG_RETURN_POINTER(PG_GETARG_POINTER(0));
+	}
+
+	pgbson *variableSpec = NULL;
+	if (PG_NARGS() > 3)
+	{
+		variableSpec = PG_GETARG_MAYBE_NULL_PGBSON(3);
+	}
+
+	/* Collation string is optional 5th argument (index = 4). Needed so that
+	 * nested comparison operators in expressions respect collation. */
+	text *collationText = NULL;
+	if (PG_NARGS() > 4 && !PG_ARGISNULL(4))
+	{
+		collationText = PG_GETARG_TEXT_PP(4);
+	}
+
+	const BsonExpressionState *expressionState = GetOrCreateCachedExpressionState(
+		fcinfo->flinfo,
+		expressionBson,
+		variableSpec,
+		collationText);
+
+	/* Evaluate the expression on the document directly to bson_value_t */
+	ExpressionLifetimeTracker tracker = { 0 };
+	ExpressionResultPrivate resultPrivate;
+	memset(&resultPrivate, 0, sizeof(ExpressionResultPrivate));
+	resultPrivate.tracker = &tracker;
+	resultPrivate.variableContext.parent = expressionState->variableContext;
+
+	ExpressionResult expressionResult = { { 0 }, false, false, resultPrivate };
+
+	EvaluateAggregationExpressionData(expressionState->expressionData, inputDocument,
+									  &expressionResult, false /* isNullOnEmpty */);
+	bson_value_t evaluatedValue = expressionResult.value;
+
+
+	/* we need to allocate MaxAlignedVarlena rather than directly palloc on BsonNumericAggState, since type definition on SQL is bytea and not the type itself. */
+	/* this allows us to re-use the existing combine and final functions too. */
+	MaxAlignedVarlena *stateBytes;
+	BsonNumericAggState *currentState;
+
+	/* Initialize state if needed */
+	if (PG_ARGISNULL(0))
+	{
+		MemoryContext oldContext = MemoryContextSwitchTo(aggregateContext);
+		stateBytes = AllocateBsonNumericAggState();
+		currentState = (BsonNumericAggState *) stateBytes->state;
+		currentState->count = 0;
+		currentState->sum.value_type = BSON_TYPE_INT32;
+		currentState->sum.value.v_int32 = 0;
+		MemoryContextSwitchTo(oldContext);
+	}
+	else
+	{
+		stateBytes = GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+		currentState = (BsonNumericAggState *) stateBytes->state;
+	}
+
+	/* Skip EOD (missing field) and empty documents */
+	if (evaluatedValue.value_type == BSON_TYPE_EOD)
+	{
+		PG_RETURN_POINTER(stateBytes);
+	}
+
+	bool overflowedFromInt64Ignore = false;
+	if (AddNumberToBsonValue(&currentState->sum, &evaluatedValue,
+							 &overflowedFromInt64Ignore))
+	{
+		currentState->count++;
+	}
+
+	PG_RETURN_POINTER(stateBytes);
+}
+
+
+/*
+ * Applies the "inverse state transition" for sum and average with inline
+ * expression evaluation. Used for moving window aggregates to subtract
+ * values leaving the window frame.
+ *
+ * Arguments: (state bytea, document bson, expressionSpec bson, variableSpec bson)
+ */
+Datum
+bson_sum_avg_with_expr_minvtransition(PG_FUNCTION_ARGS)
+{
+	MemoryContext aggregateContext;
+	if (AggCheckCallContext(fcinfo, &aggregateContext) != AGG_CONTEXT_WINDOW)
+	{
+		ereport(ERROR, errmsg(
+					"window aggregate function called in non-window-aggregate context"));
+	}
+
+	MaxAlignedVarlena *stateBytes;
+	BsonNumericAggState *currentState;
+
+	if (PG_ARGISNULL(0))
+	{
+		/* Returning NULL indicates inverse can't be applied */
+		PG_RETURN_NULL();
+	}
+	else
+	{
+		stateBytes = GetMaxAlignedVarlena(PG_GETARG_BYTEA_P(0));
+		currentState = (BsonNumericAggState *) stateBytes->state;
+	}
+
+	pgbson *inputDocument = PG_GETARG_MAYBE_NULL_PGBSON_PACKED(1);
+	pgbson *expressionBson = PG_GETARG_PGBSON(2);
+
+	if (inputDocument == NULL)
+	{
+		PG_RETURN_POINTER(stateBytes);
+	}
+
+	pgbson *variableSpec = NULL;
+	if (PG_NARGS() > 3)
+	{
+		variableSpec = PG_GETARG_MAYBE_NULL_PGBSON(3);
+	}
+
+	/* Collation string is optional 5th argument (index = 4). Needed so that
+	 * nested comparison operators in expressions respect collation. */
+	text *collationText = NULL;
+	if (PG_NARGS() > 4 && !PG_ARGISNULL(4))
+	{
+		collationText = PG_GETARG_TEXT_PP(4);
+	}
+
+	const BsonExpressionState *expressionState = GetOrCreateCachedExpressionState(
+		fcinfo->flinfo,
+		expressionBson,
+		variableSpec,
+		collationText);
+
+	/* Evaluate the expression on the document */
+	ExpressionLifetimeTracker tracker = { 0 };
+	ExpressionResultPrivate resultPrivate;
+	memset(&resultPrivate, 0, sizeof(ExpressionResultPrivate));
+	resultPrivate.tracker = &tracker;
+	resultPrivate.variableContext.parent = expressionState->variableContext;
+
+	ExpressionResult expressionResult = { { 0 }, false, false, resultPrivate };
+
+	EvaluateAggregationExpressionData(expressionState->expressionData, inputDocument,
+									  &expressionResult, false /* isNullOnEmpty */);
+	bson_value_t evaluatedValue = expressionResult.value;
+
+	if (evaluatedValue.value_type == BSON_TYPE_EOD)
+	{
+		PG_RETURN_POINTER(stateBytes);
+	}
+
+	bool overflowedFromInt64Ignore = false;
+
+	/* Apply the inverse of $sum and $avg */
+	if (currentState->count > 0 &&
+		SubtractNumberFromBsonValue(&currentState->sum, &evaluatedValue,
+									&overflowedFromInt64Ignore))
+	{
+		currentState->count--;
+	}
+
+	PG_RETURN_POINTER(stateBytes);
+}
+
+
+/*
+ * --------------------------------------------------------
+ * BsonAggValue type I/O functions
+ * --------------------------------------------------------
+ */
+
+/*
+ * bsonaggvalue_in: Parse text input to BsonAggValue.
+ * Accepts both hex (BSONHEX...) and extended JSON formats, wrapped as {"": value}
+ * with an optional "collation" field.
+ */
+Datum
+bsonaggvalue_in(PG_FUNCTION_ARGS)
+{
+	char *inputStr = PG_GETARG_CSTRING(0);
+
+	if (inputStr == NULL)
+	{
+		PG_RETURN_NULL();
+	}
+
+	pgbson *bson = NULL;
+	if (IsBsonHexadecimalString(inputStr))
+	{
+		bson = PgbsonInitFromHexadecimalString(inputStr);
+	}
+	else
+	{
+		bson = PgbsonInitFromJson(inputStr);
+	}
+
+	pgbsonelement element;
+	const char *collationString =
+		PgbsonToSinglePgbsonElementWithCollation(bson, &element);
+
+	/* Allocate BsonAggValue and collation and deep-copy their values */
+	BsonAggValue *state = (BsonAggValue *) palloc0(sizeof(BsonAggValue));
+	SET_VARSIZE(state, sizeof(BsonAggValue));
+	bson_value_copy(&element.bsonValue, &state->value);
+	state->collationString = collationString != NULL ?
+							 pstrdup(collationString) : NULL;
+
+	PG_RETURN_POINTER(state);
+}
+
+
+/*
+ * Helper: append BsonAggValue's value to a pgbson_writer.
+ * BSON_TYPE_EOD (missing field) cannot be serialized as a BSON element,
+ * so we write BSON_TYPE_NULL instead.
+ */
+static inline void
+AppendBsonAggValueToWriter(pgbson_writer *writer, const bson_value_t *value)
+{
+	if (value->value_type == BSON_TYPE_EOD)
+	{
+		PgbsonWriterAppendNull(writer, "", 0);
+	}
+	else
+	{
+		PgbsonWriterAppendValue(writer, "", 0, value);
+	}
+}
+
+
+/*
+ * bsonaggvalue_out: Convert BsonAggValue to text output.
+ * Returns the value wrapped as {"": value} with an optional "collation" field.
+ * Uses hex representation by default, or extended JSON when the GUC is set.
+ */
+Datum
+bsonaggvalue_out(PG_FUNCTION_ARGS)
+{
+	BsonAggValue *state = (BsonAggValue *) PG_GETARG_POINTER(0);
+
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	AppendBsonAggValueToWriter(&writer, &state->value);
+	if (state->collationString != NULL)
+	{
+		PgbsonWriterAppendUtf8(&writer, "collation", strlen("collation"),
+							   state->collationString);
+	}
+	pgbson *bson = PgbsonWriterGetPgbson(&writer);
+
+	const char *outputString = NULL;
+	if (BsonTextUseJsonRepresentation)
+	{
+		outputString = PgbsonToCanonicalExtendedJson(bson);
+	}
+	else
+	{
+		outputString = PgbsonToHexadecimalString(bson);
+	}
+
+	PG_RETURN_CSTRING(outputString);
+}
+
+
+/*
+ * bsonaggvalue_send: Serialize BsonAggValue to binary for network transfer.
+ * Wraps the value as {"": value} with an optional "collation" field.
+ */
+Datum
+bsonaggvalue_send(PG_FUNCTION_ARGS)
+{
+	BsonAggValue *state = (BsonAggValue *) PG_GETARG_POINTER(0);
+
+	pgbson_writer writer;
+	PgbsonWriterInit(&writer);
+	AppendBsonAggValueToWriter(&writer, &state->value);
+	if (state->collationString != NULL)
+	{
+		PgbsonWriterAppendUtf8(&writer, "collation", strlen("collation"),
+							   state->collationString);
+	}
+
+	PG_RETURN_POINTER(PgbsonWriterGetPgbson(&writer));
+}
+
+
+/*
+ * bsonaggvalue_recv: Deserialize BsonAggValue from binary network data.
+ * Parses pgbson bytes, extracts the value and optional collation string.
+ */
+Datum
+bsonaggvalue_recv(PG_FUNCTION_ARGS)
+{
+	StringInfo buf = (StringInfo) PG_GETARG_POINTER(0);
+
+	/* Parse the buffer as pgbson */
+	pgbson *bson = PgbsonInitFromBuffer(buf->data, buf->len);
+
+	/* Mark buffer as consumed */
+	buf->cursor = buf->len;
+
+	pgbsonelement element;
+	const char *collationString =
+		PgbsonToSinglePgbsonElementWithCollation(bson, &element);
+
+	/* Allocate BsonAggValue and collation and deep-copy their values */
+	BsonAggValue *state = (BsonAggValue *) palloc0(sizeof(BsonAggValue));
+	SET_VARSIZE(state, sizeof(BsonAggValue));
+	bson_value_copy(&element.bsonValue, &state->value);
+	state->collationString = collationString != NULL ?
+							 pstrdup(collationString) : NULL;
+
+	PG_RETURN_POINTER(state);
+}

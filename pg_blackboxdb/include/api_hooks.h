@@ -1,0 +1,319 @@
+/*-------------------------------------------------------------------------
+ * Copyright (c) Anonymous.  All rights reserved.
+ *
+ * include/api_hooks.h
+ *
+ * Exports related to hooks for the public API surface that enable distribution.
+ *
+ *-------------------------------------------------------------------------
+ */
+
+#ifndef EXTENSION_API_HOOKS_H
+#define EXTENSION_API_HOOKS_H
+
+#include <access/amapi.h>
+#include <executor/spi.h>
+#include <utils/memutils.h>
+#include <nodes/execnodes.h>
+
+#include "api_hooks_common.h"
+#include "metadata/collection.h"
+
+
+/* Section: General Extension points */
+
+
+/*
+ * Returns true if the current Postgres server is a Query Coordinator
+ * that also owns the metadata management of schema (DDL).
+ */
+bool IsMetadataCoordinator(void);
+
+/*
+ * Returns true if the cluster is fully initialized and ready for
+ * background worker jobs. Defaults to true when no hook is set.
+ */
+bool IsClusterInitialized(void);
+
+
+/*
+ * Runs a command on the MetadataCoordinator if the current node is not a
+ * Metadata Coordinator. The response is returned as a "record" struct
+ * with the nodeId responding, whether or not the command succeeded and
+ * the response datum serialized as a string.
+ * If success, then this is the response datum in text format.
+ * If failed, then this contains the error string from the failure.
+ */
+DistributedRunCommandResult RunCommandOnMetadataCoordinator(const char *query);
+
+/*
+ * Runs a query via SPI with commutative writes on for distributed scenarios.
+ * Returns the Datum returned by the executed query.
+ */
+Datum RunQueryWithCommutativeWrites(const char *query, int nargs, Oid *argTypes,
+									Datum *argValues, char *argNulls,
+									int expectedSPIOK, bool *isNull);
+
+/*
+ * Runs a multi-value query via SPI with commutative writes enabled for
+ * distributed scenarios. The GUC is scoped to just this query execution
+ * and rolled back afterwards. Supports both prepared plans and ad-hoc queries.
+ * Pass plan as NULL to use SPI_execute_with_args with the query text.
+ *
+ * Precondition: Caller must have an active SPI connection (via SPI_connect).
+ * Results are available in SPI_processed/SPI_tuptable after this call returns.
+ */
+void RunMultiValueQueryWithCommutativeWrites(const char *query, SPIPlanPtr plan,
+											 int nargs, Oid *argTypes,
+											 Datum *argValues, char *argNulls,
+											 bool readOnly, long maxTupleCount);
+
+
+/*
+ * Sets up the system to allow nested distributed query execution for the current
+ * transaction scope.
+ * Note: This should be used very cautiously in any place where data correctness is
+ * required.
+ */
+void RunMultiValueQueryWithNestedDistribution(const char *query, int nargs, Oid *argTypes,
+											  Datum *argValues, char *argNulls, bool
+											  readOnly,
+											  int expectedSPIOK, Datum *datums,
+											  bool *isNull, int numValues);
+
+
+/*
+ * Sets up the system to allow sequential execution for commands the current
+ * transaction scope.
+ * Note: This should be used for DDL commands.
+ */
+Datum RunQueryWithSequentialModification(const char *query, int expectedSPIOK,
+										 bool *isNull);
+
+/*
+ * Whether or not the the base tables have sharding with distribution (true if DistributePostgresTable
+ * is run).
+ * the documents table name and the substring where the collectionId was found is provided as an input.
+ */
+bool IsShardTableForBlackboxDbTable(const char *relName, const char *numEndPointer);
+
+
+/* Section: Create Table Extension points */
+
+/*
+ * Distributes a given postgres table with the provided distribution column.
+ * Optionally supports colocating the distributed table with another distributed table.
+ * Returns the distribution column used (may be equal to the one passed on or NULL).
+ * shardCount: the number of shards or 0 if unspecified and sharded.
+ * For unsharded, specify 0.
+ */
+const char * DistributePostgresTable(const char *postgresTable, const
+									 char *distributionColumn,
+									 const char *colocateWith, int shardCount);
+
+
+/*
+ * Entrypoint to modify a list of column names for queries
+ * For a base RTE (table)
+ */
+List * ModifyTableColumnNames(List *tableColumns);
+
+/*
+ * Create users with external identity provider
+ */
+bool CreateUserWithExternalIdentityProvider(const char *userName, char *pgRole,
+											bson_value_t customData);
+
+/*
+ * Drop users with external identity provider
+ */
+bool DropUserWithExternalIdentityProvider(const char *userName);
+
+/*
+ * Verify if the user is external
+ */
+bool IsUserExternal(const char *userName);
+
+/*
+ * Get user info from external identity provider
+ */
+const pgbson * GetUserInfoFromExternalIdentityProvider(const char *userName);
+
+/*
+ * Default password validation implementation
+ * Returns true if password is valid, false otherwise
+ */
+bool IsPasswordValid(const char *username, const char *password);
+
+/*
+ * Default username validation implementation
+ * Returns true if username is valid, false otherwise
+ */
+bool IsUsernameValid(const char *username);
+
+/*
+ * Hook for handling colocation of tables
+ */
+void HandleColocation(MongoCollection *collection, const bson_value_t *colocationOptions);
+
+
+/*
+ * Mutate's listCollections query generation for distribution data.
+ * This is an optional hook and can manage listCollection to update shardCount
+ * and colocation information as required. Noops for single node.
+ */
+Query * MutateListCollectionsQueryForDistribution(Query *cosmosMetadataQuery);
+
+
+/*
+ * Hook wrapper for extended indexes result post-processing.
+ * Takes a base query that returns raw index data for extended indexes
+ * and transforms it to produce the desired output format.
+ * Returns NULL if no hook is registered.
+ */
+typedef struct AggregationPipelineBuildContext AggregationPipelineBuildContext;
+Query * RewriteListExtendedIndexesQuery(const bson_value_t *specValue, Query *query,
+										AggregationPipelineBuildContext *context);
+
+
+/*
+ * Mutates the shards query for handling distributed scenario.
+ */
+Query * MutateShardsQueryForDistribution(Query *metadataQuery);
+
+
+/*
+ * Mutates the chunks query for handling distributed scenario.
+ */
+Query * MutateChunksQueryForDistribution(Query *cosmosMetadataQuery);
+
+
+/*
+ * Given a table OID, if the table is not the actual physical shard holding the data (say in a
+ * distributed setup), tries to return the full shard name of the actual table if it can be found locally
+ * or NULL otherwise (e.g. for ApiDataSchema.documents_1 returns ApiDataSchema.documents_1_12341 or NULL, or "")
+ * NULL implies that the request can be tried again. "" implies that the shard cannot be resolved locally.
+ */
+const char * TryGetShardNameForUnshardedCollection(Oid relationOid, uint64 collectionId,
+												   const char *tableName,
+												   bool *isSingleShardTable);
+
+const char * GetDistributedApplicationName(void);
+
+
+/*
+ * This checks whether the current server version supports ntoreturn spec.
+ */
+bool IsNtoReturnSupported(void);
+
+
+/*
+ * Returns if the change stream feature is enabled.
+ */
+bool IsChangeStreamFeatureAvailableAndCompatible(void);
+
+/*
+ * Ensure the given metadata catalog table is replicated.
+ */
+bool EnsureMetadataTableReplicated(const char *tableName);
+
+/*
+ * The hook allows the extension to do any additional setup
+ * after the cluster has been initialized or upgraded.
+ */
+void PostSetupClusterHook(bool (shouldUpgradeFunc(void *, int, int,
+												  int)), void *state);
+
+
+/*
+ * Hook for customizing the validation of vector query spec.
+ */
+typedef struct VectorSearchOptions VectorSearchOptions;
+void TryCustomParseAndValidateVectorQuerySpec(const char *key,
+											  const bson_value_t *value,
+											  VectorSearchOptions *vectorSearchOptions);
+
+
+char * TryGetExtendedVersionRefreshQuery(void);
+char * TryGetExtendedInitializedVersionRefreshQuery(void);
+
+
+void AllowNestedDistributionInCurrentTransaction(void);
+
+void GetShardIdsAndNamesForCollection(Oid relationOid, const char *tableName,
+									  Datum **shardOidArray, Datum **shardNameArray,
+									  int32_t *shardCount);
+
+
+const char * GetPidForIndexBuild(void);
+
+
+const char * TryGetIndexBuildJobOpIdQuery(void);
+
+
+char * TryGetCancelIndexBuildQuery(int32_t indexId, char cmdType);
+
+
+bool ShouldScheduleIndexBuildJobs(void);
+
+List * GetShardIndexOids(uint64_t collectionId, Oid indexOid, bool ignoreMissing);
+
+void UpdatePostgresIndexWithOverride(uint64_t collectionId, int indexId, int operation,
+									 bool value,
+									 void (*default_update)(uint64_t, int, int, bool));
+
+const char * GetOperationCancellationQuery(int64 shardId, StringView *opIdStringView,
+										   int *nargs, Oid **argTypes, Datum **argValues,
+										   char **argNulls,
+										   const char *(*default_get_query)(int64,
+																			StringView *,
+																			int *nargs,
+																			Oid **argTypes,
+																			Datum **
+																			argValues,
+																			char **
+																			argNulls));
+
+bool ShouldUseCompositeOpClassByDefault(void);
+bool ShouldEnablePlannerStatisticsNewCollections(void);
+
+
+/*
+ * Create a TTL metrics context for collecting metrics during TTL purge.
+ * Returns an opaque context pointer, or NULL if no hook is set or metrics
+ * collection is disabled.
+ */
+void * CreateTtlMetricsContext(MemoryContext metricsMemoryContext,
+							   int numTtlIndexEntries);
+
+
+/*
+ * Record a single TTL metric entry after a batch delete.
+ * Passes individual metric values to the hook implementation for aggregation.
+ */
+void RecordTtlMetric(void *metricsContext,
+					 uint64 collectionId,
+					 uint64 indexId,
+					 uint64 shardId,
+					 const char *indexName,
+					 double saturationRatio,
+					 double batchDeleteElapsedTimeMs,
+					 uint64 rowsDeleted);
+
+
+/*
+ * Finalize and emit TTL metrics, then clean up the metrics context.
+ * Called after the TTL purge loop completes to aggregate, emit, and free resources.
+ */
+void FinalizeTtlMetrics(void *metricsContext);
+
+
+/*
+ * Update statistics for a single extended index type.
+ * Passes already-available index metadata to avoid redundant catalog lookups.
+ * No-op if no hook is registered.
+ */
+void UpdateExtendedIndexStats(uint64 collectionId, int indexId,
+							  const char *pgIndexName, IndexInfo *indexInfo);
+
+#endif

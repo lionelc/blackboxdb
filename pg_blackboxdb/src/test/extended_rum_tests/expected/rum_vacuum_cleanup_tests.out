@@ -1,0 +1,480 @@
+SET search_path TO blackboxdb_api_catalog, blackboxdb_core, public;
+SET blackboxdb.next_collection_id TO 400;
+SET blackboxdb.next_collection_index_id TO 400;
+set blackboxdb_rum.enable_new_bulk_delete to off;
+set blackboxdb_rum.prune_rum_empty_pages to off;
+\i sql/rum_vacuum_cleanup_tests_core.sql
+SELECT name, setting, reset_val, boot_val FROM pg_settings WHERE name in ('blackboxdb_rum.track_incomplete_split', 'blackboxdb_rum.fix_incomplete_split');
+                 name                  | setting | reset_val | boot_val 
+---------------------------------------+---------+-----------+----------
+ blackboxdb_rum.fix_incomplete_split   | on      | on        | on
+ blackboxdb_rum.track_incomplete_split | on      | on        | on
+(2 rows)
+
+SELECT blackboxdb_api.drop_collection('pvacuum_db', 'pclean');
+ drop_collection 
+-----------------
+ f
+(1 row)
+
+SELECT blackboxdb_api.create_collection('pvacuum_db', 'pclean');
+psql:sql/rum_vacuum_cleanup_tests_core.sql:5: NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SELECT collection_id AS vacuum_col FROM blackboxdb_api_catalog.collections WHERE database_name = 'pvacuum_db' AND collection_name = 'pclean' \gset
+-- disable autovacuum to have predicatability
+SELECT FORMAT('ALTER TABLE blackboxdb_data.documents_%s set (autovacuum_enabled = off, toast.autovacuum_enabled = off, vacuum_index_cleanup = on, toast.vacuum_index_cleanup = on)', :vacuum_col) \gexec
+ALTER TABLE blackboxdb_data.documents_401 set (autovacuum_enabled = off, toast.autovacuum_enabled = off, vacuum_index_cleanup = on, toast.vacuum_index_cleanup = on)
+SELECT COUNT(blackboxdb_api.insert_one('pvacuum_db', 'pclean',  FORMAT('{ "_id": %s, "a": %s }', i, i)::bson)) FROM generate_series(1, 1000) AS i;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently(
+    'pvacuum_db',
+    '{ "createIndexes": "pclean", "indexes": [ { "key": { "a": 1 }, "name": "a_1", "enableCompositeTerm": true } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT index_id AS vacuum_index_id FROM blackboxdb_api_catalog.collection_indexes WHERE collection_id = :vacuum_col AND index_id != :vacuum_col \gset
+-- use the index - 
+set blackboxdb.enableExtendedExplainPlans to on;
+set blackboxdb.forceDisableSeqScan to on;
+SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pvacuum_db', '{ "count": "pclean", "query": { "a": { "$exists": true } } }') $cmd$);
+                                run_explain_and_trim                                 
+-------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=1000 loops=1)
+         namespaceName: pvacuum_db.pclean
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [MinKey, MaxKey]]
+         innerScanLoops: 1000 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1000)]
+         ->  Bitmap Heap Scan on documents_401 collection (actual rows=1000 loops=1)
+               Recheck Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+               Heap Blocks: exact=10
+               ->  Bitmap Index Scan on a_1 (actual rows=1000 loops=1)
+                     Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+(15 rows)
+
+-- drop all the rows now
+reset blackboxdb.forceDisableSeqScan;
+SELECT blackboxdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ { "q": { "_id": { "$gte": 10 } }, "limit": 0 } ]}');
+                                          delete                                          
+------------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""991"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL blackboxdb_test_helpers.wait_for_vacuum_horizon();
+set blackboxdb.forceDisableSeqScan to on;
+-- query again (should return 10 rows with 1000 loops)
+SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pvacuum_db', '{ "count": "pclean", "query": { "a": { "$exists": true } } }') $cmd$);
+                                run_explain_and_trim                                
+------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=9 loops=1)
+         namespaceName: pvacuum_db.pclean
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [MinKey, MaxKey]]
+         innerScanLoops: 1000 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 1000)]
+         ->  Bitmap Heap Scan on documents_401 collection (actual rows=9 loops=1)
+               Recheck Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+               Heap Blocks: exact=10
+               ->  Bitmap Index Scan on a_1 (actual rows=1000 loops=1)
+                     Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+(15 rows)
+
+-- vacuum the collection
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) blackboxdb_data.documents_%s;', :vacuum_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) blackboxdb_data.documents_401;
+-- query again (should return 10 rows but still with 1000 loops since we don't clean entries).
+SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pvacuum_db', '{ "count": "pclean", "query": { "a": { "$exists": true } } }') $cmd$);
+                                   run_explain_and_trim                                    
+-------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=9 loops=1)
+         namespaceName: pvacuum_db.pclean
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [MinKey, MaxKey]]
+         innerScanLoops: 15 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 9)]
+         ->  Index Only Scan using a_1 on documents_401 collection (actual rows=9 loops=1)
+               Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+               Heap Fetches: 0
+(13 rows)
+
+reset blackboxdb.forceDisableSeqScan;
+SELECT COUNT(blackboxdb_api.insert_one('pvacuum_db', 'pclean',  FORMAT('{ "_id": %s, "a": %s }', i, i)::bson)) FROM generate_series(1001, 2000) AS i;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT blackboxdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ { "q": { "_id": { "$gte": 1010 } }, "limit": 0 } ]}');
+                                          delete                                          
+------------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""991"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL blackboxdb_test_helpers.wait_for_vacuum_horizon();
+set blackboxdb.forceDisableSeqScan to on;
+-- now set the guc to clean the entries
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) blackboxdb_data.documents_%s;', :vacuum_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) blackboxdb_data.documents_401;
+SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pvacuum_db', '{ "count": "pclean", "query": { "a": { "$exists": true } } }') $cmd$);
+                                    run_explain_and_trim                                    
+--------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=18 loops=1)
+         namespaceName: pvacuum_db.pclean
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [MinKey, MaxKey]]
+         innerScanLoops: 29 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 18)]
+         ->  Index Only Scan using a_1 on documents_401 collection (actual rows=18 loops=1)
+               Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+               Heap Fetches: 0
+(13 rows)
+
+-- repeat one more time
+reset blackboxdb.forceDisableSeqScan;
+SELECT COUNT(blackboxdb_api.insert_one('pvacuum_db', 'pclean',  FORMAT('{ "_id": %s, "a": %s }', i, i)::bson)) FROM generate_series(2001, 3000) AS i;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT blackboxdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ { "q": { "_id": { "$gte": 2010 } }, "limit": 0 } ]}');
+                                          delete                                          
+------------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""991"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL blackboxdb_test_helpers.wait_for_vacuum_horizon();
+set blackboxdb.forceDisableSeqScan to on;
+-- now set the guc to clean the entries
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) blackboxdb_data.documents_%s;', :vacuum_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) blackboxdb_data.documents_401;
+SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pvacuum_db', '{ "count": "pclean", "query": { "a": { "$exists": true } } }') $cmd$);
+                                    run_explain_and_trim                                    
+--------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=27 loops=1)
+         namespaceName: pvacuum_db.pclean
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [MinKey, MaxKey]]
+         innerScanLoops: 43 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 27)]
+         ->  Index Only Scan using a_1 on documents_401 collection (actual rows=27 loops=1)
+               Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+               Heap Fetches: 0
+(13 rows)
+
+reset blackboxdb.forceDisableSeqScan;
+-- insert some entries to create posting trees.
+SELECT COUNT(blackboxdb_api.insert_one('pvacuum_db', 'pclean',  FORMAT('{ "_id": -%s, "a": 500 }', i)::bson)) FROM generate_series(1, 3000) AS i;
+ count 
+-------
+  3000
+(1 row)
+
+-- now delete everything includig posting tree entries.
+SELECT blackboxdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ { "q": { "_id": { "$lt": 2000 } }, "limit": 0 } ]}');
+                                          delete                                           
+-------------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""3018"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL blackboxdb_test_helpers.wait_for_vacuum_horizon();
+set blackboxdb.forceDisableSeqScan to on;
+SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pvacuum_db', '{ "count": "pclean", "query": { "a": { "$exists": true } } }') $cmd$);
+                                run_explain_and_trim                                
+------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=9 loops=1)
+         namespaceName: pvacuum_db.pclean
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [MinKey, MaxKey]]
+         innerScanLoops: 44 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3027)]
+         ->  Bitmap Heap Scan on documents_401 collection (actual rows=9 loops=1)
+               Recheck Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+               Heap Blocks: exact=29
+               ->  Bitmap Index Scan on a_1 (actual rows=3027 loops=1)
+                     Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+(15 rows)
+
+-- now set the guc to clean up entry pages
+set blackboxdb_rum.prune_rum_empty_pages to on;
+set client_min_messages to DEBUG1;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) blackboxdb_data.documents_%s;', :vacuum_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) blackboxdb_data.documents_401;
+psql:sql/rum_vacuum_cleanup_tests_core.sql:86: DEBUG:  [RUM] Vacuum posting tree void pages 0, deleted pages 0
+psql:sql/rum_vacuum_cleanup_tests_core.sql:86: LOG:  Vacuum[index=xxx,vacuumCleanup=0] emptyEntryPages=15, emptyEntries=34, emptyPostingTrees=1, prunedEntries=18, prunedPages=13,prunedPostingTrees=1, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=0, numEntryPages=0, numDataPages=0, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0
+psql:sql/rum_vacuum_cleanup_tests_core.sql:86: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=1, numBacktracks=0, isNewBulkDelete=0, numEntryPages=17, numDataPages=0, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0
+reset client_min_messages;
+-- delete one more row to ensure vacuum has a chance to clean up
+reset blackboxdb.forceDisableSeqScan;
+SELECT blackboxdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ { "q": { "_id": { "$lte": 2000 } }, "limit": 0 } ]}');
+                                         delete                                         
+----------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""0"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL blackboxdb_test_helpers.wait_for_vacuum_horizon();
+set client_min_messages to DEBUG1;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) blackboxdb_data.documents_%s;', :vacuum_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) blackboxdb_data.documents_401;
+psql:sql/rum_vacuum_cleanup_tests_core.sql:96: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=0, numBacktracks=0, isNewBulkDelete=0, numEntryPages=4, numDataPages=0, numVoidPages=14, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0
+reset client_min_messages;
+set blackboxdb.forceDisableSeqScan to on;
+SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pvacuum_db', '{ "count": "pclean", "query": { "a": { "$exists": true } } }') $cmd$);
+                                   run_explain_and_trim                                    
+-------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=9 loops=1)
+         namespaceName: pvacuum_db.pclean
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [MinKey, MaxKey]]
+         innerScanLoops: 12 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 9)]
+         ->  Index Only Scan using a_1 on documents_401 collection (actual rows=9 loops=1)
+               Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+               Heap Fetches: 0
+(13 rows)
+
+-- introduce dead pages and use the repair functions to clean up the index.
+reset blackboxdb.forceDisableSeqScan;
+SELECT FORMAT('TRUNCATE blackboxdb_data.documents_%s;', :vacuum_col) \gexec
+TRUNCATE blackboxdb_data.documents_401;
+-- insert 3000 docs
+SELECT COUNT(blackboxdb_api.insert_one('pvacuum_db', 'pclean',  FORMAT('{ "_id": %s, "a": %s }', i, i)::bson)) FROM generate_series(1, 3000) AS i;
+ count 
+-------
+  3000
+(1 row)
+
+set blackboxdb.forceDisableSeqScan to on;
+SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pvacuum_db', '{ "count": "pclean", "query": { "a": { "$exists": true } } }') $cmd$);
+                                run_explain_and_trim                                 
+-------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=3000 loops=1)
+         namespaceName: pvacuum_db.pclean
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [MinKey, MaxKey]]
+         innerScanLoops: 3000 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3000)]
+         ->  Bitmap Heap Scan on documents_401 collection (actual rows=3000 loops=1)
+               Recheck Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+               Heap Blocks: exact=29
+               ->  Bitmap Index Scan on a_1 (actual rows=3000 loops=1)
+                     Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+(15 rows)
+
+reset blackboxdb.forceDisableSeqScan;
+-- delete 3000 docs
+set blackboxdb_rum.prune_rum_empty_pages to off;
+SELECT blackboxdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ { "q": { "_id": { "$exists": true } }, "limit": 0 } ]}');
+                                          delete                                           
+-------------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""3000"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL blackboxdb_test_helpers.wait_for_vacuum_horizon();
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) blackboxdb_data.documents_%s;', :vacuum_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) blackboxdb_data.documents_401;
+-- we should have a lot of empty pages
+set blackboxdb.forceDisableSeqScan to on;
+SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pvacuum_db', '{ "count": "pclean", "query": { "a": { "$exists": true } } }') $cmd$);
+                                   run_explain_and_trim                                    
+-------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=0 loops=1)
+         namespaceName: pvacuum_db.pclean
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [MinKey, MaxKey]]
+         innerScanLoops: 20 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
+         ->  Index Only Scan using a_1 on documents_401 collection (actual rows=0 loops=1)
+               Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+               Heap Fetches: 0
+(13 rows)
+
+reset blackboxdb.forceDisableSeqScan;
+-- call the repair function.
+SELECT blackboxdb_api_internal.rum_prune_empty_entries_on_index(('blackboxdb_data.documents_rum_index_' || :vacuum_index_id)::regclass);
+psql:sql/rum_vacuum_cleanup_tests_core.sql:127: INFO:  Vacuum found 20 empty pages, 20 empty entries, 0 pruned entries, 0 pruned pages, 0 pruned posting trees
+ rum_prune_empty_entries_on_index 
+----------------------------------
+ 
+(1 row)
+
+-- should have fewer entries due to pruning.
+set blackboxdb.forceDisableSeqScan to on;
+SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pvacuum_db', '{ "count": "pclean", "query": { "a": { "$exists": true } } }') $cmd$);
+                                   run_explain_and_trim                                    
+-------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=0 loops=1)
+         namespaceName: pvacuum_db.pclean
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [MinKey, MaxKey]]
+         innerScanLoops: 20 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
+         ->  Index Only Scan using a_1 on documents_401 collection (actual rows=0 loops=1)
+               Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+               Heap Fetches: 0
+(13 rows)
+
+reset blackboxdb.forceDisableSeqScan;
+set blackboxdb_rum.prune_rum_empty_pages to on;
+SELECT blackboxdb_api_internal.rum_prune_empty_entries_on_index(('blackboxdb_data.documents_rum_index_' || :vacuum_index_id)::regclass);
+psql:sql/rum_vacuum_cleanup_tests_core.sql:135: INFO:  Vacuum found 20 empty pages, 20 empty entries, 0 pruned entries, 18 pruned pages, 0 pruned posting trees
+ rum_prune_empty_entries_on_index 
+----------------------------------
+ 
+(1 row)
+
+set blackboxdb.forceDisableSeqScan to on;
+SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$ EXPLAIN (COSTS OFF, ANALYZE ON, VERBOSE OFF, BUFFERS OFF, SUMMARY OFF, TIMING OFF) SELECT document FROM bson_aggregation_count('pvacuum_db', '{ "count": "pclean", "query": { "a": { "$exists": true } } }') $cmd$);
+                                   run_explain_and_trim                                    
+-------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=0 loops=1)
+         namespaceName: pvacuum_db.pclean
+         indexName: a_1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": [MinKey, MaxKey]]
+         innerScanLoops: 2 loops
+         scanType: ordered
+         scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 0)]
+         ->  Index Only Scan using a_1 on documents_401 collection (actual rows=0 loops=1)
+               Index Cond: (document @>= '{ "a" : { "$minKey" : 1 } }'::bson)
+               Heap Fetches: 0
+(13 rows)
+
+reset blackboxdb.forceDisableSeqScan;
+-- test multi-level posting tree cleanup
+SELECT FORMAT('TRUNCATE blackboxdb_data.documents_%s;', :vacuum_col) \gexec
+TRUNCATE blackboxdb_data.documents_401;
+-- insert some entries
+SELECT COUNT(blackboxdb_api.insert_one('pvacuum_db', 'pclean',  FORMAT('{ "_id": %s, "a": %s }', i, i)::bson)) FROM generate_series(1, 1000) AS i;
+ count 
+-------
+  1000
+(1 row)
+
+-- now insert entries that trigger a multi-level posting tree (allow only 50 entries per data page)
+set blackboxdb_rum.data_page_posting_tree_size = 3;
+SELECT COUNT(blackboxdb_api.insert_one('pvacuum_db', 'pclean',  FORMAT('{ "_id": -%s, "a": 500 }', i)::bson)) FROM generate_series(1, 15000) AS i;
+ count 
+-------
+ 15000
+(1 row)
+
+-- now assert that it produces a multi-level tree
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) blackboxdb_data.documents_%s;', :vacuum_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) blackboxdb_data.documents_401;
+SELECT blackboxdb_api_internal.blackboxdb_rum_get_meta_page_info(public.get_raw_page(('blackboxdb_data.documents_rum_index_' || :vacuum_index_id), 0));
+                                              blackboxdb_rum_get_meta_page_info                                              
+-----------------------------------------------------------------------------------------------------------------------------
+ {"entries": 1000, "dataPages": 14, "entryPages": 7, "totalPages": 22, "pendingHeapTuples": 0, "pendingHeapTuplesHex": null}
+(1 row)
+
+WITH r1 AS (SELECT i, blackboxdb_api_internal.blackboxdb_rum_page_get_stats(public.get_raw_page(('blackboxdb_data.documents_rum_index_' || :vacuum_index_id), i)) AS entry FROM generate_series(1, 21) i)
+SELECT * FROM r1 WHERE entry->>'flagsStr' LIKE '%DATA%' ORDER by (entry->>'flags')::int8, i ASC;
+ i  |                                                  entry                                                   
+----+----------------------------------------------------------------------------------------------------------
+  8 | {"flags": 1, "cycleId": 0, "flagsStr": "DATA", "leftLink": null, "nEntries": 4, "rightLink": null}
+ 14 | {"flags": 1, "cycleId": 0, "flagsStr": "DATA", "leftLink": 15, "nEntries": 2, "rightLink": 18}
+ 15 | {"flags": 1, "cycleId": 0, "flagsStr": "DATA", "leftLink": null, "nEntries": 2, "rightLink": 14}
+ 18 | {"flags": 1, "cycleId": 0, "flagsStr": "DATA", "leftLink": 14, "nEntries": 2, "rightLink": 21}
+ 21 | {"flags": 1, "cycleId": 0, "flagsStr": "DATA", "leftLink": 18, "nEntries": 3, "rightLink": null}
+  9 | {"flags": 3, "cycleId": 0, "flagsStr": "LEAF|DATA", "leftLink": 10, "nEntries": 1521, "rightLink": 11}
+ 10 | {"flags": 3, "cycleId": 0, "flagsStr": "LEAF|DATA", "leftLink": null, "nEntries": 1530, "rightLink": 9}
+ 11 | {"flags": 3, "cycleId": 0, "flagsStr": "LEAF|DATA", "leftLink": 9, "nEntries": 1525, "rightLink": 12}
+ 12 | {"flags": 3, "cycleId": 0, "flagsStr": "LEAF|DATA", "leftLink": 11, "nEntries": 1533, "rightLink": 13}
+ 13 | {"flags": 3, "cycleId": 0, "flagsStr": "LEAF|DATA", "leftLink": 12, "nEntries": 1527, "rightLink": 16}
+ 16 | {"flags": 3, "cycleId": 0, "flagsStr": "LEAF|DATA", "leftLink": 13, "nEntries": 1522, "rightLink": 17}
+ 17 | {"flags": 3, "cycleId": 0, "flagsStr": "LEAF|DATA", "leftLink": 16, "nEntries": 1529, "rightLink": 19}
+ 19 | {"flags": 3, "cycleId": 0, "flagsStr": "LEAF|DATA", "leftLink": 17, "nEntries": 1533, "rightLink": 20}
+ 20 | {"flags": 3, "cycleId": 0, "flagsStr": "LEAF|DATA", "leftLink": 19, "nEntries": 2781, "rightLink": null}
+(14 rows)
+
+-- now delete everything.
+SELECT blackboxdb_api.delete('pvacuum_db', '{ "delete": "pclean", "deletes": [ { "q": { "_id": { "$exists": true } }, "limit": 0 } ]}');
+                                           delete                                           
+--------------------------------------------------------------------------------------------
+ ("{ ""n"" : { ""$numberInt"" : ""16000"" }, ""ok"" : { ""$numberDouble"" : ""1.0"" } }",t)
+(1 row)
+
+-- wait for the xmin horizon to advance past the DELETE so VACUUM is guaranteed
+-- to consider the deleted tuples fully dead and run ambulkdelete
+CALL blackboxdb_test_helpers.wait_for_vacuum_horizon();
+set client_min_messages to LOG;
+SELECT FORMAT('VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) blackboxdb_data.documents_%s;', :vacuum_col) \gexec
+VACUUM (FREEZE ON, INDEX_CLEANUP ON, DISABLE_PAGE_SKIPPING ON, PARALLEL 0) blackboxdb_data.documents_401;
+psql:sql/rum_vacuum_cleanup_tests_core.sql:164: LOG:  Vacuum[index=xxx,vacuumCleanup=0] emptyEntryPages=6, emptyEntries=999, emptyPostingTrees=1, prunedEntries=993, prunedPages=3,prunedPostingTrees=0, postingPagesDeleted=9, emptyPostingPages=9, numBacktracks=0, isNewBulkDelete=0, numEntryPages=0, numDataPages=0, numVoidPages=0, fullScanPostingTreePrunes=1, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0
+psql:sql/rum_vacuum_cleanup_tests_core.sql:164: LOG:  Vacuum[index=xxx,vacuumCleanup=1] emptyEntryPages=0, emptyEntries=0, emptyPostingTrees=0, prunedEntries=0, prunedPages=0,prunedPostingTrees=0, postingPagesDeleted=0, emptyPostingPages=9, numBacktracks=0, isNewBulkDelete=0, numEntryPages=7, numDataPages=5, numVoidPages=0, fullScanPostingTreePrunes=0, targetedPostingTreePrunes=0, singlePassPostingTreePrunes=0
+WITH r1 AS (SELECT i, blackboxdb_api_internal.blackboxdb_rum_page_get_stats(public.get_raw_page(('blackboxdb_data.documents_rum_index_' || :vacuum_index_id), i)) AS entry FROM generate_series(1, 21) i)
+SELECT * FROM r1 WHERE entry->>'flagsStr' LIKE '%DATA%' ORDER by (entry->>'flags')::int8, i ASC;
+ i  |                                                 entry                                                 
+----+-------------------------------------------------------------------------------------------------------
+  8 | {"flags": 1, "cycleId": 0, "flagsStr": "DATA", "leftLink": null, "nEntries": 2, "rightLink": null}
+ 15 | {"flags": 1, "cycleId": 0, "flagsStr": "DATA", "leftLink": null, "nEntries": 1, "rightLink": 21}
+ 21 | {"flags": 1, "cycleId": 0, "flagsStr": "DATA", "leftLink": 15, "nEntries": 1, "rightLink": null}
+ 10 | {"flags": 3, "cycleId": 0, "flagsStr": "LEAF|DATA", "leftLink": null, "nEntries": 0, "rightLink": 20}
+ 20 | {"flags": 3, "cycleId": 0, "flagsStr": "LEAF|DATA", "leftLink": 10, "nEntries": 0, "rightLink": null}
+(5 rows)
+

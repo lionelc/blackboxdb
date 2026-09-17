@@ -1,0 +1,2736 @@
+/*-------------------------------------------------------------------------
+ * Copyright (c) Anonymous.  All rights reserved.
+ *
+ * src/commands/create_indexes_background.c
+ *
+ * Implementation of the create index / reindex operation in background.
+ *
+ *-------------------------------------------------------------------------
+ */
+#include <postgres.h>
+#include <fmgr.h>
+#include <funcapi.h>
+#include <math.h>
+#include <miscadmin.h>
+#include <access/xact.h>
+#include <catalog/dependency.h>
+#include <catalog/namespace.h>
+#include <executor/executor.h>
+#include <executor/spi.h>
+#include <lib/stringinfo.h>
+#include <nodes/makefuncs.h>
+#include <nodes/nodeFuncs.h>
+#include <optimizer/optimizer.h>
+#include <storage/lmgr.h>
+#include <storage/lockdefs.h>
+#include <storage/proc.h>
+#include <tcop/pquery.h>
+#include <tcop/utility.h>
+#include <utils/builtins.h>
+#include <utils/lsyscache.h>
+#include <utils/ruleutils.h>
+#include <utils/snapmgr.h>
+#include <utils/syscache.h>
+#include "utils/backend_status.h"
+#include "catalog/pg_authid.h"
+#include "commands/defrem.h"
+
+#include "api_hooks.h"
+#include "api_hooks_def.h"
+#include "io/bson_core.h"
+#include "aggregation/bson_projection_tree.h"
+#include "commands/commands_common.h"
+#include "commands/create_indexes.h"
+#include "commands/diagnostic_commands_common.h"
+#include "commands/drop_indexes.h"
+#include "commands/lock_tags.h"
+#include "utils/blackboxdb_errors.h"
+#include "commands/parse_error.h"
+#include "geospatial/bson_geospatial_common.h"
+#include "infrastructure/job_management.h"
+#include "metadata/collection.h"
+#include "metadata/metadata_cache.h"
+#include "metadata/index.h"
+#include "planner/mongo_query_operator.h"
+#include "query/query_operator.h"
+#include "utils/error_utils.h"
+#include "utils/guc_utils.h"
+#include "utils/list_utils.h"
+#include "utils/query_utils.h"
+#include "utils/feature_counter.h"
+#include "utils/index_utils.h"
+#include "utils/version_utils.h"
+#include "utils/query_utils.h"
+#include "vector/vector_utilities.h"
+#include "index_am/index_am_utils.h"
+#include "commands/coll_mod.h"
+#include "query/bson_compare.h"
+
+#define FinishKey "finish"
+#define FinishKeyLength 6
+
+
+/*
+ * Contains the data used when waiting for background create index to finish.
+ */
+typedef struct
+{
+	/* All requested indexes have now been successfully processed */
+	bool finish;
+
+	/* At-least one create index request failed */
+	bool ok;
+
+	/* error reporting; valid only when "ok" is false */
+	char *errmsg;
+	int errcode;
+} BuildIndexesResult;
+
+
+/* Skippable errors, to skip retry by index build background */
+typedef struct
+{
+	int errCode;
+	char *errMsg;
+} SkippableError;
+
+/*
+ * Private enum tracking status of the index build run (each loop
+ * of the index build store procedure).
+ */
+typedef enum BackgroundIndexRunStatus
+{
+	/* The current loop pruned skippable indexes */
+	RunStatus_PrunedSkippableIndexes = 1,
+
+	/* No valid indexes were found in the current loop */
+	RunStatus_NoValidIndexFound = 2,
+
+	/* An index was marked as skippable (failed permanently) */
+	RunStatus_IndexMarkedSkippable = 3,
+
+	/* An index build was done in the current loop */
+	RunStatus_IndexBuildDone = 4,
+} BackgroundIndexRunStatus;
+
+bool ShouldSetupIndexQueueInUdf = true;
+extern int MaxIndexBuildAttempts;
+extern int IndexQueueEvictionIntervalInSec;
+extern bool EnableDropInvalidIndexesOnReadOnly;
+
+extern bool SkipIndexCleanupOnFailure;
+extern bool SkipIndexCleanupOnReindex;
+extern bool EnableUniqueReindex;
+
+/*
+ * IndexBuildFailurePoint: test-only GUC to inject failures at specific points
+ * during index background build and reindex post-processing.
+ * 0 = no injection (default). Each value maps to a distinct failure point:
+ *   1 = Before registering exclusion constraint (prepareUnique) in background unique build
+ *   2 = After registering constraint, before table walk in background unique build
+ *   3 = After table walk completes in background unique build
+ *   4 = Before registering exclusion constraint (prepareUnique) during reindex
+ *   5 = After prepareUnique, before first rename during reindex
+ *   6 = After first rename (base→old), before second rename (ccnew→base) during reindex
+ *   7 = After physical index build, before post-processing begins
+ *   8 = After constraint commit, before table walk in background unique build
+ *   9 = Before marking index as valid in background unique build
+ */
+extern int IndexBuildFailurePoint;
+
+
+/* Do not retry the index build if error code belongs to following list. */
+static const SkippableError SkippableErrors[] = {
+	{ 16908482 /* Postgres ERRCODE_EXCLUSION_VIOLATION */, NULL },
+	{ ERRCODE_BLACKBOXDB_DUPLICATEKEY /* Postgres ERRCODE_BLACKBOXDB_DUPLICATEKEY */,
+	  NULL },
+	{ 261 /* ERRCODE_PROGRAM_LIMIT_EXCEEDED */, "column cannot have more than " }, /* max dimension for hnsw and ivf */
+	{ 261 /* ERRCODE_PROGRAM_LIMIT_EXCEEDED */, "vector cannot have more than " }, /* VECTOR_MAX_DIM in pgvector */
+	{ 2600, "vector dimension cannot be larger than " }, /* max dimension for diskann */
+	{ ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE, "is out of range for type halfvec" },
+	{ 261 /* Postgres ERRCODE_PROGRAM_LIMIT_EXCEEDED */, "index row size " },
+	{ 261 /* ERRCODE_PROGRAM_LIMIT_EXCEEDED */, "memory required is " },
+	{ ERRCODE_BLACKBOXDB_CANNOTCREATEINDEX, "unsupported language: " },
+	{ 687882611, "Can't extract geo keys" }
+};
+static const int NumberOfSkippableErrors = sizeof(SkippableErrors) /
+										   sizeof(SkippableError);
+
+/* for background Index build */
+PG_FUNCTION_INFO_V1(command_build_index_concurrently);
+PG_FUNCTION_INFO_V1(command_reindex_index_background);
+PG_FUNCTION_INFO_V1(command_reindex_index_background_internal);
+PG_FUNCTION_INFO_V1(command_create_indexes_background);
+PG_FUNCTION_INFO_V1(command_create_indexes_background_internal);
+PG_FUNCTION_INFO_V1(command_check_build_index_status);
+PG_FUNCTION_INFO_V1(command_check_build_index_status_internal);
+PG_FUNCTION_INFO_V1(schedule_background_index_build_jobs);
+PG_FUNCTION_INFO_V1(command_build_index_background);
+PG_FUNCTION_INFO_V1(setup_index_queue_table);
+
+static pgbson * RunIndexCommandOnMetadataCoordinator(const char *query, int
+													 expectedSpiOk);
+static IndexJobOpId * GetIndexBuildJobOpId(void);
+static void MarkIndexAsValid(int indexId);
+static bool IsSkippableError(int targetErrorCode, char *errMsg);
+static LockAcquireResult AcquireAdvisoryExclusiveSessionLockForCreateIndexBackground(
+	uint64 collectionId);
+static void ReleaseAdvisoryExclusiveSessionLockForCreateIndexBackground(uint64
+																		collectionId);
+static LOCKTAG CreateLockTagAdvisoryForCreateIndexBackground(uint64 collectionId);
+
+static BuildIndexesResult * CheckForIndexCmdToFinish(const List *indexIdList, char
+													 cmdType);
+static void ParseErrorCommentFromQueue(pgbson *comment, BuildIndexesResult *result);
+static int IndexIdListGetValidCount(const List *indexIdList);
+static pgbson * MakeBuildIndexesMsg(BuildIndexesResult *result);
+
+static Datum ComposeBuildIndexResponse(FunctionCallInfo fcinfo, pgbson *buildIndexBson,
+									   pgbson *requestDetailBson, bool ok);
+static Datum ComposeCheckIndexStatusResponse(FunctionCallInfo fcinfo, pgbson *bson, bool
+											 ok, bool finish);
+static void TryDropCollectionIndex(int indexId, bool isReindex);
+static void TryDropCollectionIndexFromIndexDetails(IndexDetails *indexDetails, bool
+												   isReindex);
+static void TryDropReindexedCollectionIndex(IndexDetails *indexDetails);
+static bool PruneSkippableIndexes(MemoryContext mcxt);
+static BackgroundIndexRunStatus build_index_concurrently_from_indexqueue_core(
+	MemoryContext stableContext);
+static Datum build_index_background_core(PG_FUNCTION_ARGS);
+static void PostProcessIndexForReIndex(int64 collectionId, IndexDetails *details, bool
+									   isReindexViaCreate);
+static void PostProcessIndexForCreateUnique(int64 collectionId, IndexDetails *details);
+static bool IndexSpecsAreEquivalentForUniqueness(const IndexSpec *leftIndexSpec,
+												 const IndexSpec *rightIndexSpec);
+
+
+/*
+ * command_build_index_concurrently is the implementation of the internal logic
+ * where we create index concurrently.
+ */
+Datum
+command_build_index_concurrently(PG_FUNCTION_ARGS)
+{
+	return build_index_background_core(fcinfo);
+}
+
+
+/*
+ * Drop-in replacement for build_index_concurrently. This will be called periodically by the
+ * background worker framework and will coexist with the previous UDF until it reaches
+ * stability.
+ */
+Datum
+command_build_index_background(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_VOID();
+}
+
+
+/*
+ * Core logic for building indexes in background.
+ * Called by a job that is scheduled via either:
+ *  a) pg_cron
+ *  b) background worker
+ */
+static Datum
+build_index_background_core(PG_FUNCTION_ARGS)
+{
+	if (!IsMetadataCoordinator())
+	{
+		PG_RETURN_VOID();
+	}
+
+	/* Before starting, ensure that tables are replicated
+	 * If this action did replicate tables, try again in the
+	 * next loop to ensure the transaction is committed.
+	 */
+	if (EnsureMetadataTableReplicated("collections"))
+	{
+		ereport(LOG, (errmsg(
+						  "Metadata tables were replicated. Retrying index checks in another round.")));
+		PG_RETURN_VOID();
+	}
+
+	BackgroundIndexRunStatus runStatus = RunStatus_NoValidIndexFound;
+	MemoryContext createContext = AllocSetContextCreate(fcinfo->flinfo->fn_mcxt,
+														"Create Index Child context",
+														ALLOCSET_DEFAULT_SIZES);
+	do {
+		runStatus = build_index_concurrently_from_indexqueue_core(createContext);
+
+		/* Commit and start before doing another round */
+		PopAllActiveSnapshots();
+		CommitTransactionCommand();
+		StartTransactionCommand();
+		MemoryContextReset(createContext);
+	} while (runStatus == RunStatus_IndexBuildDone);
+
+	/* Clean up the memory context. */
+	MemoryContextDelete(createContext);
+	PG_RETURN_VOID();
+}
+
+
+/*
+ * TryCleanupRequestFromQueue - Removes a stale or already-completed index build
+ * request from the queue and optionally cleans up the underlying index artifacts.
+ *
+ * Do NOT use this for failed builds that have exhausted retries — those should be
+ * marked as Skippable (status=4) via MarkIndexRequestStatus so that
+ * check_build_index_status can report the failure to the caller before eviction.
+ */
+static void
+TryCleanupRequestFromQueue(IndexCmdRequest *request, bool skipIndexCleanup)
+{
+	if (request->cmdType == CREATE_INDEX_COMMAND_TYPE)
+	{
+		if (!skipIndexCleanup)
+		{
+			bool isReindex = false;
+			TryDropCollectionIndex(request->indexId, isReindex);
+			DeleteCollectionIndexRecord(request->collectionId, request->indexId);
+		}
+
+		/* remove the request permanently */
+		RemoveRequestFromIndexQueue(request->indexId, request->cmdType);
+	}
+	else
+	{
+		RemoveRequestFromIndexQueue(request->indexId, request->cmdType);
+	}
+}
+
+
+static BackgroundIndexRunStatus
+build_index_concurrently_from_indexqueue_core(MemoryContext stableContext)
+{
+	/* Prioritize pruning the index queue for old indexes */
+	if (PruneSkippableIndexes(stableContext))
+	{
+		ereport(LOG, (errmsg(
+						  "Pruned skippable indexes. Retrying index checks in another round.")));
+		return RunStatus_PrunedSkippableIndexes;
+	}
+
+	List *excludeCollectionIds = NIL;
+	uint64 *collectionIds = GetCollectionIdsForIndexBuild(excludeCollectionIds);
+
+	volatile uint64_t collectionId = 0;
+	IndexCmdRequest *volatile indexCmdRequest = NULL;
+
+	while (collectionIds != NULL && collectionIds[0] != 0 && !indexCmdRequest)
+	{
+		/* iterate over collectionIds array */
+		for (int i = 0; i < MaxNumActiveUsersIndexBuilds; i++)
+		{
+			if (collectionIds[i] == 0)
+			{
+				break;
+			}
+			collectionId = collectionIds[i];
+			if (AcquireAdvisoryExclusiveSessionLockForCreateIndexBackground(
+					collectionId) != LOCKACQUIRE_NOT_AVAIL)
+			{
+				indexCmdRequest = GetRequestFromIndexQueue(collectionId, stableContext);
+				if (!indexCmdRequest)
+				{
+					/* Could not get any index requests for this collection, skip it for this round */
+					uint64 *collectionIdPtr = palloc(sizeof(uint64));
+					*collectionIdPtr = collectionId;
+					excludeCollectionIds = lappend(excludeCollectionIds, collectionIdPtr);
+
+					ereport(DEBUG1,
+							(errmsg("Excluded collectionId "UINT64_FORMAT, collectionId),
+							 errdetail_log("Excluded collectionId "UINT64_FORMAT,
+										   collectionId)));
+					ReleaseAdvisoryExclusiveSessionLockForCreateIndexBackground(
+						collectionId);
+					continue;
+				}
+				break;
+			}
+			else
+			{
+				uint64 *collectionIdPtr = palloc(sizeof(uint64));
+				*collectionIdPtr = collectionId;
+				excludeCollectionIds = lappend(excludeCollectionIds, collectionIdPtr);
+
+				ereport(DEBUG1,
+						(errmsg("Excluded collectionId "UINT64_FORMAT, collectionId),
+						 errdetail_log("Excluded collectionId "UINT64_FORMAT,
+									   collectionId)));
+			}
+		}
+
+		if (excludeCollectionIds == NIL)
+		{
+			break;
+		}
+
+		/* excluded collectionids so far */
+		collectionIds = GetCollectionIdsForIndexBuild(excludeCollectionIds);
+	}
+
+	if (!indexCmdRequest)
+	{
+		return RunStatus_NoValidIndexFound;
+	}
+
+	if (indexCmdRequest->attemptCount >= MaxIndexBuildAttempts)
+	{
+		/* mark the request as skipped (pruned at a later point) */
+		elog_unredacted("Max attempts reached for index_id: %d and collectionId: "
+						UINT64_FORMAT,
+						indexCmdRequest->indexId, collectionId);
+		MarkIndexRequestStatus(indexCmdRequest->indexId,
+							   indexCmdRequest->cmdType,
+							   IndexCmdStatus_Skippable, NULL, NULL,
+							   indexCmdRequest->attemptCount);
+
+		if (indexCmdRequest->cmdType == CREATE_INDEX_COMMAND_TYPE)
+		{
+			DeleteCollectionIndexRecord(indexCmdRequest->collectionId,
+										indexCmdRequest->indexId);
+		}
+
+		return RunStatus_IndexMarkedSkippable;
+	}
+
+	if (indexCmdRequest->status == IndexCmdStatus_Skippable)
+	{
+		TimestampTz nowTime = GetCurrentTimestamp();
+		if (TimestampDifferenceExceeds(indexCmdRequest->updateTime, nowTime,
+									   (IndexQueueEvictionIntervalInSec) * 1000))
+		{
+			elog_unredacted(
+				"Removing skippable request permanently index_id: %d and collectionId: "
+				UINT64_FORMAT,
+				indexCmdRequest->indexId, collectionId);
+
+			bool skipIndexCleanup = false;
+			TryCleanupRequestFromQueue(indexCmdRequest, skipIndexCleanup);
+		}
+		return RunStatus_PrunedSkippableIndexes;
+	}
+	elog_unredacted(
+		"Found one request for CreateIndex with index_id: %d and collectionId: "
+		UINT64_FORMAT,
+		indexCmdRequest->indexId, collectionId);
+
+	MemoryContext prevContext = MemoryContextSwitchTo(stableContext);
+	IndexDetails *indexDetails = IndexIdGetIndexDetailsWithCurrentTxns(
+		indexCmdRequest->indexId);
+	MemoryContextSwitchTo(prevContext);
+
+	if (indexDetails == NULL || (indexDetails->isIndexValid && indexCmdRequest->cmdType ==
+								 CREATE_INDEX_COMMAND_TYPE))
+	{
+		/* if the index is valid from our catalog should we could also confirm if it is ready from PG catalog
+		 * but we only mark indexes as valid if the index build for it succeeded. */
+		elog_unredacted(
+			"Index details not found or index already valid for index_id: %d and collectionId: "
+			UINT64_FORMAT " marking request as skippable",
+			indexCmdRequest->indexId, collectionId);
+
+		bool skipIndexCleanup = indexDetails != NULL && indexDetails->isIndexValid;
+		TryCleanupRequestFromQueue(indexCmdRequest, skipIndexCleanup);
+
+		return RunStatus_NoValidIndexFound;
+	}
+
+	/* Mark index inprogress. */
+	indexCmdRequest->attemptCount++;
+	MarkIndexRequestStatus(indexCmdRequest->indexId, indexCmdRequest->cmdType,
+						   IndexCmdStatus_Inprogress, PgbsonInitEmpty(),
+						   GetIndexBuildJobOpId(), indexCmdRequest->attemptCount);
+
+	StringInfo queryStringInfo = makeStringInfo();
+	appendStringInfo(queryStringInfo,
+					 "SELECT shard_key FROM %s.collections WHERE collection_id = %lu",
+					 ApiCatalogSchemaName, collectionId);
+	char *shardKeyStr = ExtensionExecuteQueryOnLocalhostViaLibPQ(queryStringInfo->data);
+	bool useSerialExecution = shardKeyStr == NULL || strlen(shardKeyStr) == 0;
+
+	/* In case of abrupt kill of the cron job running this, we may end up with the state as "InProgress" for index.
+	 * To handle such request, we are cleaning the partial index state first.
+	 */
+	if (indexCmdRequest->status == IndexCmdStatus_Inprogress)
+	{
+		elog_unredacted(
+			"Try dropping old index entry before CreateIndex for index_id: %d and collectionId: "
+			UINT64_FORMAT,
+			indexCmdRequest->indexId, collectionId);
+		bool isReindex = indexCmdRequest->cmdType == REINDEX_COMMAND_TYPE;
+		TryDropCollectionIndexFromIndexDetails(indexDetails, isReindex);
+	}
+
+	/* save the memory context before committing the transaction */
+	MemoryContext oldMemContext = CurrentMemoryContext;
+
+	/*
+	 * We commit the transaction to prevent concurrent index creation
+	 * getting blocked on that transaction due to any snapshots that
+	 * we might have grabbed so far. Also, changes done by above MarkIndexRequestStatus should reflect.
+	 */
+	PopAllActiveSnapshots();
+	CommitTransactionCommand();
+	StartTransactionCommand();
+
+	/* declared volatile because of the longjmp in PG_CATCH */
+	volatile bool indexCreated = false;
+	volatile char *volatile errorMessage = NULL;
+	volatile int errorCode = 0;
+	volatile ErrorData *edata = NULL;
+	PG_TRY();
+	{
+		char *cmd = indexCmdRequest->cmd;
+
+		/*
+		 * Tell other backends to ignore us, even if we grab any
+		 * snapshots later.
+		 */
+		set_indexsafe_procflags();
+
+		elog_unredacted(
+			"Trying to create index with serial %d for index_id: %d and collectionId: "
+			UINT64_FORMAT, useSerialExecution,
+			indexCmdRequest->indexId, collectionId);
+		bool concurrently = true;
+		ExecuteCreatePostgresIndexCmd(cmd, concurrently, indexCmdRequest->userOid,
+									  useSerialExecution);
+		indexCreated = true;
+	}
+	PG_CATCH();
+	{
+		/* save error info into right context */
+		MemoryContextSwitchTo(stableContext);
+		edata = CopyErrorDataAndFlush();
+		errorMessage = edata->message;
+		errorCode = edata->sqlerrcode;
+		MemoryContextSwitchTo(oldMemContext);
+
+		ereport(LOG, (errcode(errorCode), errmsg("couldn't create some of the (invalid) "
+												 "collection indexes: file %s, line %d, message_id: '%s'",
+												 edata->filename, edata->lineno,
+												 edata->message_id)));
+
+		/*
+		 * Couldn't complete creating invalid indexes, need to abort the
+		 * outer transaction itself to fire abort handler.
+		 */
+		PopAllActiveSnapshots();
+		AbortCurrentTransaction();
+		StartTransactionCommand();
+	}
+	PG_END_TRY();
+
+	/* declared volatile because of the longjmp in PG_CATCH */
+	volatile bool markedIndexAsValid = false;
+	volatile bool postProcessingAborted = false;
+	if (indexCreated)
+	{
+		/*
+		 * Post-process outside the subtransaction so that the constraint
+		 * registration can be committed (visible to other backends) before
+		 * the long-running table walk begins.
+		 */
+		MemoryContext volatile oldContext = CurrentMemoryContext;
+		ResourceOwner volatile oldOwner = CurrentResourceOwner;
+
+		PG_TRY();
+		{
+			/* Failure injection point 7: After physical index build, before post-processing */
+			if (IndexBuildFailurePoint == 7)
+			{
+				ereport(ERROR, (errmsg(
+									"Injected failure point 7: after physical index build, before post-processing "
+									"for index_id: %d collectionId: " UINT64_FORMAT,
+									indexCmdRequest->indexId, collectionId)));
+			}
+
+			/* Set the stats target for the index to 0 for unique indexes */
+			if (indexCmdRequest->cmdType == CREATE_INDEX_COMMAND_TYPE)
+			{
+				UpdateIndexStatsForPostgresIndex(indexCmdRequest->collectionId,
+												 list_make1_int(
+													 indexCmdRequest->indexId));
+			}
+
+			if (indexCmdRequest->cmdType == REINDEX_COMMAND_TYPE)
+			{
+				elog_unredacted(
+					"Trying to post process index during reindex for index_id: %d and collectionId: "
+					UINT64_FORMAT,
+					indexDetails->indexId, collectionId);
+				bool isReindexViaCreate = strstr(indexCmdRequest->cmd, "CREATE INDEX");
+				PostProcessIndexForReIndex(indexCmdRequest->collectionId,
+										   indexDetails, isReindexViaCreate);
+			}
+			else if (indexCmdRequest->cmdType == CREATE_INDEX_COMMAND_TYPE)
+			{
+				/*
+				 * PostProcessIndexForCreateUnique early-returns for non-unique indexes.
+				 */
+				PostProcessIndexForCreateUnique(indexCmdRequest->collectionId,
+												indexDetails);
+			}
+		}
+		PG_CATCH();
+		{
+			elog_unredacted(
+				"Failure happened during post-processing for index_id: %d and collectionId: "
+				UINT64_FORMAT,
+				indexCmdRequest->indexId, collectionId);
+
+			MemoryContextSwitchTo(stableContext);
+			edata = CopyErrorDataAndFlush();
+			errorCode = edata->sqlerrcode;
+			errorMessage = edata->message;
+			ereport(LOG, (errmsg("Failure in post-processing index %s",
+								 edata->message)));
+
+			MemoryContextSwitchTo(oldContext);
+			CurrentResourceOwner = oldOwner;
+
+			/*
+			 * Abort and restart so cleanup can proceed. Set flag to skip
+			 * the redundant abort in the cleanup block below.
+			 */
+			PopAllActiveSnapshots();
+			AbortCurrentTransaction();
+			StartTransactionCommand();
+			postProcessingAborted = true;
+		}
+		PG_END_TRY();
+
+		/*
+		 * Now try marking entries inserted for collection index as valid.
+		 *
+		 * Use a subtransaction so that we can automatically rollback the
+		 * changes made by MarkIndexAsValid and RemoveRequestFromIndexQueue
+		 * if something goes wrong.
+		 */
+		if (!postProcessingAborted)
+		{
+			oldContext = CurrentMemoryContext;
+			oldOwner = CurrentResourceOwner;
+
+			BeginInternalSubTransaction(NULL);
+
+			PG_TRY();
+			{
+				elog_unredacted(
+					"Trying to mark invalid index as valid and remove index build request from queue for index_id: %d and collectionId: "
+					UINT64_FORMAT,
+					indexCmdRequest->indexId, collectionId);
+
+				/* Failure injection point 9: Before marking index as valid */
+				if (IndexBuildFailurePoint == 9)
+				{
+					ereport(ERROR, (errmsg(
+										"Injected failure point 9: before marking index as valid "
+										"for index_id: %d collectionId: " UINT64_FORMAT,
+										indexCmdRequest->indexId, collectionId)));
+				}
+
+				/* For reindex, the index is already valid — skip the redundant update */
+				if (!indexDetails->isIndexValid)
+				{
+					MarkIndexAsValid(indexCmdRequest->indexId);
+				}
+
+				RemoveRequestFromIndexQueue(indexCmdRequest->indexId,
+											indexCmdRequest->cmdType);
+
+				/*
+				 * All done, commit the subtransaction and return to outer
+				 * transaction context.
+				 */
+				ReleaseCurrentSubTransaction();
+				MemoryContextSwitchTo(oldContext);
+				CurrentResourceOwner = oldOwner;
+
+				markedIndexAsValid = true;
+			}
+			PG_CATCH();
+			{
+				/*
+				 * Abort the subtransaction to rollback any changes that
+				 * MarkIndexAsValid might have done.
+				 */
+				elog_unredacted(
+					"Failure happened during marking the index metadata valid for index_id: %d and collectionId: "
+					UINT64_FORMAT,
+					indexCmdRequest->indexId, collectionId);
+				RollbackAndReleaseCurrentSubTransaction();
+
+				/* save error info into right context */
+				MemoryContextSwitchTo(stableContext);
+				CurrentResourceOwner = oldOwner;
+				ErrorData *errorData = CopyErrorDataAndFlush();
+				errorCode = errorData->sqlerrcode;
+				ereport(LOG, (errmsg("Failure in marking index metadata %s",
+									 errorData->message)));
+				errorMessage = pstrdup("Failure during marking Index valid");
+				MemoryContextSwitchTo(oldContext);
+			}
+			PG_END_TRY();
+		}
+	}
+
+	if ((!indexCreated || postProcessingAborted) && edata != NULL)
+	{
+		/* Try to get a friendlier error message */
+		MemoryContext switchContext = MemoryContextSwitchTo(stableContext);
+		int errorCodeInternal = 0;
+		char *errorMessageInternal = NULL;
+		if (TryGetErrorMessageAndCode((ErrorData *) edata, &errorCodeInternal,
+									  &errorMessageInternal))
+		{
+			errorCode = errorCodeInternal;
+			errorMessage = errorMessageInternal;
+		}
+		MemoryContextSwitchTo(switchContext);
+	}
+
+	if (!markedIndexAsValid)
+	{
+		/* Drop the index here */
+
+		/*
+		 * TODO : In case, when partial index metadata is not deleted, we might need the cron job to clean such stale indexes.
+		 * Check TryDropCollectionIndexes API doc.
+		 */
+
+		/*
+		 * If the index was physically created but post-processing or marking
+		 * valid failed, we need to abort and restart the outer transaction
+		 * before cleanup. This is necessary because DROP INDEX CONCURRENTLY
+		 * (via libpq) waits for all concurrent transactions to finish —
+		 * including the current one. Without this, the cleanup could deadlock.
+		 *
+		 * When indexCreated is false, the outer transaction was already aborted
+		 * and restarted in the CREATE INDEX CONCURRENTLY error handler above.
+		 * When postProcessingAborted is true, we already aborted and restarted
+		 * in the post-processing error handler.
+		 */
+		if (indexCreated && !postProcessingAborted)
+		{
+			PopAllActiveSnapshots();
+			AbortCurrentTransaction();
+			StartTransactionCommand();
+		}
+
+		elog_unredacted(
+			"Something failed during create-index, drop partial state of index for index_id: %d and collectionId: "
+			UINT64_FORMAT,
+			indexCmdRequest->indexId, collectionId);
+		TryDropCollectionIndexFromIndexDetails(indexDetails, indexCmdRequest->cmdType ==
+											   REINDEX_COMMAND_TYPE);
+
+		/* MarkIndexRequestStatus to failure for the indexId and cmdType = indexCmdRequest->cmdType */
+		elog_unredacted(
+			"Marking Index status Failed for index with index_id: %d and collectionId: "
+			UINT64_FORMAT,
+			indexCmdRequest->indexId, collectionId);
+
+		/* Create comment bson */
+		pgbson_writer writer;
+		PgbsonWriterInit(&writer);
+		PgbsonWriterAppendUtf8(&writer, ErrMsgKey, ErrMsgLength,
+							   (char *) errorMessage);
+		PgbsonWriterAppendInt32(&writer, ErrCodeKey, ErrCodeLength, errorCode);
+		pgbson *newComment = PgbsonWriterGetPgbson(&writer);
+
+		if (indexCmdRequest->attemptCount > MaxIndexBuildAttempts)
+		{
+			elog_unredacted("Removing request permanently index_id: %d and collectionId: "
+							UINT64_FORMAT,
+							indexCmdRequest->indexId, collectionId);
+
+			/* mark the request skippable (removed after the TTL window) */
+			MarkIndexRequestStatus(indexCmdRequest->indexId,
+								   indexCmdRequest->cmdType,
+								   IndexCmdStatus_Skippable, newComment,
+								   NULL,
+								   indexCmdRequest->attemptCount);
+
+			if (indexCmdRequest->cmdType == CREATE_INDEX_COMMAND_TYPE)
+			{
+				DeleteCollectionIndexRecord(indexCmdRequest->collectionId,
+											indexCmdRequest->indexId);
+			}
+		}
+		else
+		{
+			if (IsSkippableError(errorCode, (char *) errorMessage))
+			{
+				elog_unredacted("Saving Skippable comment index_id: %d and collectionId: "
+								UINT64_FORMAT,
+								indexCmdRequest->indexId, collectionId);
+				MarkIndexRequestStatus(indexCmdRequest->indexId,
+									   indexCmdRequest->cmdType,
+									   IndexCmdStatus_Skippable, newComment, NULL,
+									   indexCmdRequest->attemptCount);
+
+				/* The request will be removed during the next cron job when the time elapsed since the request's last update exceeds the specified IndexQueueEvictionIntervalInSec
+				 * we have to remove this request from index metadata to avoid any conflict if user app immediately tries to submit the same request
+				 */
+				if (indexCmdRequest->cmdType == CREATE_INDEX_COMMAND_TYPE)
+				{
+					DeleteCollectionIndexRecord(indexCmdRequest->collectionId,
+												indexCmdRequest->indexId);
+				}
+			}
+			else
+			{
+				elog_unredacted("Saving comment index_id: %d and collectionId: "
+								UINT64_FORMAT,
+								indexCmdRequest->indexId, collectionId);
+				MarkIndexRequestStatus(indexCmdRequest->indexId,
+									   indexCmdRequest->cmdType,
+									   IndexCmdStatus_Failed, newComment, NULL,
+									   indexCmdRequest->attemptCount);
+			}
+		}
+		PopAllActiveSnapshots();
+		CommitTransactionCommand();
+		StartTransactionCommand();
+	}
+
+	if (indexCmdRequest->cmdType == REINDEX_COMMAND_TYPE)
+	{
+		TryDropReindexedCollectionIndex(indexDetails);
+	}
+
+	ReleaseAdvisoryExclusiveSessionLockForCreateIndexBackground(collectionId);
+	return RunStatus_IndexBuildDone;
+}
+
+
+Datum
+ReindexOrCreateCommandCore(PG_FUNCTION_ARGS, char *internalQuery)
+{
+	ThrowIfServerOrTransactionReadOnly();
+	pgbson *submitIndexBuildResponse = RunIndexCommandOnMetadataCoordinator(
+		internalQuery, SPI_OK_SELECT);
+
+	/* Seperate the CreateIndex response and internal keys i.e. "indexRequest" */
+	pgbson_writer buildIndexResponseWriter;
+	PgbsonWriterInit(&buildIndexResponseWriter);
+
+	pgbson_writer requestDetailWriter;
+	PgbsonWriterInit(&requestDetailWriter);
+
+	bson_iter_t documentIter;
+	PgbsonInitIterator(submitIndexBuildResponse, &documentIter);
+	bool ok = false;
+
+	while (bson_iter_next(&documentIter))
+	{
+		const char *key = bson_iter_key(&documentIter);
+		if (strcmp(key, "ok") == 0)
+		{
+			const bson_value_t *value = bson_iter_value(&documentIter);
+			ok = value->value.v_bool;
+			PgbsonWriterAppendValue(&buildIndexResponseWriter, key, strlen(key), value);
+		}
+		else if (strcmp(key, IndexRequestKey) == 0)
+		{
+			const bson_value_t *value = bson_iter_value(&documentIter);
+			PgbsonWriterAppendValue(&requestDetailWriter, key, strlen(key), value);
+		}
+		else
+		{
+			const bson_value_t *value = bson_iter_value(&documentIter);
+			PgbsonWriterAppendValue(&buildIndexResponseWriter, key, strlen(key), value);
+		}
+	}
+
+	pgbson *requestDetailBson = PgbsonWriterGetPgbson(&requestDetailWriter);
+	pgbson *buildIndexResponseBson = PgbsonWriterGetPgbson(&buildIndexResponseWriter);
+
+	PG_RETURN_DATUM(ComposeBuildIndexResponse(fcinfo,
+											  buildIndexResponseBson, requestDetailBson,
+											  ok));
+}
+
+
+Datum
+command_reindex_index_background(PG_FUNCTION_ARGS)
+{
+	if (PG_ARGISNULL(1))
+	{
+		ereport(ERROR, (errmsg("Argument value must not be NULL")));
+	}
+
+	pgbson *indexSpec = PG_GETARG_PGBSON(1);
+
+	const char *databaseString = PG_ARGISNULL(0) ? "NULL" :
+								 quote_literal_cstr(text_to_cstring(PG_GETARG_TEXT_P(0)));
+
+	StringInfo submitIndexBuildRequestQuery = makeStringInfo();
+	appendStringInfo(submitIndexBuildRequestQuery,
+					 "SELECT %s.reindex_indexes_background_internal(%s,%s)",
+					 ApiInternalSchemaName,
+					 databaseString,
+					 quote_literal_cstr(PgbsonToHexadecimalString(indexSpec)));
+
+	PG_RETURN_DATUM(ReindexOrCreateCommandCore(fcinfo,
+											   submitIndexBuildRequestQuery->data));
+}
+
+
+/*
+ * Queues the Index creation request(command_create_indexes_background_internal) and
+ * waits(check_build_index_status) for it to finish.
+ */
+Datum
+command_create_indexes_background(PG_FUNCTION_ARGS)
+{
+	if (PG_ARGISNULL(1))
+	{
+		ereport(ERROR, (errmsg("Argument value must not be NULL")));
+	}
+
+	pgbson *indexSpec = PG_GETARG_PGBSON(1);
+	const char *databaseString = PG_ARGISNULL(0) ? "NULL" :
+								 quote_literal_cstr(text_to_cstring(PG_GETARG_TEXT_P(0)));
+	StringInfo submitIndexBuildRequestQuery = makeStringInfo();
+	appendStringInfo(submitIndexBuildRequestQuery,
+					 "SELECT %s.create_indexes_background_internal(%s,%s)",
+					 ApiInternalSchemaName,
+					 databaseString,
+					 quote_literal_cstr(PgbsonToHexadecimalString(indexSpec)));
+
+	PG_RETURN_DATUM(ReindexOrCreateCommandCore(fcinfo,
+											   submitIndexBuildRequestQuery->data));
+}
+
+
+static List *
+ParseReindexSpec(pgbson *reindexSpec, char **collectionName, bool *updateOptions)
+{
+	bson_iter_t reindexIter;
+	PgbsonInitIterator(reindexSpec, &reindexIter);
+	bool hasCollectionSpecified = false;
+	List *indexIdList = NIL;
+	while (bson_iter_next(&reindexIter))
+	{
+		const char *key = bson_iter_key(&reindexIter);
+		if (strcmp(key, "collection") == 0)
+		{
+			const bson_value_t *value = bson_iter_value(&reindexIter);
+			if (value->value_type != BSON_TYPE_UTF8)
+			{
+				ereport(ERROR, (errcode(ERRCODE_BLACKBOXDB_BADVALUE),
+								errmsg(
+									"reindex failed, 'collection' field must be a string")));
+			}
+			*collectionName = pnstrdup(value->value.v_utf8.str, value->value.v_utf8.len);
+			hasCollectionSpecified = true;
+		}
+		else if (strcmp(key, "indexes") == 0)
+		{
+			EnsureTopLevelFieldType("indexes", &reindexIter, BSON_TYPE_ARRAY);
+			bson_iter_t indexesArrayIter;
+			bson_iter_recurse(&reindexIter, &indexesArrayIter);
+			while (bson_iter_next(&indexesArrayIter))
+			{
+				const bson_value_t *indexValue = bson_iter_value(&indexesArrayIter);
+				EnsureTopLevelFieldIsNumberLike("indexes.index", indexValue);
+
+				indexIdList = lappend_int(indexIdList, BsonValueAsInt32(indexValue));
+			}
+		}
+		else if (strcmp(key, "updateOptions") == 0)
+		{
+			const bson_value_t *value = bson_iter_value(&reindexIter);
+			if (value->value_type != BSON_TYPE_BOOL)
+			{
+				ereport(ERROR, (errcode(ERRCODE_BLACKBOXDB_BADVALUE),
+								errmsg(
+									"reindex failed, 'updateOptions' field must be a boolean")));
+			}
+
+			*updateOptions = value->value.v_bool;
+		}
+		else
+		{
+			ereport(ERROR, (errcode(ERRCODE_BLACKBOXDB_FAILEDTOPARSE),
+							errmsg(
+								"reindex failed, invalid field '%s' found in the reindex spec",
+								key)));
+		}
+	}
+
+	if (!hasCollectionSpecified)
+	{
+		ereport(ERROR, (errcode(ERRCODE_BLACKBOXDB_BADVALUE),
+						errmsg("reindex failed, 'collection' field must be specified")));
+	}
+
+	if (indexIdList == NIL)
+	{
+		ereport(ERROR, (errcode(ERRCODE_BLACKBOXDB_BADVALUE),
+						errmsg(
+							"reindex failed, 'indexes' field must contain at least one index id")));
+	}
+
+	return indexIdList;
+}
+
+
+static char *
+GenerateIndexCreateSpecForUpdateOptions(IndexDetails *indexDef, bool
+										buildAsUniqueForPrepareUnique)
+{
+	/* First convert indexSpec to bson */
+	pgbson *indexSpecBson = IndexSpecAsBson(&indexDef->indexSpec);
+	const char *specJsonRepresentation = PgbsonToJsonForLogging(indexSpecBson);
+
+	/* Next take the bson and work through the logic of create indexes */
+	bson_iter_t indexSpecIter;
+	PgbsonInitIterator(indexSpecBson, &indexSpecIter);
+	bool ignoreUnknownIndexOptions = true;
+	IndexDef *indexDefinition = ParseIndexDefDocumentInternal(&indexSpecIter,
+															  specJsonRepresentation,
+															  ignoreUnknownIndexOptions,
+															  buildAsUniqueForPrepareUnique);
+
+	bool isBackgroundBuild = true;
+	bool createIndexesConcurrently = true;
+	bool isTempCollection = false;
+	char *indexBuildCmd = CreatePostgresIndexCreationCmd(indexDef->collectionId,
+														 indexDefinition,
+														 indexDef->indexId,
+														 createIndexesConcurrently,
+														 isTempCollection,
+														 isBackgroundBuild);
+	return indexBuildCmd;
+}
+
+
+Datum
+command_reindex_index_background_internal(PG_FUNCTION_ARGS)
+{
+	Datum dbNameDatum = PG_GETARG_DATUM(0);
+	pgbson *reindexSpec = PG_GETARG_PGBSON(1);
+
+	char *collectionName = NULL;
+	bool updateOptions = false;
+	List *indexIdList = ParseReindexSpec(reindexSpec, &collectionName, &updateOptions);
+
+	MongoCollection *collection =
+		GetMongoCollectionByNameDatum(dbNameDatum, CStringGetTextDatum(collectionName),
+									  AccessShareLock);
+	if (!collection)
+	{
+		ereport(ERROR, (errcode(ERRCODE_BLACKBOXDB_NAMESPACENOTFOUND),
+						errmsg("reindex failed, collection %s.%s does not exist",
+							   TextDatumGetCString(dbNameDatum),
+							   collectionName)));
+	}
+
+	uint64 collectionId = collection->collectionId;
+
+	/*
+	 * Please note that the advisory lock will be released after first transaction commit.
+	 * This is mainly useful to prevent concurrent index metadata insertions
+	 * for given collection while checking for name / option conflicting indexes
+	 **/
+	AcquireAdvisoryExclusiveLockForCreateIndexes(collectionId);
+
+	/*
+	 * Record indexes into metadata as invalid.
+	 */
+	ListCell *indexDefCell = NULL;
+	foreach(indexDefCell, indexIdList)
+	{
+		int indexId = lfirst_int(indexDefCell);
+
+		IndexDetails *indexDef = IndexIdGetIndexDetails(indexId);
+
+		if (indexDef == NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_BLACKBOXDB_BADVALUE),
+							errmsg("reindex failed, index with id %d does not exist",
+								   indexId)));
+		}
+
+		if (indexDef->collectionId != collectionId)
+		{
+			ereport(ERROR, (errcode(ERRCODE_BLACKBOXDB_BADVALUE),
+							errmsg(
+								"reindex failed, index with id %d does not belong to collection %s.%s",
+								indexId,
+								TextDatumGetCString(dbNameDatum),
+								collectionName)));
+		}
+
+		StringInfo cmdStr = makeStringInfo();
+		if (indexDef->indexSpec.indexUnique == BoolIndexOption_True)
+		{
+			if (!EnableUniqueReindex)
+			{
+				ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+								errmsg("reindex of unique indexes is not supported")));
+			}
+
+			if (!IndexSpecIsOrderedIndex(&indexDef->indexSpec))
+			{
+				ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+								errmsg(
+									"reindex of unordered unique indexes is not supported")));
+			}
+
+			char *indexBuildCmd;
+			if (updateOptions)
+			{
+				bool buildAsUnique = true;
+				indexBuildCmd = GenerateIndexCreateSpecForUpdateOptions(indexDef,
+																		buildAsUnique);
+			}
+			else
+			{
+				/* Reindex of a unique index requires creating a new index since PG can't reindex
+				 * exclusion constraints.
+				 * TODO: If possible reuse the create index path (except we need to refactor the indexdef
+				 * into a create index spec)
+				 */
+				char *indexName = psprintf(DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT,
+										   indexDef->indexId);
+				Oid indexOid = get_relname_relid(indexName, ApiDataNamespaceOid());
+
+				if (indexOid == InvalidOid)
+				{
+					ereport(ERROR, (errmsg(
+										"reindex failed, unexpectedly got invalid Oid for index id: %d",
+										indexDef->indexId)));
+				}
+
+				/*
+				 * Reset search_path so that pg_get_indexdef_string produces fully qualified
+				 * type and function names. The generated command runs via libpq which has
+				 * the default search_path and would fail to resolve unqualified names.
+				 */
+				int savedGUCLevel = NewGUCNestLevel();
+				SetGUCLocally("search_path", "pg_catalog");
+				indexBuildCmd = pg_get_indexdef_string(indexOid);
+				RollbackGUCChange(savedGUCLevel);
+			}
+
+			/* The command above captures the original CREATE INDEX call including the name and options
+			 * We strip all the prefix leading to the term "USING" and append our new prefix.
+			 */
+			char *suffix = strstr(indexBuildCmd, "USING");
+			if (!suffix)
+			{
+				ereport(ERROR, (errmsg(
+									"Could not find a valid index definition for index")));
+			}
+
+			indexBuildCmd = suffix + strlen("USING");
+
+			/* Match the reindex index creation name */
+			appendStringInfo(cmdStr, "CREATE INDEX CONCURRENTLY "
+							 DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "_ccnew ON %s."
+							 DOCUMENT_DATA_TABLE_NAME_FORMAT " USING %s",
+							 indexId, ApiDataSchemaName, collectionId, indexBuildCmd);
+		}
+		else if (updateOptions)
+		{
+			bool buildAsUnique = false;
+			const char *indexBuildCmd = GenerateIndexCreateSpecForUpdateOptions(indexDef,
+																				buildAsUnique);
+
+			char *suffix = strstr(indexBuildCmd, "USING");
+			if (!suffix)
+			{
+				ereport(ERROR, (errmsg(
+									"Could not find a valid index definition for index")));
+			}
+
+			indexBuildCmd = suffix + strlen("USING");
+			appendStringInfo(cmdStr, "CREATE INDEX CONCURRENTLY "
+							 DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "_ccnew ON %s."
+							 DOCUMENT_DATA_TABLE_NAME_FORMAT " USING %s",
+							 indexId, ApiDataSchemaName, collectionId, indexBuildCmd);
+		}
+		else
+		{
+			appendStringInfo(cmdStr, "REINDEX INDEX CONCURRENTLY %s.", ApiDataSchemaName);
+			if (strcmp(indexDef->indexSpec.indexName, "_id_") == 0)
+			{
+				appendStringInfo(cmdStr, DOCUMENT_DATA_PRIMARY_KEY_FORMAT_PREFIX
+								 UINT64_FORMAT,
+								 collectionId);
+			}
+			else
+			{
+				appendStringInfo(cmdStr, DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT,
+								 indexDef->indexId);
+			}
+		}
+
+
+		Oid userOid = GetAuthenticatedUserId();
+		AddRequestInIndexQueue(cmdStr->data, indexId, collectionId, REINDEX_COMMAND_TYPE,
+							   userOid);
+	}
+
+	ereport(DEBUG1, (errmsg(
+						 "Submitted all requests for collection indexes creation successfully")));
+
+	CreateIndexesResult *result = palloc0(sizeof(CreateIndexesResult));
+	result->ok = true;
+
+	result->numIndexesAfter = list_length(indexIdList);
+	if (indexIdList != NIL)
+	{
+		result->request = palloc0(sizeof(SubmittedIndexRequests));
+		result->request->cmdType = REINDEX_COMMAND_TYPE;
+		result->request->indexIds = indexIdList;
+	}
+
+	PG_RETURN_POINTER(MakeCreateIndexesMsg(result));
+}
+
+
+/*
+ * Queues the Index creation request and returns.
+ * If there are any unique index builds, performs them
+ * inline. This needs to run on the metadata coordinator.
+ */
+Datum
+command_create_indexes_background_internal(PG_FUNCTION_ARGS)
+{
+	Datum dbNameDatum = PG_GETARG_DATUM(0);
+
+	/*
+	 * Deduplicate elements of given bson object recursively so that we don't
+	 * have multiple definitions for any bson field at any level.
+	 *
+	 * That way, we will not throw an error;
+	 * - if we encounter with definition of a field more than once, or
+	 * - if there is a syntax error in the prior definitions. e.g.:
+	 *   {"createIndexes": 1, "createIndexes": "my_collection_name"}
+	 */
+	pgbson *arg = PgbsonDeduplicateFields(PG_GETARG_PGBSON(1));
+	bool *snapshotSet = (bool *) palloc0(sizeof(bool));
+	CreateIndexesResult *result = palloc0(sizeof(CreateIndexesResult));
+	MemoryContext savedMemoryContext = CurrentMemoryContext;
+	ResourceOwner oldOwner = CurrentResourceOwner;
+
+	/* use a subtransaction to correctly handle failures */
+	BeginInternalSubTransaction(NULL);
+	PG_TRY();
+	{
+		bool buildAsUniqueForPrepareUnique = false;
+		CreateIndexesArg createIndexesArg = ParseCreateIndexesArg(&dbNameDatum,
+																  arg,
+																  buildAsUniqueForPrepareUnique);
+		*result = SubmitCreateIndexesRequest(dbNameDatum, createIndexesArg, snapshotSet);
+
+		ReleaseCurrentSubTransaction();
+		MemoryContextSwitchTo(savedMemoryContext);
+		CurrentResourceOwner = oldOwner;
+	}
+	PG_CATCH();
+	{
+		/* run_command_on_metadata_coordinator does not return error code in case of failure inside the called function
+		 * i.e. ApiInternalSchema.create_indexes_background_internal.
+		 */
+		MemoryContextSwitchTo(savedMemoryContext);
+		ErrorData *edata = CopyErrorDataAndFlush();
+		result->errcode = edata->sqlerrcode;
+		result->errmsg = edata->message;
+
+		/* Snapshot pushed inside SubmitCreateIndexesRequest may not be popped. */
+		if (*snapshotSet)
+		{
+			PopActiveSnapshot();
+		}
+
+		/* Abort inner transaction */
+		RollbackAndReleaseCurrentSubTransaction();
+
+		/* Rollback changes MemoryContext */
+		MemoryContextSwitchTo(savedMemoryContext);
+		CurrentResourceOwner = oldOwner;
+	}
+	PG_END_TRY();
+
+	PG_RETURN_POINTER(MakeCreateIndexesMsg(result));
+}
+
+
+/*
+ * command_check_build_index_status calls command_check_build_index_status_internal via RunCommandOnMetadataCoordinator
+ */
+Datum
+command_check_build_index_status(PG_FUNCTION_ARGS)
+{
+	pgbson *bson = PG_GETARG_PGBSON(0);
+	StringInfo checkIndexBuildQuery = makeStringInfo();
+	appendStringInfo(checkIndexBuildQuery,
+					 "SELECT %s.check_build_index_status_internal(%s)",
+					 ApiInternalSchemaName,
+					 quote_literal_cstr(PgbsonToHexadecimalString(bson)));
+	pgbson *statusBson = RunIndexCommandOnMetadataCoordinator(checkIndexBuildQuery->data,
+															  SPI_OK_SELECT);
+
+	/* Remove FinishKey from the bson and construct statusResponse */
+	pgbson_writer statusResponseWriter;
+	PgbsonWriterInit(&statusResponseWriter);
+
+	bson_iter_t documentIter;
+	PgbsonInitIterator(statusBson, &documentIter);
+	bool ok = false;
+	bool finish = false;
+
+	while (bson_iter_next(&documentIter))
+	{
+		const char *key = bson_iter_key(&documentIter);
+		if (strcmp(key, "ok") == 0)
+		{
+			const bson_value_t *value = bson_iter_value(&documentIter);
+			PgbsonWriterAppendValue(&statusResponseWriter, key, strlen(key), value);
+			ok = value->value.v_bool;
+		}
+		else if (strcmp(key, FinishKey) == 0)
+		{
+			const bson_value_t *value = bson_iter_value(&documentIter);
+			finish = value->value.v_bool;
+		}
+		else
+		{
+			const bson_value_t *value = bson_iter_value(&documentIter);
+			PgbsonWriterAppendValue(&statusResponseWriter, key, strlen(key), value);
+		}
+	}
+
+	pgbson *statusResponse = PgbsonWriterGetPgbson(&statusResponseWriter);
+	PG_RETURN_DATUM(ComposeCheckIndexStatusResponse(fcinfo, statusResponse, ok, finish));
+}
+
+
+/*
+ * command_check_build_index_status_internal is the implementation of the internal logic
+ * where we check the status of build index requests running in background.
+ */
+Datum
+command_check_build_index_status_internal(PG_FUNCTION_ARGS)
+{
+	const pgbson *document = PG_GETARG_PGBSON(0);
+	char cmdType = 0;
+	List *indexIds = NIL;
+
+	bson_iter_t documentIter;
+	PgbsonInitIterator(document, &documentIter);
+	while (bson_iter_next(&documentIter))
+	{
+		const char *key = bson_iter_key(&documentIter);
+		if (strcmp(key, IndexRequestKey) == 0)
+		{
+			if (!BSON_ITER_HOLDS_DOCUMENT(&documentIter))
+			{
+				ereport(ERROR, (errmsg(
+									"indexRequest expecting entry to contain document")));
+			}
+
+			const bson_value_t *indexRequestVal = bson_iter_value(&documentIter);
+			bson_iter_t innerDocIter;
+			BsonValueInitIterator(indexRequestVal, &innerDocIter);
+			while (bson_iter_next(&innerDocIter))
+			{
+				const char *innerKey = bson_iter_key(&innerDocIter);
+				if (strcmp(innerKey, CmdTypeKey) == 0)
+				{
+					const bson_value_t *value = bson_iter_value(&innerDocIter);
+					cmdType = value->value.v_utf8.str[0];
+				}
+				else if (strcmp(innerKey, IdsKey) == 0)
+				{
+					bson_iter_t idsArrayIter;
+					if (!BSON_ITER_HOLDS_ARRAY(&innerDocIter) ||
+						!bson_iter_recurse(&innerDocIter, &idsArrayIter))
+					{
+						ereport(ERROR, (errmsg("Could not iterate through ids array.")));
+					}
+					while (bson_iter_next(&idsArrayIter))
+					{
+						const bson_value_t *idValue = bson_iter_value(&idsArrayIter);
+						int32_t indexId = BsonValueAsInt32(idValue);
+						indexIds = lappend_int(indexIds, indexId);
+					}
+				}
+			}
+		}
+	}
+
+	if (cmdType == 0)
+	{
+		ereport(ERROR, (errmsg("Command must provide valid cmdType."),
+						errdetail_log("Command must provide valid cmdType.")));
+	}
+	BuildIndexesResult *result;
+	if (indexIds != NIL)
+	{
+		result = CheckForIndexCmdToFinish(indexIds, cmdType);
+	}
+	else
+	{
+		result = palloc0(sizeof(BuildIndexesResult));
+		result->finish = true;
+		result->ok = true;
+	}
+	PG_RETURN_POINTER(MakeBuildIndexesMsg(result));
+}
+
+
+/* Schedule background index build jobs. */
+Datum
+schedule_background_index_build_jobs(PG_FUNCTION_ARGS)
+{
+	bool forceOverride = PG_GETARG_BOOL(0);
+
+	if (!forceOverride && !ShouldScheduleIndexBuildJobs())
+	{
+		PG_RETURN_VOID();
+	}
+
+	UnscheduleIndexBuildTasks(ExtensionObjectPrefixV2);
+	ScheduleIndexBuildTasks(ExtensionObjectPrefixV2);
+
+	PG_RETURN_VOID();
+}
+
+
+/*
+ * Setup the index queue table based on the installation script version that called it.
+ * If the flag ShouldSetupIndexQueueInUdf is false, we skip this function.
+ * This flag allows extensions that depend on blackboxdb to skip the creation of the index queue table and have them
+ * manage it themselves, e.g. for distributed scenarios where the queue might not be needed on all nodes.
+ */
+Datum
+setup_index_queue_table(PG_FUNCTION_ARGS)
+{
+	if (!ShouldSetupIndexQueueInUdf)
+	{
+		PG_RETURN_VOID();
+	}
+
+	int majorVersion = PG_GETARG_INT32(0);
+	int minorVersion = PG_GETARG_INT32(1);
+	int patchVersion = PG_GETARG_INT32(2);
+
+	/* Create the index queue table when we are called for 0.109.0 */
+	if (majorVersion == DocDB_V0 &&
+		minorVersion == 109 &&
+		patchVersion == 0)
+	{
+		bool includeOptions = true;
+		bool includeDropCommandType = true;
+		CreateIndexQueueIfNotExists(includeOptions, includeDropCommandType);
+	}
+
+	if (majorVersion == DocDB_V0 &&
+		minorVersion == 110 &&
+		patchVersion == 0)
+	{
+		/* Grant access to index_queue to ApiReadWriteRole */
+		StringInfo grantStr = makeStringInfo();
+		bool isNull = false;
+		appendStringInfo(grantStr,
+						 "GRANT ALL ON TABLE %s TO %s",
+						 GetIndexQueueName(),
+						 ApiReadWriteRole);
+		ExtensionExecuteQueryViaSPI(grantStr->data, false, SPI_OK_UTILITY,
+									&isNull);
+	}
+
+	PG_RETURN_VOID();
+}
+
+
+/*
+ * SubmitCreateIndexesRequest is the function that submits the create index request to local table
+ * and submits indexes into metadata as invalid.
+ */
+CreateIndexesResult
+SubmitCreateIndexesRequest(Datum dbNameDatum,
+						   CreateIndexesArg createIndexesArg, bool *volatile snapshotSet)
+{
+	char *collectionName = createIndexesArg.collectionName;
+	Datum collectionNameDatum = CStringGetTextDatum(collectionName);
+
+	CreateIndexesResult result = {
+		.ok = true /* we will throw an error otherwise */
+	};
+
+	MongoCollection *collection =
+		GetMongoCollectionByNameDatum(dbNameDatum, collectionNameDatum,
+									  AccessShareLock);
+	if (collection)
+	{
+		result.createdCollectionAutomatically = false;
+	}
+	else
+	{
+		/* collection does not exist, create it (or race for creating it) */
+		result.createdCollectionAutomatically =
+			CreateCollection(dbNameDatum, collectionNameDatum);
+
+		collection = GetMongoCollectionByNameDatum(dbNameDatum, collectionNameDatum,
+												   AccessShareLock);
+
+		if (!collection)
+		{
+			ereport(ERROR, (errcode(ERRCODE_BLACKBOXDB_NAMESPACENOTFOUND),
+							errmsg(
+								"collection %s.%s does not exist and failed to be created",
+								TextDatumGetCString(dbNameDatum),
+								collectionName)));
+		}
+	}
+
+	uint64 collectionId = collection->collectionId;
+
+	/*
+	 * Please note that the advisory lock will be released after first transaction commit.
+	 * This is mainly useful to prevent concurrent index metadata insertions
+	 * for given collection while checking for name / option conflicting indexes
+	 **/
+	AcquireAdvisoryExclusiveLockForCreateIndexes(collectionId);
+
+	/*
+	 * For both CheckForConflictsAndPruneExistingIndexes() and
+	 * CollectionIdGetIndexCount(), we need to take built-in _id index
+	 * (that we might have just created together with the collection itself)
+	 * into the account too, so need to use a snapshot to which changes made
+	 * by CreateCollection() are visible.
+	 */
+	PushActiveSnapshot(GetTransactionSnapshot());
+	*snapshotSet = true;
+
+	/*
+	 * Prune away the indexes that already exist and throw an error if any
+	 * of them would cause a name / option conflict.
+	 *
+	 * And before doing so, save the number of indexes that user actually
+	 * wants to create to later determine whether we decided to not create
+	 * some of them due to an identical index.
+	 */
+
+	int nindexesRequested = list_length(createIndexesArg.indexDefList);
+
+	List *indexIdList = NIL;
+	createIndexesArg.indexDefList =
+		CheckForConflictsAndPruneExistingIndexes(collectionId,
+												 createIndexesArg.indexDefList,
+												 &indexIdList);
+
+	result.numIndexesBefore = CollectionIdGetIndexCount(collectionId);
+
+	if (result.numIndexesBefore + list_length(createIndexesArg.indexDefList) >
+		MaxIndexesPerCollection)
+	{
+		int reportIndexDefIdx = MaxIndexesPerCollection - result.numIndexesBefore;
+		const IndexDef *reportIndexDef = list_nth(createIndexesArg.indexDefList,
+												  reportIndexDefIdx);
+		ereport(ERROR, (errcode(ERRCODE_BLACKBOXDB_CANNOTCREATEINDEX),
+						errmsg("add index fails, too many indexes for %s.%s key:%s",
+							   collection->name.databaseName,
+							   collection->name.collectionName,
+							   PgbsonToJsonForLogging(reportIndexDef->keyDocument))));
+	}
+
+	/* pop the snapshot that we've just pushed above */
+	PopActiveSnapshot();
+	*snapshotSet = false;
+
+	/*
+	 * Record indexes into metadata as invalid.
+	 */
+	ListCell *indexDefCell = NULL;
+
+	/* If we created the collection in this transaction, just create the indexes
+	 * in the same transaction.
+	 */
+	if (result.createdCollectionAutomatically)
+	{
+		elog_unredacted("Building indexes inline due to create collection for collection "
+						UINT64_FORMAT,
+						collectionId);
+
+		bool uniqueIndexOnly = false;
+		bool skipCheckCollectionCreate = true;
+		CreateIndexesResult innerResult = create_indexes_non_concurrently(dbNameDatum,
+																		  createIndexesArg,
+																		  skipCheckCollectionCreate,
+																		  uniqueIndexOnly);
+		innerResult.createdCollectionAutomatically = true;
+		return innerResult;
+	}
+
+	foreach(indexDefCell, createIndexesArg.indexDefList)
+	{
+		IndexDef *indexDef = (IndexDef *) lfirst(indexDefCell);
+		const IndexSpec indexSpec = MakeIndexSpecForIndexDef(indexDef);
+		bool indexIsValid = false;
+		int indexId = RecordCollectionIndex(collectionId, &indexSpec, indexIsValid);
+
+		/* If createIndexes specified blocking, create the command as non-concurrent */
+		bool createIndexesConcurrently = true;
+		bool isTempCollection = false;
+
+		if (createIndexesArg.blocking || indexDef->blocking)
+		{
+			createIndexesConcurrently = false;
+		}
+
+		bool isBackgroundBuild = true;
+		char *cmd = CreatePostgresIndexCreationCmd(collectionId, indexDef, indexId,
+												   createIndexesConcurrently,
+												   isTempCollection,
+												   isBackgroundBuild);
+
+		Oid userOid = GetAuthenticatedUserId();
+		AddRequestInIndexQueue(cmd, indexId, collectionId, CREATE_INDEX_COMMAND_TYPE,
+							   userOid);
+		indexIdList = lappend_int(indexIdList, indexId);
+	}
+
+	ereport(DEBUG1, (errmsg(
+						 "Submitted all requests for collection indexes creation successfully")));
+	result.ok = true;
+	int indexCount = list_length(createIndexesArg.indexDefList);
+
+	/*
+	 * Set "note" field of the response message based on whether we
+	 * rejected creating any indexes.
+	 */
+	if (indexCount == 0)
+	{
+		/*
+		 * We don't allow "indexes" array to be empty, so this means that
+		 * all the indexes already exist ..
+		 */
+		result.note = "all indexes already exist";
+	}
+	else if (indexCount < nindexesRequested)
+	{
+		/* then not all but some indexes already exist */
+		result.note = "An index with this name already exists";
+	}
+
+	result.numIndexesAfter = result.numIndexesBefore + indexCount;
+	if (indexIdList != NIL && !createIndexesArg.skipWaitForIndex)
+	{
+		result.request = palloc0(sizeof(SubmittedIndexRequests));
+		result.request->cmdType = CREATE_INDEX_COMMAND_TYPE;
+		result.request->indexIds = indexIdList;
+	}
+
+	return result;
+}
+
+
+/*
+ * GetIndexBuildJobOpId gets the IndexJobOpId for current job
+ */
+static IndexJobOpId *
+GetIndexBuildJobOpId()
+{
+	const char *indexBuildJobIdQueryStr = TryGetIndexBuildJobOpIdQuery();
+	if (indexBuildJobIdQueryStr == NULL)
+	{
+		StringInfo cmdStr = makeStringInfo();
+		appendStringInfo(cmdStr,
+						 "SELECT pid, query_start"
+						 " FROM pg_stat_activity where pid = pg_backend_pid();");
+		indexBuildJobIdQueryStr = cmdStr->data;
+	}
+
+	bool readOnly = false;
+	int numValues = 2;
+	bool isNull[2];
+	Datum results[2];
+	ExtensionExecuteMultiValueQueryViaSPI(indexBuildJobIdQueryStr, readOnly,
+										  SPI_OK_SELECT, results,
+										  isNull, numValues);
+	if (isNull[0] || isNull[1])
+	{
+		ereport(ERROR, (errmsg(
+							"Global Pid or start time should not be null for current process")));
+	}
+	IndexJobOpId *opId = palloc(sizeof(IndexJobOpId));
+	opId->global_pid = DatumGetInt64(results[0]);
+	opId->start_time = DatumGetTimestampTz(results[1]);
+
+	return opId;
+}
+
+
+/*
+ * MarkIndexAsValid marks the index metadata entry associated with given index as valid (if inserted already).
+ */
+static void
+MarkIndexAsValid(int indexId)
+{
+	const char *cmdStr = FormatSqlQuery(
+		"UPDATE %s.collection_indexes SET index_is_valid = true"
+		" WHERE index_id = $1;", ApiCatalogSchemaName);
+
+	int argCount = 1;
+	Oid argTypes[1];
+	Datum argValues[1];
+	char argNulls[1] = { ' ' };
+
+	argTypes[0] = INT4OID;
+	argValues[0] = Int32GetDatum(indexId);
+
+	bool isNull = true;
+	RunQueryWithCommutativeWrites(cmdStr, argCount, argTypes,
+								  argValues, argNulls,
+								  SPI_OK_UPDATE, &isNull);
+}
+
+
+static void
+PostProcessIndexForReIndex(int64 collectionId, IndexDetails *details, bool
+						   isReindexViaCreate)
+{
+	if (details == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"reindex failed, unexpectedly got NULL IndexDetails when post processing for collectionId: "
+							UINT64_FORMAT, collectionId)));
+	}
+
+	if (details->indexSpec.indexUnique != BoolIndexOption_True && !isReindexViaCreate)
+	{
+		return;
+	}
+
+	const char *base_indexname = psprintf(DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT,
+										  details->indexId);
+	const char *reindex_indexname = psprintf(
+		DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "_ccnew", details->indexId);
+	const char *old_indexname = psprintf(DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "_ccold",
+										 details->indexId);
+	if (details->indexSpec.indexUnique == BoolIndexOption_True)
+	{
+		/* Unique index being reindexed - need to update the constraint properties */
+		Oid indexOid = get_relname_relid(reindex_indexname, ApiDataNamespaceOid());
+
+		List *indexOidList = list_make1_oid(indexOid);
+
+		/* Add any additional shard OIDs needed for this */
+		bool ignoreMissingShards = false;
+		indexOidList = list_concat(indexOidList,
+								   GetShardIndexOids(collectionId, indexOid,
+													 ignoreMissingShards));
+
+		/* Failure injection point 4: Before prepareUnique during reindex */
+		if (IndexBuildFailurePoint == 4)
+		{
+			ereport(ERROR, (errmsg(
+								"Injected failure point 4: before prepareUnique during reindex "
+								"for index_id: %d collectionId: " UINT64_FORMAT,
+								details->indexId, collectionId)));
+		}
+
+		bool prepareUnique = true;
+		UpdatePostgresIndexesForPrepareUnique(indexOidList, prepareUnique);
+
+		/* Failure injection point 5: After prepareUnique, before first rename during reindex */
+		if (IndexBuildFailurePoint == 5)
+		{
+			ereport(ERROR, (errmsg(
+								"Injected failure point 5: after prepareUnique, before rename "
+								"for index_id: %d collectionId: " UINT64_FORMAT,
+								details->indexId, collectionId)));
+		}
+	}
+
+	/* Rename the indexes now that we've upgraded to prepareUnique */
+	bool readOnly = false;
+	bool isNullIgnore = false;
+	ExtensionExecuteQueryViaSPI(
+		psprintf("ALTER INDEX %s.%s RENAME to %s", ApiDataSchemaName, base_indexname,
+				 old_indexname),
+		readOnly, SPI_OK_UTILITY, &isNullIgnore);
+
+	/* Failure injection point 6: After first rename, before second rename during reindex */
+	if (IndexBuildFailurePoint == 6)
+	{
+		ereport(ERROR, (errmsg(
+							"Injected failure point 6: after first rename, before second rename "
+							"for index_id: %d collectionId: " UINT64_FORMAT,
+							details->indexId, collectionId)));
+	}
+
+	ExtensionExecuteQueryViaSPI(
+		psprintf("ALTER INDEX %s.%s RENAME to %s", ApiDataSchemaName, reindex_indexname,
+				 base_indexname),
+		readOnly, SPI_OK_UTILITY, &isNullIgnore);
+}
+
+
+/*
+ * Checks whether two index specs are equivalent from a uniqueness enforcement
+ * perspective. For the table walk skip optimization, we only care about the
+ * properties that affect which documents are covered by the unique constraint:
+ * - Same key document (same indexed fields)
+ * - Same sparse setting (sparse excludes null-valued documents)
+ * - Same partial filter expression (PFE restricts which documents are indexed)
+ *
+ * Properties like enableOrderedIndex, collation, cosmosSearchOptions, and
+ * wildcardProjection do not affect which set of documents is uniquely constrained,
+ * so they are intentionally ignored here.
+ */
+static bool
+IndexSpecsAreEquivalentForUniqueness(const IndexSpec *leftIndexSpec,
+									 const IndexSpec *rightIndexSpec)
+{
+	/* Both must be unique */
+	if (leftIndexSpec->indexUnique != BoolIndexOption_True ||
+		rightIndexSpec->indexUnique != BoolIndexOption_True)
+	{
+		return false;
+	}
+
+	/* Sparse must match: sparse indexes don't cover null-valued documents */
+	bool leftSparse = leftIndexSpec->indexSparse == BoolIndexOption_True;
+	bool rightSparse = rightIndexSpec->indexSparse == BoolIndexOption_True;
+	if (leftSparse != rightSparse)
+	{
+		return false;
+	}
+
+	/* Key documents must match */
+	if (!PgbsonEquals(leftIndexSpec->indexKeyDocument,
+					  rightIndexSpec->indexKeyDocument))
+	{
+		return false;
+	}
+
+	/* Partial filter expressions must match */
+	if (!PgbsonEquals(leftIndexSpec->indexPFEDocument,
+					  rightIndexSpec->indexPFEDocument))
+	{
+		return false;
+	}
+
+	/* Collation must match: different collations compare values differently */
+	bson_iter_t leftCollIter, rightCollIter;
+	bool leftHasCollation = leftIndexSpec->indexOptions != NULL &&
+							PgbsonInitIteratorAtPath(leftIndexSpec->indexOptions,
+													 "collation", &leftCollIter);
+	bool rightHasCollation = rightIndexSpec->indexOptions != NULL &&
+							 PgbsonInitIteratorAtPath(rightIndexSpec->indexOptions,
+													  "collation", &rightCollIter);
+
+	if (leftHasCollation != rightHasCollation)
+	{
+		return false;
+	}
+
+	if (leftHasCollation && rightHasCollation)
+	{
+		const bson_value_t *leftCollValue = bson_iter_value(&leftCollIter);
+		const bson_value_t *rightCollValue = bson_iter_value(&rightCollIter);
+		if (!BsonValueEquals(leftCollValue, rightCollValue))
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+
+/*
+ * PostProcessIndexForCreateUnique handles post-processing for background
+ * unique index creation. When a unique index is built concurrently (non-blocking),
+ * the physical index is created without an exclusion constraint. This function
+ * registers the exclusion constraint and validates existing rows.
+ *
+ * The flow mirrors PostProcessIndexForReIndex:
+ * 1. Register the exclusion constraint (prepareUnique) — enforces uniqueness on new writes
+ * 2. Validate existing rows (convertUnique) — table walk to ensure no pre-existing duplicates,
+ *    with a fast-path skip if another validated unique index covers the same key spec
+ */
+static void
+PostProcessIndexForCreateUnique(int64 collectionId, IndexDetails *details)
+{
+	if (details == NULL)
+	{
+		ereport(ERROR, (errmsg(
+							"background unique index build failed, unexpectedly got NULL IndexDetails when post processing for collectionId: "
+							UINT64_FORMAT, collectionId)));
+	}
+
+	if (details->indexSpec.indexUnique != BoolIndexOption_True)
+	{
+		/* Not a unique index, nothing to do */
+		return;
+	}
+
+	const char *indexName = psprintf(DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT,
+									 details->indexId);
+	Oid indexOid = get_relname_relid(indexName, ApiDataNamespaceOid());
+
+	if (indexOid == InvalidOid)
+	{
+		ereport(ERROR, (errmsg(
+							"background unique index build failed, unexpectedly got invalid Oid for index id: %d",
+							details->indexId)));
+	}
+
+	/*
+	 * Check if the index already has a constraint already registered.
+	 */
+	if (OidIsValid(get_index_constraint(indexOid)))
+	{
+		elog_unredacted(
+			"Skipping post processing for unique index_id: %d and collectionId: "
+			UINT64_FORMAT
+			" constraint already registered",
+			details->indexId, collectionId);
+		return;
+	}
+
+	elog_unredacted(
+		"Post processing unique index after background build for index_id: %d and collectionId: "
+		UINT64_FORMAT,
+		details->indexId, collectionId);
+
+	List *indexOidList = list_make1_oid(indexOid);
+
+	/* Add any additional shard OIDs needed for this */
+	bool ignoreMissingShards = false;
+	indexOidList = list_concat(indexOidList,
+							   GetShardIndexOids(collectionId, indexOid,
+												 ignoreMissingShards));
+
+	/* Failure injection point 1: Before registering exclusion constraint */
+	if (IndexBuildFailurePoint == 1)
+	{
+		ereport(ERROR, (errmsg(
+							"Injected failure point 1: before registering exclusion constraint "
+							"for index_id: %d collectionId: " UINT64_FORMAT,
+							details->indexId, collectionId)));
+	}
+
+	/* Step 1: Register the exclusion constraint (unvalidated) so new writes are protected */
+	bool prepareUnique = true;
+	UpdatePostgresIndexesForPrepareUnique(indexOidList, prepareUnique);
+
+	/* Failure injection point 2: After registering constraint, before commit */
+	if (IndexBuildFailurePoint == 2)
+	{
+		ereport(ERROR, (errmsg(
+							"Injected failure point 2: after registering constraint, before table walk "
+							"for index_id: %d collectionId: " UINT64_FORMAT,
+							details->indexId, collectionId)));
+	}
+
+	/*
+	 * Commit the top-level transaction so the constraint becomes visible to
+	 * other backends (enforcing uniqueness on concurrent writes) and to
+	 * release the snapshot held since the index build completed.
+	 */
+	PopAllActiveSnapshots();
+	CommitTransactionCommand();
+	StartTransactionCommand();
+
+	/* Failure injection point 8: After constraint commit, before table walk */
+	if (IndexBuildFailurePoint == 8)
+	{
+		ereport(ERROR, (errmsg(
+							"Injected failure point 8: after constraint commit, before table walk "
+							"for index_id: %d collectionId: " UINT64_FORMAT,
+							details->indexId, collectionId)));
+	}
+
+	/*
+	 * Step 2: Validate existing rows via table walk, unless an existing validated
+	 * unique index with the same key spec already proves uniqueness.
+	 */
+	bool skipTableWalk = false;
+	bool excludeIdIndex = true;
+	bool enableNestedDistribution = false;
+	List *existingIndexes = CollectionIdGetValidIndexes(collectionId, excludeIdIndex,
+														enableNestedDistribution);
+	ListCell *existingCell;
+	foreach(existingCell, existingIndexes)
+	{
+		IndexDetails *existingIndex = (IndexDetails *) lfirst(existingCell);
+
+		/* Skip ourselves */
+		if (existingIndex->indexId == details->indexId)
+		{
+			continue;
+		}
+
+		if (existingIndex->indexSpec.indexUnique == BoolIndexOption_True &&
+			IndexSpecsAreEquivalentForUniqueness(&existingIndex->indexSpec,
+												 &details->indexSpec))
+		{
+			skipTableWalk = true;
+			break;
+		}
+	}
+
+	if (!skipTableWalk)
+	{
+		/* Validate uniqueness for existing rows (table walk) */
+		UpdatePostgresIndexCore(collectionId, details->indexId,
+								INDEX_METADATA_UPDATE_OPERATION_UNIQUE, true,
+								ignoreMissingShards);
+
+		/* Failure injection point 3: After table walk completes */
+		if (IndexBuildFailurePoint == 3)
+		{
+			ereport(ERROR, (errmsg(
+								"Injected failure point 3: after table walk completes "
+								"for index_id: %d collectionId: " UINT64_FORMAT,
+								details->indexId, collectionId)));
+		}
+	}
+}
+
+
+/* Returns true if the targetErrorCode and errMsg are from SkippableErrors */
+static bool
+IsSkippableError(int targetErrorCode, char *errMsg)
+{
+	if (targetErrorCode != -1)
+	{
+		if (EreportCodeIsBlackboxDBError(targetErrorCode) &&
+			targetErrorCode != ERRCODE_BLACKBOXDB_INTERNALERROR)
+		{
+			/* Errors that are not internal errors are skippable */
+			return true;
+		}
+
+		for (int i = 0; i < NumberOfSkippableErrors; i++)
+		{
+			if (SkippableErrors[i].errCode == targetErrorCode)
+			{
+				if (SkippableErrors[i].errMsg == NULL || errMsg == NULL)
+				{
+					return true;
+				}
+				else if (strncmp(errMsg, SkippableErrors[i].errMsg, strlen(
+									 SkippableErrors[i].errMsg)) == 0)
+				{
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
+
+/*
+ * AcquireAdvisoryExclusiveSessionLockForCreateIndexBackground acquires an advisory
+ * ShareUpdateExclusiveLock for given collection. Note that the only reason for
+ * acquiring a ShareUpdateExclusiveLock here is that it's the lowest lock
+ * mode that cannot be acquired by more than one backend.
+ *
+ * This is mainly used to make sure no concurrent createIndex(concurrently : true) requests
+ * execute for same collection. This is because concurrently createIndex requests on same collection causes deadlock.
+ * We are taking session level advisory lock, so that it survives the entire sesssion when called from command_build_index_concurrently
+ * This lock is held until explicitly released or the session ends.
+ *
+ * Note that the lock type acquired by this function --advisory-- is different
+ * than the usual collection lock that we acquire on the data table, so this
+ * cannot anyhow conflict with a collection lock. It is also different than
+ * advisory lock that we acquire in AcquireAdvisoryExclusiveLockForCreateIndexes because of field4 tag.
+ */
+static LockAcquireResult
+AcquireAdvisoryExclusiveSessionLockForCreateIndexBackground(uint64 collectionId)
+{
+	bool dontWait = true;
+	bool sessionLock = true;
+	LOCKTAG locktag = CreateLockTagAdvisoryForCreateIndexBackground(
+		collectionId);
+	return LockAcquire(&locktag, ShareUpdateExclusiveLock, sessionLock, dontWait);
+}
+
+
+/**
+ * ReleaseAdvisoryExclusiveSessionLockForCreateIndexBackground releases the lock acquired by AcquireAdvisoryExclusiveSessionLockForCreateIndexBackground
+ */
+static void
+ReleaseAdvisoryExclusiveSessionLockForCreateIndexBackground(uint64 collectionId)
+{
+	bool sessionLock = true;
+	LOCKTAG locktag = CreateLockTagAdvisoryForCreateIndexBackground(
+		collectionId);
+	(void) LockRelease(&locktag, ShareUpdateExclusiveLock, sessionLock);
+}
+
+
+/**
+ * CreateLockTagAdvisoryForCreateIndexBackground creates the lock tag for create index in background.
+ */
+static LOCKTAG
+CreateLockTagAdvisoryForCreateIndexBackground(uint64 collectionId)
+{
+	LOCKTAG locktag;
+	SET_LOCKTAG_ADVISORY(locktag, MyDatabaseId,
+						 (collectionId & 0xFFFFFFFF),
+						 (collectionId & (((uint64) 0xFFFFFFFF) << 32)) >> 32,
+						 LT_FIELD4_EXCL_CREATE_INDEX_BACKGROUND);
+	return locktag;
+}
+
+
+/*
+ * CheckForIndexCmdToFinish checks for the index command to finish for all indexIds present in indexIdList.
+ * The count(indexId) will match the length(indexIdList) only if for each indexId in indexIdList, any one of following conditions are met:
+ * 1. Request is already picked second time (attempt count >= 2) by cron-job before CheckForIndexCmdToFinish function could check its failure status.
+ * 2. Request is not there in ApiCatalogSchemaName.{ExtensionObjectPrefix}_index_queue, which means it is completed successfully.
+ * 3. Request is there in ApiCatalogSchemaName.{ExtensionObjectPrefix}_index_queue and index_cmd_status >= 3 (Failed, Skippable).
+ * 4. Request is there in ApiCatalogSchemaName.{ExtensionObjectPrefix}_index_queue and index_cmd_status = 2 (InProgress)
+ *    and corresponding global_pid (opid) is not present in pg_stat_activity. This means that process was abruptly failed.
+ */
+static BuildIndexesResult *
+CheckForIndexCmdToFinish(const List *indexIdList, char cmdType)
+{
+	Assert(cmdType == CREATE_INDEX_COMMAND_TYPE || cmdType == REINDEX_COMMAND_TYPE);
+
+	BuildIndexesResult *result = palloc0(sizeof(BuildIndexesResult));
+	result->finish = false;
+	result->ok = true;
+
+
+	/*  WITH query AS
+	 *      (SELECT index_cmd_status::int4, comment, attempt
+	 *      FROM ApiCatalogSchemaName.{ExtensionObjectPrefix}_index_queue piq
+	 *      WHERE cmd_type = 'C' AND index_id =ANY(ARRAY[32001, 32002, 32003, 32004, 32005, 32006])
+	 *  )
+	 *  SELECT COALESCE(CATALOG_SCHEMA.bson_array_agg(CoreSchemaNameV2.row_get_bson(query), ''), '{ "": [] }'::CORE_SCHEMA.bson) FROM query
+	 */
+	const char *query =
+		FormatSqlQuery("WITH query AS (SELECT index_cmd_status::int4, comment, attempt"
+					   " FROM %s piq "
+					   " WHERE cmd_type = $1 AND index_id =ANY($2)) "
+					   " SELECT COALESCE(%s.bson_array_agg(%s.row_get_bson(query), ''), '{ \"\": [] }'::%s) FROM query",
+					   GetIndexQueueName(), ApiCatalogSchemaName, CoreSchemaNameV2,
+					   FullBsonTypeName);
+
+	int argCount = 2;
+	Oid argTypes[2];
+	Datum argValues[2];
+	char argNulls[2] = { ' ', ' ' };
+
+	argTypes[0] = CHAROID;
+	argValues[0] = CharGetDatum(cmdType);
+	argTypes[1] = INT4ARRAYOID;
+	argValues[1] = PointerGetDatum(IntListGetPgIntArray(indexIdList));
+
+	bool readOnly = true;
+	bool isNull = false;
+
+	Datum resultDatum = ExtensionExecuteQueryWithArgsViaSPI(query, argCount, argTypes,
+															argValues, argNulls,
+															readOnly,
+															SPI_OK_SELECT, &isNull);
+	if (isNull)
+	{
+		return result;
+	}
+
+	pgbson *resultBson = DatumGetPgBson(resultDatum);
+	pgbsonelement singleElement;
+	PgbsonToSinglePgbsonElement(resultBson, &singleElement);
+
+	bson_iter_t arrayIterator;
+	BsonValueInitIterator(&singleElement.bsonValue, &arrayIterator);
+
+	/* index queue documents */
+	bson_value_t failedIndexComment = { 0 };
+	bool isAnyIndexFailed = false;
+	int numIndexBuilds = 0;
+	int maxCmdStatus = IndexCmdStatus_Unknown;
+	while (bson_iter_next(&arrayIterator))
+	{
+		bson_iter_t docIterator;
+		BsonValueInitIterator(bson_iter_value(&arrayIterator), &docIterator);
+
+		int cmdStatus = IndexCmdStatus_Unknown;
+		bson_value_t comment = { 0 };
+		int attemptCount = 0;
+		while (bson_iter_next(&docIterator))
+		{
+			const char *key = bson_iter_key(&docIterator);
+			if (strcmp(key, "index_cmd_status") == 0)
+			{
+				cmdStatus = BsonValueAsInt32(bson_iter_value(&docIterator));
+			}
+			else if (strcmp(key, "comment") == 0)
+			{
+				comment = *bson_iter_value(&docIterator);
+			}
+			else if (strcmp(key, "attempt") == 0)
+			{
+				attemptCount = BsonValueAsInt32(bson_iter_value(&docIterator));
+			}
+		}
+
+		if (cmdStatus >= IndexCmdStatus_Failed)
+		{
+			failedIndexComment = comment;
+			isAnyIndexFailed = true;
+		}
+
+		maxCmdStatus = Max(maxCmdStatus, cmdStatus);
+
+		if (attemptCount > MaxIndexBuildAttempts)
+		{
+			if (comment.value_type != BSON_TYPE_EOD)
+			{
+				failedIndexComment = comment;
+			}
+			else
+			{
+				result->errmsg = "Failed to create index";
+				result->errcode = ERRCODE_BLACKBOXDB_INTERNALERROR;
+			}
+			isAnyIndexFailed = true;
+		}
+
+		numIndexBuilds++;
+	}
+
+	if (failedIndexComment.value_type != BSON_TYPE_EOD || isAnyIndexFailed)
+	{
+		result->ok = false;
+		result->finish = true;
+		pgbson *comment = NULL;
+		if (failedIndexComment.value_type != BSON_TYPE_EOD)
+		{
+			comment = PgbsonInitFromDocumentBsonValue(&failedIndexComment);
+			ParseErrorCommentFromQueue(comment, result);
+		}
+
+		/* Make sure that we always set errmsg and errcode because ok = false*/
+		if (result->errmsg == NULL)
+		{
+			/* index failed but empty comment in queue. */
+			elog(LOG, "Index creation failed with empty comment in queue, status %d",
+				 maxCmdStatus);
+			result->errmsg = "Failed to create index";
+			result->errcode = ERRCODE_BLACKBOXDB_INTERNALERROR;
+		}
+
+		return result;
+	}
+
+	if (numIndexBuilds == 0)
+	{
+		/* There's none in the queue, get index build status from the main index queue */
+		int validIndexCount = IndexIdListGetValidCount(indexIdList);
+		if (validIndexCount == list_length(indexIdList) || validIndexCount == 0)
+		{
+			result->ok = true;
+			result->finish = true;
+		}
+		else
+		{
+			ereport(ERROR, (errcode(ERRCODE_BLACKBOXDB_INTERNALERROR),
+							errmsg(
+								"Build Index failed because there are not enough valid indexes in metadata table. Requested %d, found %d",
+								list_length(indexIdList), validIndexCount),
+							errdetail_log(
+								"Build Index failed. Index builds was empty, but main index table didn't have the index. Requested %d, found %d",
+								list_length(indexIdList), validIndexCount)));
+		}
+	}
+
+	/* Some or all are in progress and no errors. */
+	return result;
+}
+
+
+/* Parses the error comment bson and adds it in the BuildIndexesResult */
+void
+ParseErrorCommentFromQueue(pgbson *comment, BuildIndexesResult *result)
+{
+	bson_iter_t iter;
+	PgbsonInitIterator(comment, &iter);
+	while (bson_iter_next(&iter))
+	{
+		const char *key = bson_iter_key(&iter);
+		if (strcmp(key, ErrMsgKey) == 0)
+		{
+			const char *string = bson_iter_utf8(&iter, NULL);
+			result->errmsg = pstrdup(string);
+		}
+		else if (strcmp(key, ErrCodeKey) == 0)
+		{
+			result->errcode = BsonValueAsInt32(bson_iter_value(&iter));
+		}
+		else
+		{
+			ereport(ERROR, (errmsg("unknown field received from comment %s", key),
+							errdetail_log("unknown field received from comment %s",
+										  key)));
+		}
+	}
+}
+
+
+/*
+ * Given a list of index_id's gets the count of indexes
+ * in the main index table that are valid.
+ */
+static int
+IndexIdListGetValidCount(const List *indexIdList)
+{
+	const char *cmdStr =
+		FormatSqlQuery("SELECT COUNT(*)::int4 FROM %s.collection_indexes "
+					   "WHERE index_id =ANY($1) AND index_is_valid = true",
+					   ApiCatalogSchemaName);
+
+	bool readOnly = true;
+	int argCount = 1;
+	Oid argTypes[1];
+	Datum argValues[1];
+	char argNulls[1] = { ' ' };
+
+	argTypes[0] = INT4ARRAYOID;
+	argValues[0] = PointerGetDatum(IntListGetPgIntArray(indexIdList));
+
+	bool isNull;
+	Datum resultDatum = ExtensionExecuteQueryWithArgsViaSPI(cmdStr, argCount, argTypes,
+															argValues, argNulls,
+															readOnly,
+															SPI_OK_SELECT, &isNull);
+
+	if (isNull)
+	{
+		return 0;
+	}
+
+	return DatumGetInt32(resultDatum);
+}
+
+
+static pgbson *
+MakeBuildIndexesMsg(BuildIndexesResult *result)
+{
+	/* { "raw" :
+	 *      { "defaultShard" :
+	 *          {
+	 *              "ok" : { "$numberInt" : "0" },
+	 *              "errmsg" : "error",
+	 *              "code" : { "$numberInt" : "1" }
+	 *          }
+	 *      },
+	 *      "finish" : { "$numberInt" : "1" },
+	 *      "ok" : { "$numberInt" : "0" }
+	 *  }
+	 */
+	pgbson_writer outerWriter;
+	PgbsonWriterInit(&outerWriter);
+
+	if (!result->ok)
+	{
+		pgbson_writer rawShardResultWriter;
+		PgbsonWriterStartDocument(&outerWriter, "raw", strlen("raw"),
+								  &rawShardResultWriter);
+
+		pgbson_writer writer;
+		PgbsonWriterStartDocument(&rawShardResultWriter, "defaultShard", strlen(
+									  "defaultShard"), &writer);
+
+		PgbsonWriterAppendInt32(&writer, "ok", strlen("ok"), result->ok);
+		if (result->errcode == ERRCODE_T_R_DEADLOCK_DETECTED)
+		{
+			result->errmsg = "deadlock detected. createIndexes() command "
+							 "might cause deadlock when there is a "
+							 "concurrent operation that require exclusive "
+							 "access on the same collection";
+		}
+		else if (result->errcode == ERRCODE_UNDEFINED_TABLE)
+		{
+			result->errcode = ERRCODE_BLACKBOXDB_INDEXBUILDABORTED;
+			result->errmsg = COLLIDX_CONCURRENTLY_DROPPED_RECREATED_ERRMSG;
+		}
+
+		PgbsonWriterAppendUtf8(&writer, "errmsg", strlen("errmsg"), result->errmsg);
+		PgbsonWriterAppendInt32(&writer, "code", strlen("code"), result->errcode);
+
+		PgbsonWriterEndDocument(&rawShardResultWriter, &writer);
+		PgbsonWriterEndDocument(&outerWriter, &rawShardResultWriter);
+	}
+	PgbsonWriterAppendInt32(&outerWriter, FinishKey, FinishKeyLength, result->finish);
+	PgbsonWriterAppendInt32(&outerWriter, "ok", strlen("ok"), result->ok);
+	return PgbsonWriterGetPgbson(&outerWriter);
+}
+
+
+/*
+ * Builds response for command_create_indexes_background using buildIndexBson, requestDetailBson and ok.
+ */
+static Datum
+ComposeBuildIndexResponse(FunctionCallInfo fcinfo, pgbson *buildIndexBson,
+						  pgbson *requestDetailBson, bool ok)
+{
+	Datum values[3] = { 0 };
+	bool isNulls[3] = { false, false, false };
+	values[0] = PointerGetDatum(buildIndexBson);
+	values[1] = BoolGetDatum(ok);
+	values[2] = PointerGetDatum(requestDetailBson);
+
+	/* fetch TupleDesc for result, not interested in resultTypeId */
+	Oid *resultTypeId = NULL;
+	TupleDesc resultTupDesc = NULL;
+	get_call_result_type(fcinfo, resultTypeId, &resultTupDesc);
+
+	return HeapTupleGetDatum(heap_form_tuple(resultTupDesc, values, isNulls));
+}
+
+
+/*
+ * Builds response for command_check_build_index_status using bson, ok and finish.
+ */
+static Datum
+ComposeCheckIndexStatusResponse(FunctionCallInfo fcinfo, pgbson *bson, bool ok, bool
+								finish)
+{
+	Datum values[3] = { 0 };
+	bool isNulls[3] = { false, false, false };
+	values[0] = PointerGetDatum(bson);
+	values[1] = BoolGetDatum(ok);
+	values[2] = BoolGetDatum(finish);
+
+	/* fetch TupleDesc for result, not interested in resultTypeId */
+	Oid *resultTypeId = NULL;
+	TupleDesc resultTupDesc = NULL;
+	get_call_result_type(fcinfo, resultTypeId, &resultTupDesc);
+
+	return HeapTupleGetDatum(heap_form_tuple(resultTupDesc, values, isNulls));
+}
+
+
+static void
+TryDropReindexedCollectionIndex(IndexDetails *indexDetails)
+{
+	if (indexDetails == NULL)
+	{
+		return;
+	}
+
+	if (SkipIndexCleanupOnReindex)
+	{
+		return;
+	}
+
+	/*
+	 * Clean up the old physical index left behind by a reindex-via-create.
+	 * Post-processing renamed the old index to its "_ccold" name and swapped the
+	 * rebuilt index into place, but on the success path those renames are still
+	 * uncommitted here.
+	 *
+	 * Whether the old index must be pre-committed before the drop depends on how
+	 * the drop is issued, which in turn depends on whether the "_ccold" index is
+	 * backed by a constraint:
+	 *
+	 *   - For a plain (non-constraint) index the drop below issues DROP INDEX
+	 *     CONCURRENTLY over a separate connection that cannot see the uncommitted
+	 *     rename and would report "_ccold" as missing and skip it, leaving the old
+	 *     index behind. Commit first so the rename is visible.
+	 *   - Constraint-backed indexes (unique and _id) are dropped via ALTER TABLE
+	 *     DROP CONSTRAINT through SPI in this same session, which sees the
+	 *     uncommitted rename, so they must NOT be pre-committed.
+	 *
+	 * Derive this from the physical catalog (the same get_index_constraint probe
+	 * DropPostgresIndexWithSuffix performs internally when it issues the drop)
+	 * rather than from the logical index spec. Using the spec's "unique" flag as a
+	 * proxy could disagree with the index's actual on-disk constraint state (e.g.
+	 * a unique build that failed before registering the constraint), and the
+	 * pre-commit decision must match exactly how the drop is issued or we risk
+	 * leaving the old index behind. The "_ccold" index is produced by an
+	 * in-session, still-uncommitted rename, so it is visible to get_relname_relid
+	 * in this session.
+	 */
+	bool isIdIndex = strncmp(indexDetails->indexSpec.indexName,
+							 ID_INDEX_NAME, strlen(ID_INDEX_NAME)) == 0;
+	bool isConstraintBacked = isIdIndex;
+	if (!isConstraintBacked)
+	{
+		const char *ccoldIndexName = psprintf(
+			DOCUMENT_DATA_TABLE_INDEX_NAME_FORMAT "_ccold",
+			indexDetails->indexId);
+		Oid ccoldIndexOid = get_relname_relid(ccoldIndexName,
+											  ApiDataNamespaceOid());
+		isConstraintBacked = OidIsValid(ccoldIndexOid) &&
+							 OidIsValid(get_index_constraint(ccoldIndexOid));
+	}
+	if (!isConstraintBacked)
+	{
+		PopAllActiveSnapshots();
+		CommitTransactionCommand();
+		StartTransactionCommand();
+	}
+
+	PG_TRY();
+	{
+		bool missingOk = true;
+		bool concurrently = true;
+		DropPostgresIndexWithSuffix(
+			indexDetails->collectionId, indexDetails,
+			concurrently, missingOk, "_ccnew");
+
+		DropPostgresIndexWithSuffix(
+			indexDetails->collectionId, indexDetails,
+			concurrently, missingOk, "_ccold");
+	}
+	PG_CATCH();
+	{
+		ereport(DEBUG1, (errmsg("couldn't perform clean-up for some of the "
+								"invalid indexes left behind")));
+
+		/*
+		 * We don't much expect any error condition to happen here, but
+		 * we still need to be defensive against any kind of failures, such
+		 * as OOM.
+		 *
+		 * For this reason, here we swallow any errors that we could get
+		 * during cleanup.
+		 */
+		FlushErrorState();
+
+		/* need to abort the outer transaction to fire abort handler */
+		PopAllActiveSnapshots();
+		AbortCurrentTransaction();
+		StartTransactionCommand();
+	}
+	PG_END_TRY();
+}
+
+
+static void
+TryDropCollectionIndexFromIndexDetails(IndexDetails *indexDetails, bool isReindex)
+{
+	if (SkipIndexCleanupOnFailure)
+	{
+		return;
+	}
+
+	PG_TRY();
+	{
+		if (indexDetails != NULL)
+		{
+			bool missingOk = true;
+			bool concurrently = true;
+			bool forceReadWrite = EnableDropInvalidIndexesOnReadOnly;
+			if (isReindex)
+			{
+				DropPostgresIndexWithSuffix(
+					indexDetails->collectionId, indexDetails,
+					concurrently, missingOk, "_ccnew");
+
+				DropPostgresIndexWithSuffix(
+					indexDetails->collectionId, indexDetails,
+					concurrently, missingOk, "_ccold");
+			}
+			else
+			{
+				/* we might or might not have created the pg index .. */
+				DropPostgresIndex(indexDetails->collectionId, indexDetails->indexId,
+								  indexDetails->indexSpec.indexUnique,
+								  concurrently, forceReadWrite, missingOk);
+			}
+		}
+	}
+	PG_CATCH();
+	{
+		ereport(DEBUG1, (errmsg("couldn't perform clean-up for some of the "
+								"invalid indexes left behind")));
+
+		/*
+		 * We don't much expect any error condition to happen here, but
+		 * we still need to be defensive against any kind of failures, such
+		 * as OOM.
+		 *
+		 * For this reason, here we swallow any errors that we could get
+		 * during cleanup.
+		 */
+		FlushErrorState();
+
+		/* need to abort the outer transaction to fire abort handler */
+		PopAllActiveSnapshots();
+		AbortCurrentTransaction();
+		StartTransactionCommand();
+	}
+	PG_END_TRY();
+}
+
+
+/*
+ * Wrapper around DropPostgresIndex which takes indexId as input and deletes the corresponding postgres Index.
+ */
+static void
+TryDropCollectionIndex(int indexId, bool isReindex)
+{
+	IndexDetails *indexDetails = IndexIdGetIndexDetails(indexId);
+	TryDropCollectionIndexFromIndexDetails(indexDetails, isReindex);
+}
+
+
+/*
+ * RunIndexCommandOnMetadataCoordinator runs the passed in query on coordinator only.
+ */
+static pgbson *
+RunIndexCommandOnMetadataCoordinator(const char *query, int expectedSpiOk)
+{
+	if (IsMetadataCoordinator())
+	{
+		bool isNull = false;
+		bool readOnly = false;
+		Datum result = ExtensionExecuteQueryViaSPI(query, readOnly, expectedSpiOk,
+												   &isNull);
+		if (isNull)
+		{
+			ereport(ERROR, (errcode(ERRCODE_BLACKBOXDB_INTERNALERROR),
+							errmsg(
+								"No response"),
+							errdetail_log(
+								"No response")));
+		}
+
+		return DatumGetPgBson(result);
+	}
+	else
+	{
+		DistributedRunCommandResult result = RunCommandOnMetadataCoordinator(query);
+		if (!result.success)
+		{
+			ereport(ERROR, (errcode(ERRCODE_BLACKBOXDB_INTERNALERROR),
+							errmsg(
+								"Error submitting background index %s",
+								text_to_cstring(result.response)),
+							errdetail_log(
+								"Error submitting index request %s",
+								text_to_cstring(result.response))));
+		}
+
+		pgbson *responseBson;
+		char *response = text_to_cstring(result.response);
+		if (IsBsonHexadecimalString(response))
+		{
+			responseBson = PgbsonInitFromHexadecimalString(response);
+		}
+		else
+		{
+			/* It's a json string use json deserialization */
+			responseBson = PgbsonInitFromJson(response);
+		}
+
+		return responseBson;
+	}
+}
+
+
+static bool
+PruneSkippableIndexes(MemoryContext mcxt)
+{
+	bool prunedIndexes = false;
+	List *excludeCollectionIds = NIL;
+	IndexCmdRequest *volatile request = GetSkippableRequestFromIndexQueue(
+		IndexQueueEvictionIntervalInSec, excludeCollectionIds, mcxt);
+
+	while (request != NULL)
+	{
+		CHECK_FOR_INTERRUPTS();
+		if (EnableDropInvalidIndexesOnReadOnly)
+		{
+			if (XactReadOnly)
+			{
+				/* This happens if default_transaction_readonly gets set to true
+				 * in this case, start a new transaction with read-write semantics
+				 * so that the drop index below can succeed.
+				 */
+				PopAllActiveSnapshots();
+				CommitTransactionCommand();
+				StartTransactionCommand();
+				SetGUCLocally("transaction_read_only", "false");
+			}
+		}
+
+		/* Acquire the lock to drop the index */
+		if (AcquireAdvisoryExclusiveSessionLockForCreateIndexBackground(
+				request->collectionId) != LOCKACQUIRE_NOT_AVAIL)
+		{
+			prunedIndexes = true;
+			elog_unredacted(
+				"Removing skippable request permanently index_id: %d and collectionId: "
+				UINT64_FORMAT,
+				request->indexId, request->collectionId);
+
+			if (request->cmdType == CREATE_INDEX_COMMAND_TYPE)
+			{
+				/* remove any stale entry from PG */
+				bool isReindex = false;
+				TryDropCollectionIndex(request->indexId, isReindex);
+
+				/* remove the request permanently */
+				RemoveRequestFromIndexQueue(request->indexId,
+											request->cmdType);
+				DeleteCollectionIndexRecord(request->collectionId, request->indexId);
+			}
+			else
+			{
+				bool isReindex = request->cmdType == REINDEX_COMMAND_TYPE;
+				TryDropCollectionIndex(request->indexId, isReindex);
+
+				/* remove the request permanently */
+				RemoveRequestFromIndexQueue(request->indexId,
+											request->cmdType);
+			}
+
+			ReleaseAdvisoryExclusiveSessionLockForCreateIndexBackground(
+				request->collectionId);
+
+			/* Commit the delete before asking for the next one */
+			PopAllActiveSnapshots();
+			CommitTransactionCommand();
+			StartTransactionCommand();
+		}
+		else
+		{
+			/* We hit this due to a concurrent lock acquisition
+			 * We will try again next time
+			 */
+			ReleaseAdvisoryExclusiveSessionLockForCreateIndexBackground(
+				request->collectionId);
+			MemoryContext oldContext = MemoryContextSwitchTo(mcxt);
+			uint64_t *collectionid = palloc0(sizeof(uint64_t));
+			*collectionid = request->collectionId;
+			excludeCollectionIds = lappend(excludeCollectionIds, collectionid);
+			MemoryContextSwitchTo(oldContext);
+		}
+
+		pfree(request);
+
+		/* Check for more prunable requests */
+		request = GetSkippableRequestFromIndexQueue(
+			IndexQueueEvictionIntervalInSec, excludeCollectionIds, mcxt);
+	}
+
+	list_free_deep(excludeCollectionIds);
+	excludeCollectionIds = NIL;
+
+	return prunedIndexes;
+}

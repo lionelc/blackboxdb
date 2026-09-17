@@ -1,0 +1,18 @@
+[package]
+name = "blackboxdb_macros"
+description = "Compile-time proc macros for BlackboxDB gateway error code generation."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+name = "blackboxdb_macros"
+path = "src/lib.rs"
+proc-macro = true
+
+[lints]
+workspace = true

@@ -1,0 +1,275 @@
+set search_path to blackboxdb_core,blackboxdb_api,blackboxdb_api_catalog,pg_catalog;
+SET citus.next_shard_id TO 7980000;
+SET blackboxdb.next_collection_id TO 7980;
+SET blackboxdb.next_collection_index_id TO 7980;
+
+
+-- insert some docs
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 1, "a": "this is a cat" }');
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 2, "a": "this is a dog" }');
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 3, "a": "these are dogs" }');
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 4, "a": "these are cats" }');
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 5, "a": "these are catatonic" }');
+
+
+-- do a $text query. Should fail (there's no index)
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "cat" } }';
+
+-- create a text index.
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "bson_dollar_ops_text_search", "indexes": [ { "key": { "a": "text" }, "name": "a_text" } ] }', TRUE);
+
+-- now do a $text query. Should succeed.
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "cat" } }';
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "dog" } }';
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "cat | dog" } }';
+
+-- stop-word-only and empty $text queries through index support path (crash fix for QT2QTN)
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "who are you?" } }';
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "the a an" } }';
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "" } }';
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "   " } }';
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "the a an is", "$language": "en" } }';
+
+EXPLAIN (COSTS OFF) SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "cat" } }';
+
+-- invalid queries
+-- $text on subsequent stages should fail.
+WITH r1 AS (SELECT bson_dollar_project(document, '{ "a": 1 }') AS document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search'))
+SELECT document FROM r1 WHERE document @@ '{ "$text": { "$search": "cat" } }';
+
+-- no more than 1 $text:
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$and": [ { "$text": { "$search": "cat" } }, { "$text": { "$search": "dogs" } }] }';
+
+-- Test tsquery stack depth, max depth is 32
+-- 32 should work
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "--------------------------------cat" } }';
+-- one more should fail
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "---------------------------------cat" } }';
+
+CALL blackboxdb_api.drop_indexes('db', '{ "dropIndexes": "bson_dollar_ops_text_search", "index": "a_text" }');
+
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 11, "topic": "apple", "writer": "Carol", "score": 50, "location": "New York", "published": true }');
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 12, "topic": "Apple Store", "writer": "Bob", "score": 5, "location": "San Francisco", "published": false }');
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 13, "topic": "Picking a berry", "writer": "Alice", "score": 90, "location": "London", "published": true }');
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 14, "topic": "picking", "writer": "Carol", "score": 100, "location": "Berlin", "published": false }');
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 15, "topic": "apple and berry", "writer": "Alice", "score": 200, "location": "Paris", "published": true }');
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 16, "topic": "Яблоко", "writer": "David", "score": 80, "location": "Moscow", "published": false }');
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 17, "topic": "pear and berry", "writer": "Bob", "score": 10, "location": "Madrid", "published": true }');
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 18, "topic": "Pear with Berry", "writer": "Carol", "score": 10, "location": "Rome", "published": false }');
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 30, "topic": "Me encanta la miel natural", "writer": "Alice", "score": 10, "location": "Barcelona", "published": true }');
+
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "bson_dollar_ops_text_search", "indexes": [ { "key": { "topic": "text" }, "name": "topic_text" } ] }', TRUE);
+
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "apple" } }' ORDER BY object_id;
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "pick apple" } }' ORDER BY object_id;
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "\"apple store\"" } }' ORDER BY object_id;
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "apple -store" } }' ORDER BY object_id;
+
+-- TODO: this is incorrect, we aren’t diacritic insensitive by default, it should return more documents.
+-- See: https://www.postgresql.org/docs/current/unaccent.html
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "яблоко" } }';
+
+-- this partially works:
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "miel", "$language": "es" } }';
+-- invalid language
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "miel", "$language": "xx" } }';
+
+
+-- try these with the function.
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE blackboxdb_api_internal.bson_dollar_text(document, '{ "": { "$search": "apple" } }') ORDER BY object_id;
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE blackboxdb_api_internal.bson_dollar_text(document, '{ "": { "$search": "pick apple" } }') ORDER BY object_id;
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE blackboxdb_api_internal.bson_dollar_text(document, '{ "": { "$search": "\"apple store\"" } }') ORDER BY object_id;
+
+-- shard collection & try the query again
+SELECT blackboxdb_api.shard_collection('db', 'bson_dollar_ops_text_search', '{ "_id": "hashed" }', false);
+
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "apple" } }' ORDER BY object_id;
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "pick apple" } }' ORDER BY object_id;
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "\"apple store\"" } }' ORDER BY object_id;
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "apple -store" } }' ORDER BY object_id;
+
+-- now repeat the above with default_languages.
+CALL blackboxdb_api.drop_indexes('db', '{ "dropIndexes": "bson_dollar_ops_text_search", "index": "topic_text" }');
+
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 21, "titular": "Manzana", "writer": "xyz", "score": 50 }');
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 22, "titular": "Comprar Manzana", "writer": "efg", "score": 5 }');
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 23, "titular": "Cosechando una baya", "writer": "abc", "score": 90  }');
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 24, "titular": "Cosechar", "writer": "xyz", "score": 100 }');
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 25, "titular": "Manzana con baya", "writer": "abc", "score": 200 }');
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 27, "titular": "Manzana con pera", "writer": "efg", "score": 10 }');
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 28, "titular": "Manzana con pera y baya", "writer": "xyz", "score": 10 }');
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "bson_dollar_ops_text_search", "indexes": [ { "key": { "titular": "text" }, "name": "titular_text", "default_language": "es" } ] }', TRUE);
+
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana" } }' ORDER BY object_id;
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Cosechar" } }' ORDER BY object_id;
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Comprando Manzana" } }' ORDER BY object_id;
+
+-- now add projection.
+SELECT bson_dollar_project(document, '{ "_id": 1, "titular": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana baya cosechar" } }';
+SELECT bson_dollar_add_fields(document, '{ "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana baya cosechar" } }';
+SELECT bson_dollar_project_find(document, '{ "_id": 1, "titular": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana baya cosechar" } }';
+
+SELECT cursorPage, continuation, persistConnection FROM blackboxdb_api.find_cursor_first_page('db', '{ "find": "bson_dollar_ops_text_search", "filter": { "$text": { "$search": "Manzana baya cosechar" } }, "projection": { "_id": 1, "titular": 1, "rank": { "$meta": "textScore" }} }');
+
+-- pipeline cases
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_dollar_ops_text_search", "cursor": {}, "pipeline": [ { "$project": { "_id": 1 } }, { "$match": { "$text": { "$search": "Manzana baya cosechar" } } } ] }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_dollar_ops_text_search", "cursor": {}, "pipeline": [ { "$match": { "$text": { "$search": "Manzana baya cosechar" } } }, { "$sort": { "_id": 1 } } ] }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "bson_dollar_ops_text_search", "cursor": {}, "pipeline": [ { "$match": { "$text": { "$search": "Manzana baya cosechar" } } }, { "$project": { "_id": 1, "titular": 1, "rank": { "$meta": "textScore" } } } ] }');
+
+-- now add sort
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana Cosechando" } }' ORDER BY bson_orderby(document, '{ "score": {"$meta": "textScore"} }') DESC;
+
+-- now add project & sort 
+SELECT bson_dollar_project(document, '{ "_id": 1, "titular": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana Comprando baya" } }' ORDER BY bson_orderby(document, '{ "score": {"$meta": "textScore"} }') DESC;
+
+-- now do group
+WITH r1 AS (SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana" } }' )
+SELECT BSONMAX(bson_expression_get(document, '{ "": "$score" }')), bson_expression_get(document, '{ "": { "$meta": "textScore" } }') FROM r1 GROUP BY bson_expression_get(document, '{ "": { "$meta": "textScore" } }');
+-- BSONMAXWITHEXPR parity test for text search group
+WITH r1 AS (SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "Manzana" } }' )
+SELECT blackboxdb_api_internal.BSONMAXWITHEXPR(document, '{ "": "$score" }', NULL, ''), bson_expression_get(document, '{ "": { "$meta": "textScore" } }') FROM r1 GROUP BY bson_expression_get(document, '{ "": { "$meta": "textScore" } }');
+
+
+-- scenarios without $text should return 'query requires text score metadata, but it is not available'
+SELECT bson_dollar_project(document, '{ "_id": 1, "headline": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "score": { "$exists": true } }';
+SELECT bson_dollar_add_fields(document, '{ "_id": 1, "headline": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "score": { "$exists": true } }';
+SELECT bson_dollar_project_find(document, '{ "_id": 1, "headline": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "score": { "$exists": true } }';
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "score": { "$exists": true } }' ORDER BY bson_orderby(document, '{ "score": {"$meta": "textScore"} }') DESC;
+WITH r1 AS (SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "score": { "$exists": true } }' )
+SELECT BSONMAX(bson_expression_get(document, '{ "": "$score" }')) FROM r1 GROUP BY bson_expression_get(document, '{ "": { "$meta": "textScore" } }');
+-- BSONMAXWITHEXPR parity test (error case - no text query)
+WITH r1 AS (SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "score": { "$exists": true } }' )
+SELECT blackboxdb_api_internal.BSONMAXWITHEXPR(document, '{ "": "$score" }', NULL, '') FROM r1 GROUP BY bson_expression_get(document, '{ "": { "$meta": "textScore" } }');
+
+
+-- test with custom weights.
+CALL blackboxdb_api.drop_indexes('db', '{ "dropIndexes": "bson_dollar_ops_text_search", "index": "titular_text" }');
+
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 31, "alpha": "red blue green", "beta": "yellow orange" }');
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 32, "alpha": "yellow orange blue", "beta": "red blue purple" }');
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "bson_dollar_ops_text_search", "indexes": [ { "key": { "alpha": "text" }, "name": "alpha_1", "weights": { "alpha": 10, "beta": 1 } } ] }', TRUE);
+
+-- returns 31, 32
+SELECT bson_dollar_add_fields(document, '{ "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "red" } }' ORDER BY bson_orderby(document, '{ "score": {"$meta": "textScore"} }') DESC;
+
+-- Returns 32, 31
+SELECT bson_dollar_add_fields(document, '{ "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "orange" } }' ORDER BY bson_orderby(document, '{ "score": {"$meta": "textScore"} }') DESC;
+
+-- test wildcard handling
+-- this is a variant of the JS test: blog_textwild.js
+CALL blackboxdb_api.drop_indexes('db', '{ "dropIndexes": "bson_dollar_ops_text_search", "index": "alpha_1" }');
+
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 33, "heading": "my travel story", "content": "this is a new travel blog I am writing. cheers sam" }');
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 34, "heading": "my 2nd story", "content": "this is a new travel blog I am writing. cheers" }');
+SELECT blackboxdb_api.insert_one('db', 'bson_dollar_ops_text_search', '{ "_id": 35, "heading": "mountains are Beautiful for writing sam", "content": "this is a new travel blog I am writing. cheers" }');
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "bson_dollar_ops_text_search", "indexes": [ { "key": { "dummy": "text", "$**": "text" }, "name": "alpha_1" } ] }', TRUE);
+
+SELECT document FROM blackboxdb_api.collection('db', 'bson_dollar_ops_text_search') WHERE document @@ '{ "$text": { "$search": "travel" } }' ORDER BY object_id;
+
+CALL blackboxdb_api.drop_indexes('db', '{ "dropIndexes": "bson_dollar_ops_text_search", "index": "alpha_1" }');
+
+-- recreate this so that test output for further tests does not change
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "bson_dollar_ops_text_search", "indexes": [ { "key": { "alpha": "text" }, "name": "alpha_1", "weights": { "alpha": 10, "beta": 1 } } ] }', TRUE);
+
+-- Test TSQuery generation.
+SELECT blackboxdb_api_internal.bson_query_to_tsquery('{ "$search": "\"mental health\"" }'::blackboxdb_core.bson);
+SELECT blackboxdb_api_internal.bson_query_to_tsquery('{ "$search": "\"mental health\" wellbeing nutrition" }'::blackboxdb_core.bson);
+SELECT blackboxdb_api_internal.bson_query_to_tsquery('{ "$search": "hydrate stretch recover" }'::blackboxdb_core.bson);
+SELECT blackboxdb_api_internal.bson_query_to_tsquery('{ "$search": "\"cardio training\"" }'::blackboxdb_core.bson);
+SELECT blackboxdb_api_internal.bson_query_to_tsquery('{ "$search": "cardio -training" }'::blackboxdb_core.bson);
+SELECT blackboxdb_api_internal.bson_query_to_tsquery('{ "$search": "cardio -training -burnout" }'::blackboxdb_core.bson);
+SELECT blackboxdb_api_internal.bson_query_to_tsquery('{ "$search": "\"cardio training\" -fatigue -burnout" }'::blackboxdb_core.bson);
+SELECT blackboxdb_api_internal.bson_query_to_tsquery('{ "$search": "\"cardio training\" diet plan -fatigue -burnout" }'::blackboxdb_core.bson);
+SELECT blackboxdb_api_internal.bson_query_to_tsquery('{ "$search": "\"cardio training\" diet plan -fatigue -burnout wellbeing" }'::blackboxdb_core.bson);
+
+-- this matches
+SELECT to_tsvector('consistent cardio training with a diet plan improves wellbeing') @@ blackboxdb_api_internal.bson_query_to_tsquery('{ "$search": "\"cardio training\" diet plan -fatigue -burnout wellbeing" }'::blackboxdb_core.bson);
+
+-- this shouldn't match
+SELECT to_tsvector('cardio training with a diet plan can lead to fatigue') @@ blackboxdb_api_internal.bson_query_to_tsquery('{ "$search": "\"cardio training\" diet plan -fatigue -burnout wellbeing" }'::blackboxdb_core.bson);
+SELECT to_tsvector('stretching improves general wellbeing and focus') @@ blackboxdb_api_internal.bson_query_to_tsquery('{ "$search": "\"cardio training\" diet plan -fatigue -burnout wellbeing" }'::blackboxdb_core.bson);
+SELECT to_tsvector('burnout is a risk when doing cardio training without breaks') @@ blackboxdb_api_internal.bson_query_to_tsquery('{ "$search": "\"cardio training\" diet plan -fatigue -burnout wellbeing" }'::blackboxdb_core.bson);
+
+-- Phrase: First one doesn't match, second one does.
+SELECT to_tsvector('consistent stretching is the cornerstone of wellbeing') @@ blackboxdb_api_internal.bson_query_to_tsquery('{ "$search": "\"cardio training\" diet plan -fatigue -burnout wellbeing" }'::blackboxdb_core.bson);
+SELECT to_tsvector('a good diet plan improves long-term wellbeing') @@ blackboxdb_api_internal.bson_query_to_tsquery('{ "$search": "diet plan -fatigue -burnout wellbeing" }'::blackboxdb_core.bson);
+-- Use language check
+-- synonyms within a language work.
+SELECT to_tsvector('portuguese', 'Em atualidade, sempre é possível manter-se saudável') @@ blackboxdb_api_internal.bson_query_to_tsquery('{ "$search": "atualmente", "$language": "pt" }'::blackboxdb_core.bson);
+
+-- Only one text index allowed
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "bson_dollar_ops_text_search2", "indexes": [ { "key": { "gamma": "text" }, "name": "gamma_text" } ] }', TRUE);
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "bson_dollar_ops_text_search2", "indexes": [ { "key": { "gamma": "text" }, "name": "gamma_text" } ] }', TRUE);
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "bson_dollar_ops_text_search", "indexes": [ { "key": { "desc": "text", "extra": "text" }, "name": "desc_text" } ] }', TRUE);
+
+-- ===================================================================
+-- Tests for dot-delimited text search (dots treated as word boundaries)
+-- ===================================================================
+
+-- Setup: create a collection with dotted values
+SELECT blackboxdb_api.insert_one('db', 'text_dot_search', '{ "_id": 1, "name": "person.0.age" }');
+SELECT blackboxdb_api.insert_one('db', 'text_dot_search', '{ "_id": 2, "name": "hello world" }');
+SELECT blackboxdb_api.insert_one('db', 'text_dot_search', '{ "_id": 3, "name": "person" }');
+SELECT blackboxdb_api.insert_one('db', 'text_dot_search', '{ "_id": 4, "name": "foo.bar.baz" }');
+SELECT blackboxdb_api.insert_one('db', 'text_dot_search', '{ "_id": 5, "name": "hello person.0.age world" }');
+SELECT blackboxdb_api.insert_one('db', 'text_dot_search', '{ "_id": 6, "name": "age" }');
+SELECT blackboxdb_api.insert_one('db', 'text_dot_search', '{ "_id": 7, "name": ".leading.dot" }');
+SELECT blackboxdb_api.insert_one('db', 'text_dot_search', '{ "_id": 8, "name": "trailing.dot." }');
+SELECT blackboxdb_api.insert_one('db', 'text_dot_search', '{ "_id": 9, "name": "is.a" }');
+SELECT blackboxdb_api.insert_one('db', 'text_dot_search', '{ "_id": 10, "name": "the.an" }');
+SELECT blackboxdb_api.insert_one('db', 'text_dot_search', '{ "_id": 11, "name": "www.blackboxdb.com is awesome" }');
+SELECT blackboxdb_api.insert_one('db', 'text_dot_search', '{ "_id": 12, "name": "www blackboxdb com is awesome" }');
+
+SET blackboxdb.enableDottedValueTextIndexTerms to off;
+-- Create text index with dotted value index terms disabled.
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "text_dot_search", "indexes": [ { "key": { "name": "text" }, "name": "name_text" } ] }', TRUE);
+
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "person" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "age" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "person.0.age" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "foo" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "bar" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "hello" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "leading" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "trailing" } }';
+-- "is.a" should match doc 9 via the host-type fallback lexeme
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "is.a" } }';
+-- "the.an" should match doc 10
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "the.an" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "www.blackboxdb.com" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "www blackboxdb com" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "\"person.0.age\"" } }';
+
+SET blackboxdb.enableDottedValueTextIndexTerms to on;
+-- Drop and recreate index with dotted value index terms enabled.
+CALL blackboxdb_api.drop_indexes('db', '{ "dropIndexes": "text_dot_search", "index": "name_text" }');
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "text_dot_search", "indexes": [ { "key": { "name": "text" }, "name": "name_text" } ] }', TRUE);
+
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "person" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "age" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "person.0.age" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "foo" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "bar" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "hello" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "leading" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "trailing" } }';
+-- "is.a" / "the.an" should not match anymore docs because the dotted lexeme "is.a" / "the.an" are now further decomposed and then results into stop words.
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "is.a" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "the.an" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "www.blackboxdb.com" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "www blackboxdb com" } }';
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "\"person.0.age\"" } }';
+
+-- Shard the collection and verify dotted text search still works
+SELECT blackboxdb_api.shard_collection('db', 'text_dot_search', '{ "_id": "hashed" }', false);
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "person" } }' ORDER BY object_id;
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "person.0.age" } }' ORDER BY object_id;
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "foo.bar.baz" } }' ORDER BY object_id;
+SELECT bson_dollar_project(document, '{ "_id": 1, "name": 1, "rank": { "$meta": "textScore" }}') FROM blackboxdb_api.collection('db', 'text_dot_search') WHERE document @@ '{ "$text": { "$search": "\"person.0.age\"" } }' ORDER BY object_id;
+
+-- Reset the GUC to default to avoid interactions with other tests
+RESET blackboxdb.enableDottedValueTextIndexTerms;

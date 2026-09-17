@@ -1,0 +1,114 @@
+SET search_path TO blackboxdb_core,blackboxdb_api,blackboxdb_api_catalog,blackboxdb_api_internal;
+
+SET blackboxdb.next_collection_id TO 99700;
+SET blackboxdb.next_collection_index_id TO 99700;
+
+-- Setup: create collections for lookup project null test
+SELECT blackboxdb_api.insert_one('db','lookup_null_test_src',' { "_id" : 1, "item_name" : {"a": "x"} }', NULL);
+
+-- Test 1: bson_dollar_lookup_project with explicit NULL elements in array should not crash
+-- This reproduces GitHub issue #465 where a LEFT JOIN with no match + sub-pipeline
+-- produces NULL array elements that cause a segfault in BsonLookUpProject.
+SELECT bson_dollar_lookup_project(
+    '{ "a": 1 }'::bson,
+    ARRAY[NULL::bson, '{ "b": 2 }'::bson],
+    'results'::text
+);
+
+-- Test 2: bson_dollar_lookup_project with all-NULL array should return empty array
+SELECT bson_dollar_lookup_project(
+    '{ "a": 1 }'::bson,
+    ARRAY[NULL::bson, NULL::bson],
+    'results'::text
+);
+
+-- Test 3: bson_dollar_lookup_project with no NULLs should work normally
+SELECT bson_dollar_lookup_project(
+    '{ "a": 1 }'::bson,
+    ARRAY['{ "b": 2 }'::bson, '{ "c": 3 }'::bson],
+    'results'::text
+);
+
+-- Test 4: Full end-to-end scenario from the issue - LEFT JOIN with non-existent
+-- collection produces NULLs that flow through bson_dollar_add_fields into array_agg.
+WITH lookup_stage as (
+    WITH t1 AS (
+        SELECT document,
+               bson_dollar_lookup_extract_filter_expression(document, '{"setEqual" : "item_name"}') AS match,
+               'mdocs' AS name
+        FROM blackboxdb_api.collection('db', 'lookup_null_test_src')
+    )
+    SELECT t1.document, t2_agg.document as matched
+    FROM t1
+    LEFT JOIN LATERAL (
+        SELECT document FROM blackboxdb_api.collection('db', 'lookup_null_test_nonexistent') AS t2
+    ) t2_agg ON TRUE
+),
+subpipeline_stage1 as (
+    SELECT lookup_stage.document,
+           bson_dollar_add_fields(lookup_stage.matched, '{"new": "field"}') as matched
+    FROM lookup_stage
+)
+SELECT bson_dollar_lookup_project(
+    subpipeline_stage1.document,
+    COALESCE(array_agg(subpipeline_stage1.matched::blackboxdb_core.bson), '{}'::bson[]),
+    'matched_docs'::text
+)
+FROM subpipeline_stage1
+GROUP BY subpipeline_stage1.document;
+
+-- ============================================================================
+-- bson_dollar_lookup_join_filter: null lookup value against array-index paths.
+--
+-- The join filter encodes the local side's join values as an $in array applied
+-- to the foreign field, returning whether the foreign document matches. A null
+-- local value must match a foreign field that is null OR missing, but must NOT
+-- match an out-of-bounds (or scalar-blocked) positional array index -- an index
+-- that addresses no element is not a missing field. These assert the documented
+-- wire-protocol-compatible semantics.
+-- Signature: bson_dollar_lookup_join_filter(foreignDoc, { "<path>": <inArray> }, '<path>')
+-- ============================================================================
+
+-- Out-of-bounds foreign array index must NOT match a null lookup value (false).
+SELECT bson_dollar_lookup_join_filter('{ "_id": 1, "ff": [ "a", "b" ] }'::bson, '{ "ff.2": [ null ] }'::bson, 'ff.2');
+-- In-bounds null element matches (true).
+SELECT bson_dollar_lookup_join_filter('{ "_id": 2, "ff": [ "a", "b", null ] }'::bson, '{ "ff.2": [ null ] }'::bson, 'ff.2');
+-- In-bounds concrete element does not match (false).
+SELECT bson_dollar_lookup_join_filter('{ "_id": 3, "ff": [ "a", "b", "c" ] }'::bson, '{ "ff.2": [ null ] }'::bson, 'ff.2');
+-- Empty foreign array: index out of bounds, no match (false).
+SELECT bson_dollar_lookup_join_filter('{ "_id": 4, "ff": [ ] }'::bson, '{ "ff.2": [ null ] }'::bson, 'ff.2');
+-- Foreign field missing entirely: null matches a missing path (true).
+SELECT bson_dollar_lookup_join_filter('{ "_id": 5, "gg": 1 }'::bson, '{ "ff.2": [ null ] }'::bson, 'ff.2');
+-- Array of documents lacking the numeric field name "2": a missing field, matches (true).
+SELECT bson_dollar_lookup_join_filter('{ "_id": 6, "ff": [ { "x": 1 } ] }'::bson, '{ "ff.2": [ null ] }'::bson, 'ff.2');
+-- Document element that carries the field "2" = null: matches (true).
+SELECT bson_dollar_lookup_join_filter('{ "_id": 7, "ff": [ { "2": null } ] }'::bson, '{ "ff.2": [ null ] }'::bson, 'ff.2');
+-- Document element that carries the field "2" = concrete: no match (false).
+SELECT bson_dollar_lookup_join_filter('{ "_id": 8, "ff": [ { "2": 9 } ] }'::bson, '{ "ff.2": [ null ] }'::bson, 'ff.2');
+-- Foreign field is scalar null: matches (true).
+SELECT bson_dollar_lookup_join_filter('{ "_id": 9, "ff": null }'::bson, '{ "ff.2": [ null ] }'::bson, 'ff.2');
+-- Foreign field is a scalar: the further path is a missing path, matches (true).
+SELECT bson_dollar_lookup_join_filter('{ "_id": 10, "ff": "a" }'::bson, '{ "ff.2": [ null ] }'::bson, 'ff.2');
+
+-- Scalar-blocked positional descent: ff.1 = "b" (scalar) and ".b" cannot descend,
+-- so the positional index is blocked -- no match (false).
+SELECT bson_dollar_lookup_join_filter('{ "_id": 11, "ff": [ "a", "b" ] }'::bson, '{ "ff.1.b": [ null ] }'::bson, 'ff.1.b');
+
+-- Deep leaf below an in-bounds index into a nested array: an element resolves the
+-- leaf to null, matches (true).
+SELECT bson_dollar_lookup_join_filter('{ "_id": 12, "ff": [ [ { "b": null } ], [ { "b": 5 } ] ] }'::bson, '{ "ff.0.b.c": [ null ] }'::bson, 'ff.0.b.c');
+-- Deep leaf missing under a concrete scalar reached via field descent (not a
+-- positional index): "b" = 5 has no "c", a missing leaf, matches (true).
+SELECT bson_dollar_lookup_join_filter('{ "_id": 13, "ff": [ [ { "b": 5 } ] ] }'::bson, '{ "ff.0.b.c": [ null ] }'::bson, 'ff.0.b.c');
+
+-- Order independence: a null-yielding element and an out-of-bounds element in
+-- either order both match (true) -- the result must never depend on element order.
+SELECT bson_dollar_lookup_join_filter('{ "_id": 14, "ff": [ { "b": null }, { "b": [ 10 ] } ] }'::bson, '{ "ff.b.5": [ null ] }'::bson, 'ff.b.5');
+SELECT bson_dollar_lookup_join_filter('{ "_id": 15, "ff": [ { "b": [ 10 ] }, { "b": null } ] }'::bson, '{ "ff.b.5": [ null ] }'::bson, 'ff.b.5');
+
+-- Non-null lookup values still join normally: in-bounds value present (true) / absent (false).
+SELECT bson_dollar_lookup_join_filter('{ "_id": 16, "ff": [ "a", "b" ] }'::bson, '{ "ff.0": [ "a" ] }'::bson, 'ff.0');
+SELECT bson_dollar_lookup_join_filter('{ "_id": 17, "ff": [ "a", "b" ] }'::bson, '{ "ff.0": [ "z" ] }'::bson, 'ff.0');
+-- A null mixed with a concrete value in the lookup set against an out-of-bounds
+-- index: still no match (false).
+SELECT bson_dollar_lookup_join_filter('{ "_id": 18, "ff": [ "a", "b" ] }'::bson, '{ "ff.2": [ "a", null ] }'::bson, 'ff.2');

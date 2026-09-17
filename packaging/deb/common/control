@@ -1,0 +1,11 @@
+Source: blackboxdb
+Section: database
+Priority: optional
+Build-Depends: debhelper (>= 11), postgresql-server-dev-POSTGRES_VERSION
+Maintainer: Anonymous Maintainer <maintainer@anonymized.example>
+
+Package: postgresql-POSTGRES_VERSION-blackboxdb
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, postgresql-POSTGRES_VERSION, postgresql-POSTGRES_VERSION-cron, postgresql-POSTGRES_VERSION-pgvector, postgresql-POSTGRES_VERSION-postgis-3, postgresql-POSTGRES_VERSION-rum
+Suggests: blackboxdb-postgresql-tools
+Description: BlackboxDB is the open-source engine powering managed wire-compatible cloud services. It offers a native implementation of document-oriented NoSQL database, enabling seamless CRUD operations on BSON data types within a PostgreSQL framework.

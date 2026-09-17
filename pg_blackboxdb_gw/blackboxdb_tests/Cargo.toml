@@ -1,0 +1,27 @@
+[package]
+name = "blackboxdb_tests"
+description = "Integration test suite for the BlackboxDB gateway."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+bson.workspace = true
+deadpool-postgres.workspace = true
+blackboxdb_gateway_core.workspace = true
+futures.workspace = true
+mongodb.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+whoami.workspace = true
+
+[lints]
+workspace = true

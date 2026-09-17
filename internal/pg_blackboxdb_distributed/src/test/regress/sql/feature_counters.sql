@@ -1,0 +1,420 @@
+SET search_path TO blackboxdb_api_catalog, blackboxdb_core, blackboxdb_api, public;
+SET citus.next_shard_id TO 6750000;
+SET blackboxdb.next_collection_id TO 67500;
+SET blackboxdb.next_collection_index_id TO 67500;
+
+-- Delete all other indexes from previous tests to reduce flakiness
+WITH deleted AS (
+  DELETE FROM blackboxdb_api_catalog.collection_indexes
+  WHERE collection_id != 67500
+  RETURNING 1
+) SELECT true FROM deleted UNION ALL SELECT true LIMIT 1;
+
+
+-- Reset the counters by making a call to the counter and discarding the results
+select count(*)*0 as count from blackboxdb_api_internal.command_feature_counter_stats(true);
+
+-- vector index creation error
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "feature_counter_col", "indexes": [ { "key": { "a": "cosmosSearch"}, "name": "foo_1"  } ] }', true);
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "feature_counter_col", "indexes": [ { "key": { "a": 1 }, "name": "foo_1", "cosmosSearchOptions": { } } ] }', true);
+
+-- create collection
+SELECT blackboxdb_api.create_collection_view('db', '{ "create": "feature_counter_col" }');
+
+-- create view
+SELECT blackboxdb_api.create_collection_view('db', '{ "create": "feature_counter_col_view", "viewOn": "feature_counter_col" }');
+
+-- now collMod it
+SELECT blackboxdb_api.coll_mod('db', 'feature_counter_col_view', '{ "collMod": "feature_counter_col_view", "viewOn": "feature_counter_col", "pipeline": [ { "$limit": 10 } ] }');
+
+-- create a valid indexes
+SET client_min_messages TO WARNING;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "feature_counter_col", "indexes": [ { "key": { "a": "cosmosSearch" }, "name": "foo_1", "cosmosSearchOptions": { "kind": "vector-ivf", "numLists": 100, "similarity": "COS", "dimensions": 3 } } ] }', true);
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "feature_counter_col", "indexes": [ { "key": { "b": "cosmosSearch" }, "name": "foo_2", "cosmosSearchOptions": { "kind": "vector-ivf", "numLists": 200, "similarity": "IP", "dimensions": 3 } } ] }', true);
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "feature_counter_col", "indexes": [ { "key": { "c": "cosmosSearch" }, "name": "foo_3", "cosmosSearchOptions": { "kind": "vector-ivf", "numLists": 300, "similarity": "L2", "dimensions": 3 } } ] }', true);
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "feature_counter_col", "indexes": [ { "key": { "f": "text" }, "name": "a_text" } ] }', true);
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "feature_counter_col", "indexes": [ { "key": { "uniq": 1 }, "name": "uniq_1", "unique": true } ] }', true);
+RESET client_min_messages;
+
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+SELECT document -> 'a' FROM blackboxdb_api.collection('db', 'feature_counter_col') ORDER BY blackboxdb_api_internal.bson_extract_vector(document, 'elem') <=> '[10, 1, 2]';
+SELECT document -> 'a' FROM blackboxdb_api.collection('db', 'feature_counter_col') ORDER BY blackboxdb_api_internal.bson_extract_vector(document, 'elem') <=> '[10, 1, 2]';
+
+-- bad queries 
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col", "pipeline": [{ "$vectorSearch": { "queryVector": [8.0, 1.0], "limit": 1, "path": "myvector", "numCandidates": 10 } }, { "$project": { "myvector": 1, "_id": 0 }} ]}');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col", "pipeline": [{ "$vectorSearch": { "queryVector": [8.0, 1.0], "limit": 1, "path": "myvector", "numCandidates": 10 } }, { "$project": { "myvector": 1, "_id": 0 }} ]}');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col", "pipeline": [{ "$vectorSearch": { "limit": 1, "path": "myvector", "numCandidates": 10 } }, { "$project": { "myvector": 1, "_id": 0 }} ]}');
+
+-- Use unwind, lookup 
+SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$lookup": { "from": "agg_pipeline_inventory", "as": "matched_docs", "localField": "item", "foreignField": "sku" } } ], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', 
+    '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$lookup": { "from": "agg_pipeline_inventory", "as": "matched_docs", "pipeline": [ { "$count": "efe" } ] } } ], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$addFields": { "newField" : "1", "a.y": ["p", "q"] } }, { "$addFields": { "newField2": "someOtherField" } } ], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$project": { "_id" : 1, "a.b": 1 } } ], "cursor": {} }');
+-- add $unset
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$unset": "_id" }, { "$set": { "newField2": "someOtherField" } }], "cursor": {} }');
+-- add skip + limit
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$project": { "_id" : 1, "a.b": 1 } }, { "$limit": 1 }, { "$skip": 1 }], "cursor": {} }');
+
+-- match + project + match
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$match": { "_id": { "$gt": "1" } } }, { "$project": { "a.b": 1, "c": "$_id", "_id": 0 } }, { "$match": { "c": { "$gt": "2" } } }], "cursor": {} }');
+-- replaceRoot
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$addFields": { "e": {  "f": "$a.b" } } }, { "$replaceRoot": { "newRoot": "$e" } } ], "cursor": {} }');
+-- replaceWith
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$addFields": { "e": {  "f": "$a.b" } } }, { "$replaceWith": "$e" } ], "cursor": {} }');
+-- sort + match
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$sort": { "_id": 1 } }, { "$match": { "_id": { "$gt": "1" } } } ], "cursor": {} }');
+-- match + sort
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$match": { "_id": { "$gt": "1" } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
+-- sortByCount
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$sortByCount": { "$eq": [ { "$mod": [ { "$toInt": "$_id" }, 2 ] }, 0  ] } }, { "$sort": { "_id": 1 } }], "cursor": {} }');
+-- $group
+SET blackboxdb.enableNewMinMaxAccumulators TO off;
+SET blackboxdb.enableNewWithExprAccumulators TO off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
+
+SET blackboxdb.enableNewWithExprAccumulators TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$max": "$_id" }, "e": { "$count": {} } } }], "cursor": {} }');
+SET blackboxdb.enableNewMinMaxAccumulators TO off;
+SET blackboxdb.enableNewWithExprAccumulators TO off;
+
+-- $group with $count with non-empty arg (tracks group_count_with_arg feature counter)
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": null, "e": { "$count": 1 } } }], "cursor": {} }');
+
+SET blackboxdb.enableNewWithExprAccumulators TO on;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$sum": "$_id" }, "e": { "$count": 1 } } }], "cursor": {} }');
+SET blackboxdb.enableNewMinMaxAccumulators TO off;
+SET blackboxdb.enableNewWithExprAccumulators TO off;
+
+-- $group with first/last
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$first": "$_id" }, "e": { "$last":  "$_id" } } }], "cursor": {} }');
+-- $group with firstN/lastN
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$firstN": { "input":"$_id", "n":5 } }, "e": { "$lastN": { "input":"$_id", "n":5 } } } }], "cursor": {} }');
+-- $group with firstN/lastN w N>10
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col2", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$firstN": { "input":"$_id", "n":15 } }, "e": { "$lastN": { "input":"$_id", "n":15 } } } }], "cursor": {} }');
+-- collation
+SET blackboxdb_core.enablecollation TO on;
+SELECT document FROM bson_aggregation_find('db', '{ "find": "feature_counter_col2", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "a": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 5, "collation": { "locale": "en", "strength" : 1} }');
+SELECT document FROM bson_aggregation_find('db', '{ "find": "feature_counter_col2", "filter": { "$or" : [{ "a": { "$eq": "cat" } }, { "b": { "$eq": "DOG" } }] }, "sort": { "_id": 1 }, "skip": 0, "limit": 10, "collation": { "locale": "fr_CA", "strength" : 3 } }');
+RESET blackboxdb_core.enablecollation;
+
+
+-- Create TTL index
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "feature_counter_col2", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+
+-- Run validate command
+SELECT blackboxdb_api.validate('db', '{ "validate" : "validatecoll", "repair" : true }' );
+
+-- Print without resetting the counters
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(false);
+
+-- print and reset the counters
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- check other two vector indexes
+SET client_min_messages TO WARNING;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "vectorIndexCollFC", "indexes": [ { "key": { "myvector3": "cosmosSearch" }, "name": "foo_3_ip", "cosmosSearchOptions": { "kind": "vector-ivf", "numLists": 2, "similarity": "IP", "dimensions": 3 } } ] }', true);
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "vectorIndexCollFC", "indexes": [ { "key": { "myvector4": "cosmosSearch" }, "name": "foo_4_l2", "cosmosSearchOptions": { "kind": "vector-ivf", "numLists": 2, "similarity": "L2", "dimensions": 4 } } ] }', true);
+RESET client_min_messages;
+
+SELECT blackboxdb_api.insert_one('db', 'vectorIndexCollFC', '{ "elem": "some sentence3", "myvector3": [8.0, 1.0, 9.0 ] }');
+SELECT blackboxdb_api.insert_one('db', 'vectorIndexCollFC', '{ "elem": "some sentence3", "myvector4": [8.0, 1.0, 8.0, 8 ] }');
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "vectorIndexCollFC", "pipeline": [{ "$vectorSearch": { "queryVector": [8.0, 1.0, 9.0], "limit": 1, "path": "myvector3", "numCandidates": 10 } }, { "$project": { "myvector3": 1, "_id": 0 }} ]}');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "vectorIndexCollFC", "pipeline": [{ "$vectorSearch": { "queryVector": [8.0, 1.0, 8.0, 7], "limit": 1, "path": "myvector4", "numCandidates": 10 } }, { "$project": { "myvector4": 1, "_id": 0 }} ]}');
+
+-- Query on a non-existent collection
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "vectorCollNonExistent", "pipeline": [{ "$vectorSearch": { "queryVector": [8.0, 1.0, 8.0, 7], "limit": 1, "path": "myvector4", "numCandidates": 10 } }, { "$project": { "myvector4": 1, "_id": 0 }} ]}');
+
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- check vector indexes
+SET client_min_messages TO WARNING;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "vectorIndexCollFC", "indexes": [ { "key": { "vector_ivf": "cosmosSearch" }, "name": "ivf_index", "cosmosSearchOptions": { "kind": "vector-ivf", "numLists": 2, "similarity": "L2", "dimensions": 3 } } ] }', true);
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "vectorIndexCollFC", "indexes": [ { "key": { "vector_hnsw": "cosmosSearch" }, "name": "hnsw_index", "cosmosSearchOptions": { "kind": "vector-hnsw", "m": 4, "efConstruction": 16, "similarity": "COS", "dimensions": 4 } } ] }', true);
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "vectorIndexCollFC", "indexes": [ { "key": { "vector_ivf_half": "cosmosSearch" }, "name": "ivf_index_half", "cosmosSearchOptions": { "kind": "vector-ivf", "numLists": 2, "similarity": "L2", "dimensions": 3, "compression": "half" } } ] }', true);
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "vectorIndexCollFC", "indexes": [ { "key": { "vector_hnsw_half": "cosmosSearch" }, "name": "hnsw_index_half", "cosmosSearchOptions": { "kind": "vector-hnsw", "m": 4, "efConstruction": 16, "similarity": "COS", "dimensions": 4, "compression": "half" } } ] }', true);
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "vectorIndexCollFC", "indexes": [ { "key": { "elem": 1 }, "name": "elem_index" } ] }', true);
+RESET client_min_messages;
+
+SELECT blackboxdb_api.insert_one('db', 'vectorIndexCollFC', '{ "_id": 1, "elem": "some sentence ivf", "vector_ivf": [8.0, 1.0, 9.0 ] }');
+SELECT blackboxdb_api.insert_one('db', 'vectorIndexCollFC', '{ "_id": 2, "elem": "some sentence hnsw", "vector_hnsw": [8.0, 1.0, 8.0, 8 ] }');
+ANALYZE;
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "vectorIndexCollFC", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 2, "path": "vector_ivf", "nProbes": 10}  } } ], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "vectorIndexCollFC", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0, 1.0 ], "k": 2, "path": "vector_hnsw", "efSearch": 5 }  } } ], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "vectorIndexCollFC", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 2, "path": "vector_ivf_half" }  } } ], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "vectorIndexCollFC", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0, 1.0 ], "k": 2, "path": "vector_hnsw_half" }  } } ], "cursor": {} }');
+
+BEGIN;
+SET LOCAL blackboxdb.enableVectorPreFilter = on;
+SET local enable_seqscan = off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "vectorIndexCollFC", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0 ], "k": 2, "path": "vector_ivf", "nProbes": 10, "filter": { "elem": { "$gt": "some p" } }  }}} ], "cursor": {} }');
+ROLLBACK;
+
+BEGIN;
+SET LOCAL blackboxdb.enableVectorPreFilter = on;
+SET local enable_seqscan = off;
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "vectorIndexCollFC", "pipeline": [ { "$search": { "cosmosSearch": { "vector": [ 3.0, 4.9, 1.0, 1.0 ], "k": 2, "path": "vector_hnsw", "efSearch": 5, "filter": { "elem": { "$gt": "some p" } }  }}} ], "cursor": {} }');
+ROLLBACK;
+
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- aggregation operators counters
+SELECT blackboxdb_api.insert_one('db', 'feature_counter_col3', '{"a": 1}');
+SELECT blackboxdb_api.insert_one('db', 'feature_counter_col3', '{"a": 2}');
+SELECT blackboxdb_api.insert_one('db', 'feature_counter_col3', '{"a": 1}');
+
+-- should only count once per query, not once per document
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col3", "pipeline": [ {"$project": {"_id": 0, "result": { "$add": ["$a", 1]}}}], "cursor": {} }');
+
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(false);
+
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col3", "pipeline": [ {"$project": {"_id": 0, "result": { "$add": ["$a", 1]}}}], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col3", "pipeline": [ {"$project": {"_id": 0, "result": { "$multiply": ["$a", 1]}}}], "cursor": {} }');
+
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- nested should be counted
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col3", "pipeline": [ {"$project": {"_id": 0, "result": { "$filter": {"input": [1, 2, 3, 4], "cond": {"$eq": ["$$this", 3]}}}}}], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col3", "pipeline": [ {"$project": {"_id": 0, "result": { "$filter": {"input": [1, 2, 3, 4], "cond": {"$gt": ["$$this", 3]}}}}}], "cursor": {} }');
+
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- should not count for non-existent operators
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_counter_col3", "pipeline": [ {"$project": {"result": { "$nonExistent": {"input": [1, 2, 3, 4], "cond": {"$eq": ["$$this", 3]}}}}}], "cursor": {} }');
+
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Test feature counters for geospatial
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "feature_counter_col", "indexes": [ { "key": { "2dkey": "2d"}, "name": "my_2d_idx"  } ] }', true);
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "feature_counter_col", "indexes": [ { "key": { "2dspherekey": "2dsphere"}, "name": "my_2dsphere_idx"  } ] }', true);
+
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+SELECT blackboxdb_api.insert_one('db', 'feature_counter_col3', '{"2dkey": [1, 1]}');
+SELECT blackboxdb_api.insert_one('db', 'feature_counter_col3', '{"2dspherekey": [1, 1]}');
+
+SELECT document -> '2dkey' FROM blackboxdb_api.collection('db', 'feature_counter_col3') WHERE document @@ '{"2dkey": {"$geoWithin": {"$box": [[0, 0], [1, 1]]}}}';
+SELECT document -> '2dkey' FROM blackboxdb_api.collection('db', 'feature_counter_col3') WHERE document @@ '{"2dkey": {"$within": {"$box": [[0, 0], [1, 1]]}}}';
+SELECT document -> '2dspherekey' FROM blackboxdb_api.collection('db', 'feature_counter_col3') WHERE document @@ '{"2dspherekey": {"$geoWithin": {"$geometry": { "type": "Polygon", "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0,0]]] } }}}';
+SELECT document -> '2dspherekey' FROM blackboxdb_api.collection('db', 'feature_counter_col3') WHERE document @@ '{"2dspherekey": {"$geoIntersects": {"$geometry": { "type": "Point", "coordinates": [1, 1] } }}}';
+
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Test feature counter for $text
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{ "createIndexes": "feature_counter_col3", "indexes": [ { "key": { "textkey": "text" }, "name": "my_txt_idx" } ] }', true);
+
+SELECT blackboxdb_api.insert_one('db', 'feature_counter_col3', '{ "textkey": "this is a cat" }');
+
+SELECT document -> 'textkey' FROM blackboxdb_api.collection('db', 'feature_counter_col3') WHERE document @@ '{ "$text": { "$search": "cat" } }';
+
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- TTL index usage tests
+
+SELECT blackboxdb_api.insert_one('db','feature_usage_ttlcoll', '{ "_id" : 0, "ttl" : { "$date": { "$numberLong": "-1000" } } }', NULL);
+SELECT blackboxdb_api.insert_one('db','feature_usage_ttlcoll', '{ "_id" : 1, "ttl" : { "$date": { "$numberLong": "0" } } }', NULL);
+SELECT blackboxdb_api.insert_one('db','feature_usage_ttlcoll', '{ "_id" : 2, "ttl" : { "$date": { "$numberLong": "100" } } }', NULL);
+    -- Documents with date older than when the test was written
+SELECT blackboxdb_api.insert_one('db','feature_usage_ttlcoll', '{ "_id" : 3, "ttl" : { "$date": { "$numberLong": "1657900030774" } } }', NULL);
+    -- Documents with date way in future
+SELECT blackboxdb_api.insert_one('db','feature_usage_ttlcoll', '{ "_id" : 4, "ttl" : { "$date": { "$numberLong": "2657899731608" } } }', NULL);
+    -- Documents with date array
+SELECT blackboxdb_api.insert_one('db','feature_usage_ttlcoll', '{ "_id" : 5, "ttl" : [{ "$date": { "$numberLong": "100" }}] }', NULL);
+    -- Documents with date array, should be deleted based on min timestamp
+SELECT blackboxdb_api.insert_one('db','feature_usage_ttlcoll', '{ "_id" : 6, "ttl" : [{ "$date": { "$numberLong": "100" }}, { "$date": { "$numberLong": "2657899731608" }}] }', NULL);
+SELECT blackboxdb_api.insert_one('db','feature_usage_ttlcoll', '{ "_id" : 7, "ttl" : [true, { "$date": { "$numberLong": "100" }}, { "$date": { "$numberLong": "2657899731608" }}] }', NULL);
+    -- Documents with non-date ttl field
+SELECT blackboxdb_api.insert_one('db','feature_usage_ttlcoll', '{ "_id" : 8, "ttl" : true }', NULL);
+    -- Documents with non-date ttl field
+SELECT blackboxdb_api.insert_one('db','feature_usage_ttlcoll', '{ "_id" : 9, "ttl" : "would not expire" }', NULL);
+
+-- 1. Create TTL Index --
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('db', '{"createIndexes": "feature_usage_ttlcoll", "indexes": [{"key": {"ttl": 1}, "name": "ttl_index", "v" : 1, "expireAfterSeconds": 5}]}', true);
+
+-- 2. List All indexes --
+SELECT bson_dollar_unwind(cursorpage, '$cursor.firstBatch') FROM blackboxdb_api.list_indexes_cursor_first_page('db','{ "listIndexes": "feature_usage_ttlcoll" }') ORDER BY 1;
+SELECT * FROM blackboxdb_distributed_test_helpers.get_collection_indexes('db', 'feature_usage_ttlcoll') ORDER BY collection_id, index_id;
+
+-- 4. Call ttl purge procedure with a batch size of 2
+SET blackboxdb.repeatPurgeIndexesForTTLTask to off;
+CALL blackboxdb_api_internal.delete_expired_rows(3);
+CALL blackboxdb_api_internal.delete_expired_rows(3);
+CALL blackboxdb_api_internal.delete_expired_rows(3);
+
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Feature counter for _internalInhibitOptimization
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_usage_inhibit", "pipeline": [ { "$addFields": { "e": {  "f": "$a.b" } } }, { "$_internalInhibitOptimization": 1 }, { "$replaceWith": "$e" } ], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_usage_inhibit", "pipeline": [ { "$sort": { "_id": 1 } }, { "$_internalInhibitOptimization": 1 }, { "$match": { "_id": { "$gt": "1" } } } ], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "feature_usage_inhibit", "pipeline": [ { "$addFields": { "newField" : "1", "a.y": ["p", "q"] } }, { "$_internalInhibitOptimization": 1 }, { "$addFields": { "newField2": "someOtherField" } } ], "cursor": {} }');
+
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+SELECT blackboxdb_api.insert('db', '{"insert":"writeFC", "documents":[
+   { "_id" : 1, "movie": "Iron Man 3", "Budget": 180000000, "year": 2011 }
+]}');
+
+SELECT blackboxdb_api.insert('db', '{"insert":"writeFC", "documents":[
+   { "_id" : 2, "movie": "Wolverine", "Budget": 180000000, "year": 2012 },
+   { "_id" : 3, "movie": "Spider Man", "Budget": 180000000, "year": 2013 },
+   { "_id": 4, "movie": "AntMan", "Budget": 180000000, "year": 2015, "actors": ["Paul Rudd", "Evangeline Lilly"], "tags": ["Marvel", "Superhero"], "ratings": {"critics": 80, "audience": 90}}
+]}');
+
+SELECT blackboxdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 1},"u":{"$set":{"year": "1998" }},"multi":true}]}');
+SELECT blackboxdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 1},"u":{"$set":{"year": "2001" }},"multi":true}, {"q": {"_id": 2},"u":{"$set":{"year": "2002" }},"multi":true}]}');
+SELECT blackboxdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$inc":{"year": 1 }},"multi":false}]}');
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+SELECT blackboxdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$min":{"year": 3000 }},"multi":false}]}');
+SELECT blackboxdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$max":{"year": 2000 }},"multi":false}]}');
+SELECT blackboxdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$push":{"actors": "New Actor" }},"multi":false}]}');
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+SELECT blackboxdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$pop": { "actors": -1 }},"multi":false}]}');
+SELECT blackboxdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$rename": { "year": "Year" }},"multi":false}]}');
+SELECT blackboxdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$setOnInsert": { "Year": 2015 }},"multi":false}]}');
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+SELECT blackboxdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$addToSet": { "actors": "Paul Rudd" }},"multi":false}]}');
+SELECT blackboxdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$pullAll": { "actors": ["No Actor"] }},"multi":false}]}');
+SELECT blackboxdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$pull": { "actors": "No Actor" }},"multi":false}]}');
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+SELECT blackboxdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$mul": { "Budget": 1 }},"multi":false}]}');
+SELECT blackboxdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$currentDate": { "updatedAt": true }},"multi":false}]}');
+SELECT blackboxdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$bit": { "Year": { "and": 2016 } }},"multi":false}]}');
+SELECT blackboxdb_api.update('db', '{"update": "writeFC", "updates":[{"q": {"_id": 4},"u":{"$unset": { "tags": "" }},"multi":false}]}');
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+CALL blackboxdb_api.delete_txn_proc('db', '{"delete":"writeFC", "deletes":[{"q":{"_id":{"$eq":4}},"limit":0}]}');
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Test: Feature counter for list_databases command
+
+-- Reset feature counters
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- execute list_databases command but suppress all output with LIMIT 0 to avoid varying result
+SELECT * FROM blackboxdb_api.list_databases('{"listDatabases": 1, "nameOnly":true}') LIMIT 0;
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(false);
+
+SELECT * FROM blackboxdb_api.list_databases('{"listDatabases": 1}') LIMIT 0;
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Test: Feature counter for saop queries that didn't meet the treshold for $in
+SELECT blackboxdb_api.insert_one('saop_feature', 'counter_value', '{"_id": 1, "a": 1, "b": 10}');
+SELECT blackboxdb_api.insert_one('saop_feature', 'counter_value', '{"_id": 2, "a": 2, "b": 9}');
+
+-- if blackboxdb_extended_rum exists, set alternate index handler
+SELECT pg_catalog.set_config('blackboxdb.alternate_index_handler_name', 'extended_rum', false), extname FROM pg_extension WHERE extname = 'blackboxdb_extended_rum';
+
+set enable_seqscan to off;
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('saop_feature', '{ "createIndexes": "counter_value", "indexes": [ { "key": { "a": 1, "b": 1 }, "name": "a_1_b_1", "storageEngine": { "enableOrderedIndex": true }} ] }', true);
+SELECT document FROM bson_aggregation_pipeline('saop_feature', '{ "aggregate": "counter_value", "pipeline": [ { "$match": { "a": { "$in": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] }, "b": { "$in": [10, 9, 8, 7, 6, 5, 4, 3, 2, 1] } } }, {"$sort": { "a": 1 } } ], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('saop_feature', '{ "aggregate": "counter_value", "pipeline": [ { "$match": { "a": { "$in": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] }, "b": { "$in": [6, 5, 4, 3, 2, 1] } } }, {"$sort": { "a": 1 } } ], "cursor": {} }');
+
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+SELECT blackboxdb_api.drop_database('saop_feature');
+
+-- Test: Feature counter for cursor topology
+
+-- Reset feature counters
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Local unsharded: find on an unsharded collection (first page)
+SELECT blackboxdb_api.insert_one('topo_db', 'unshard_coll', '{"_id": 1, "a": 1}');
+SELECT blackboxdb_api.insert_one('topo_db', 'unshard_coll', '{"_id": 2, "a": 2}');
+SELECT document FROM bson_aggregation_find('topo_db', '{"find": "unshard_coll", "filter": {}}');
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Local unsharded: getMore path
+CREATE TEMP TABLE topo_first_page AS
+SELECT continuation FROM find_cursor_first_page(database => 'topo_db',
+    commandSpec => '{"find": "unshard_coll", "filter": {}, "batchSize": 1}', cursorId => 4294967294);
+SELECT continuation AS r1_continuation FROM topo_first_page \gset
+SELECT cursorPage FROM cursor_get_more(database => 'topo_db',
+    getMoreSpec => '{"getMore": {"$numberLong": "4294967294"}, "collection": "unshard_coll"}'::bson,
+    continuationSpec => :'r1_continuation');
+DROP TABLE topo_first_page;
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Sharded with shard key equality (first page)
+SELECT blackboxdb_api.shard_collection('topo_db', 'shard_coll', '{"sk": "hashed"}', false);
+SELECT blackboxdb_api.insert_one('topo_db', 'shard_coll', '{"_id": 1, "sk": "val1", "a": 1}');
+SELECT blackboxdb_api.insert_one('topo_db', 'shard_coll', '{"_id": 2, "sk": "val1", "a": 2}');
+SELECT document FROM bson_aggregation_find('topo_db', '{"find": "shard_coll", "filter": {"sk": "val1"}}');
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Sharded with shard key equality: getMore path
+CREATE TEMP TABLE topo_first_page AS
+SELECT continuation FROM find_cursor_first_page(database => 'topo_db',
+    commandSpec => '{"find": "shard_coll", "filter": {"sk": "val1"}, "batchSize": 1}', cursorId => 4294967294);
+SELECT continuation AS r1_continuation FROM topo_first_page \gset
+SELECT cursorPage FROM cursor_get_more(database => 'topo_db',
+    getMoreSpec => '{"getMore": {"$numberLong": "4294967294"}, "collection": "shard_coll"}'::bson,
+    continuationSpec => :'r1_continuation');
+DROP TABLE topo_first_page;
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- Sharded with $in on shard key (first page and getMore)
+SELECT document FROM bson_aggregation_find('topo_db', '{"find": "shard_coll", "filter": {"sk": {"$in": ["val1", "val2"]}}}');
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+CREATE TEMP TABLE topo_first_page AS
+SELECT continuation FROM find_cursor_first_page(database => 'topo_db',
+    commandSpec => '{"find": "shard_coll", "filter": {"sk": {"$in": ["val1", "val2"]}}, "batchSize": 1}', cursorId => 4294967294);
+SELECT continuation AS r1_continuation FROM topo_first_page \gset
+SELECT cursorPage FROM cursor_get_more(database => 'topo_db',
+    getMoreSpec => '{"getMore": {"$numberLong": "4294967294"}, "collection": "shard_coll"}'::bson,
+    continuationSpec => :'r1_continuation');
+DROP TABLE topo_first_page;
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- General sharded (no shard key in filter) first page and getMore
+SELECT document FROM bson_aggregation_find('topo_db', '{"find": "shard_coll", "filter": {"a": 1}}');
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+CREATE TEMP TABLE topo_first_page AS
+SELECT continuation FROM find_cursor_first_page(database => 'topo_db',
+    commandSpec => '{"find": "shard_coll", "filter": {}, "batchSize": 1}', cursorId => 4294967294);
+SELECT continuation AS r1_continuation FROM topo_first_page \gset
+SELECT cursorPage FROM cursor_get_more(database => 'topo_db',
+    getMoreSpec => '{"getMore": {"$numberLong": "4294967294"}, "collection": "shard_coll"}'::bson,
+    continuationSpec => :'r1_continuation');
+DROP TABLE topo_first_page;
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+SELECT blackboxdb_api.drop_database('topo_db');
+
+-- $sample heap skip feature counter: an Index Scan child with no residual filter engages heap
+-- skip, recording sample_heap_skip. Oversampling then sorting keeps the output deterministic.
+SELECT COUNT(*) FROM (SELECT blackboxdb_api.insert_one('feature_counter_hs_db', 'sampleHeapSkipColl', FORMAT('{ "_id": %s, "a": %s }', g, g)::blackboxdb_core.bson) FROM generate_series(1, 40) g) ig;
+-- Reset the counters by making a call to the counter and discarding the results
+SELECT count(*) * 0 AS count FROM blackboxdb_api_internal.command_feature_counter_stats(true);
+SET blackboxdb.enableDollarSampleReservoirScan TO on;
+SET blackboxdb.enableDollarSampleHeapSkipReservoirScan TO on;
+SELECT document FROM bson_aggregation_pipeline('feature_counter_hs_db', '{ "aggregate": "sampleHeapSkipColl", "pipeline": [ { "$match": { "_id": { "$gte": 0 } } }, { "$sample": { "size": 40 } }, { "$sort": { "_id": 1 } }, { "$limit": 3 }, { "$project": { "_id": 1 } } ], "cursor": {} }');
+RESET blackboxdb.enableDollarSampleHeapSkipReservoirScan;
+RESET blackboxdb.enableDollarSampleReservoirScan;
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+-- $sample heap skip eligibility counter: when the heap skip flag is off but the plan is
+-- structurally heap skip capable (a plain Index Scan child with no residual filter),
+-- sample_heap_skip_eligible records the query as a candidate for turning the flag on.
+-- Reset the counters by making a call to the counter and discarding the results
+SELECT count(*) * 0 AS count FROM blackboxdb_api_internal.command_feature_counter_stats(true);
+SET blackboxdb.enableDollarSampleReservoirScan TO on;
+SET blackboxdb.enableDollarSampleHeapSkipReservoirScan TO off;
+SET enable_seqscan TO off;
+SET enable_bitmapscan TO off;
+SELECT document FROM bson_aggregation_pipeline('feature_counter_hs_db', '{ "aggregate": "sampleHeapSkipColl", "pipeline": [ { "$match": { "_id": { "$gte": 0 } } }, { "$sample": { "size": 40 } }, { "$sort": { "_id": 1 } }, { "$limit": 3 }, { "$project": { "_id": 1 } } ], "cursor": {} }');
+RESET enable_bitmapscan;
+RESET enable_seqscan;
+RESET blackboxdb.enableDollarSampleHeapSkipReservoirScan;
+RESET blackboxdb.enableDollarSampleReservoirScan;
+SELECT blackboxdb_distributed_test_helpers.get_feature_counter_pretty(true);
+
+SELECT blackboxdb_api.drop_database('feature_counter_hs_db');

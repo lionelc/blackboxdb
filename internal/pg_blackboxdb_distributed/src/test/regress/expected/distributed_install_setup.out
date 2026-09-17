@@ -1,0 +1,2 @@
+CREATE SCHEMA IF NOT EXISTS blackboxdb_distributed_test_helpers;
+CREATE EXTENSION IF NOT EXISTS blackboxdb_extended_rum;

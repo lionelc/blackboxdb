@@ -1,0 +1,1 @@
+ALTER OPERATOR FAMILY blackboxdb_extended_rum_catalog.bson_extended_rum_composite_path_ops USING blackboxdb_extended_rum ADD OPERATOR 37 blackboxdb_api_internal.|<>(blackboxdb_core.bson, blackboxdb_core.bson) FOR ORDER BY blackboxdb_api_internal.bsonindexterm_btree_ops;

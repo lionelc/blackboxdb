@@ -1,0 +1,380 @@
+/*-------------------------------------------------------------------------
+ * Copyright (c) Anonymous.  All rights reserved.
+ *
+ * include/api_hooks_def.h
+ *
+ * Definition of hooks for the extension that allow for handling
+ * distribution type scenarios. These can be overriden to implement
+ * custom distribution logic.
+ *
+ *-------------------------------------------------------------------------
+ */
+
+#ifndef EXTENSION_API_HOOKS_DEF_H
+#define EXTENSION_API_HOOKS_DEF_H
+
+#include "api_hooks_common.h"
+#include <access/amapi.h>
+#include <executor/spi.h>
+#include <nodes/execnodes.h>
+#include <nodes/parsenodes.h>
+#include <nodes/pathnodes.h>
+#include <utils/memutils.h>
+
+#include "metadata/collection.h"
+#include "update/update_hooks.h"
+
+
+/* Section: General Extension points */
+
+/*
+ * Returns true if the current Postgres server is a Query Coordinator
+ * that also owns the metadata management of schema (DDL).
+ */
+typedef bool (*IsMetadataCoordinator_HookType)(void);
+extern IsMetadataCoordinator_HookType is_metadata_coordinator_hook;
+
+/*
+ * Returns true if the cluster has been fully initialized (e.g. tables
+ * distributed, metadata set up). The background worker waits for this
+ * before starting periodic jobs to avoid operating on an incomplete cluster.
+ * When not set (single-node), the cluster is considered ready immediately.
+ */
+typedef bool (*IsClusterInitialized_HookType)(void);
+extern IsClusterInitialized_HookType is_cluster_initialized_hook;
+
+/*
+ * Indicates whether the Change Stream feature is currently enabled
+ */
+typedef bool (*IsChangeStreamEnabledAndCompatible)(void);
+extern IsChangeStreamEnabledAndCompatible is_changestream_enabled_and_compatible_hook;
+
+/*
+ * Runs a command on the MetadataCoordinator if the current node is not a
+ * Metadata Coordinator. The response is returned as a "record" struct
+ * with the nodeId responding, whether or not the command succeeded and
+ * the response datum serialized as a string.
+ * If success, then this is the response datum in text format.
+ * If failed, then this contains the error string from the failure.
+ */
+typedef DistributedRunCommandResult (*RunCommandOnMetadataCoordinator_HookType)(const
+																				char *
+																				query);
+extern RunCommandOnMetadataCoordinator_HookType run_command_on_metadata_coordinator_hook;
+
+/*
+ * Runs a query via SPI with commutative writes on for distributed scenarios.
+ * Returns the Datum returned by the executed query.
+ */
+typedef Datum (*RunQueryWithCommutativeWrites_HookType)(const char *query, int nargs,
+														Oid *argTypes,
+														Datum *argValues, char *argNulls,
+														int expectedSPIOK, bool *isNull);
+extern RunQueryWithCommutativeWrites_HookType run_query_with_commutative_writes_hook;
+
+
+/*
+ * Runs a multi-value query with commutative writes enabled.
+ * The GUC is scoped to just this query execution and rolled back afterwards.
+ */
+typedef void (*RunMultiValueQueryWithCommutativeWrites_HookType)(const char *query,
+																 SPIPlanPtr plan,
+																 int nargs,
+																 Oid *argTypes,
+																 Datum *argValues,
+																 char *argNulls,
+																 bool readOnly,
+																 long maxTupleCount);
+extern RunMultiValueQueryWithCommutativeWrites_HookType
+	run_multi_value_query_with_commutative_writes_hook;
+
+
+/*
+ * Runs a query via SPI with sequential shard execution for distributed scenarios
+ * Returns the Datum returned by the executed query.
+ */
+typedef Datum (*RunQueryWithSequentialModification_HookType)(const char *query, int
+															 expectedSPIOK, bool *isNull);
+extern RunQueryWithSequentialModification_HookType
+	run_query_with_sequential_modification_mode_hook;
+
+
+/* Section: Create Table Extension points */
+
+/*
+ * Distributes a given postgres table with the provided distribution column.
+ * Optionally supports colocating the distributed table with another distributed table.
+ */
+typedef const char *(*DistributePostgresTable_HookType)(const char *postgresTable, const
+														char *distributionColumn,
+														const char *colocateWith,
+														int shardCount);
+extern DistributePostgresTable_HookType distribute_postgres_table_hook;
+
+
+/*
+ * Entrypoint to modify a list of column names for queries
+ * For a base RTE (table)
+ */
+typedef List *(*ModifyTableColumnNames_HookType)(List *tableColumns);
+extern ModifyTableColumnNames_HookType modify_table_column_names_hook;
+
+/*
+ * Creates a user using an external identity provider
+ */
+typedef bool (*CreateUserWithExernalIdentityProvider_HookType)(const char *userName,
+															   char *pgRole, bson_value_t
+															   customData);
+extern CreateUserWithExernalIdentityProvider_HookType
+	create_user_with_exernal_identity_provider_hook;
+
+/*
+ * Drops a user using an external identity provider
+ */
+typedef bool (*DropUserWithExernalIdentityProvider_HookType)(const char *userName);
+extern DropUserWithExernalIdentityProvider_HookType
+	drop_user_with_exernal_identity_provider_hook;
+
+/*
+ * Method to verify if a user is native
+ */
+typedef bool (*IsUserExternal_HookType)(const char *userName);
+extern IsUserExternal_HookType
+	is_user_external_hook;
+
+
+/*
+ * Method to get user info from external identity provider
+ */
+typedef const pgbson *(*GetUserInfoFromExternalIdentityProvider_HookType)();
+extern GetUserInfoFromExternalIdentityProvider_HookType
+	get_user_info_from_external_identity_provider_hook;
+
+
+/* Method for username validation */
+typedef bool (*UserNameValidation_HookType)(const char *username);
+extern UserNameValidation_HookType username_validation_hook;
+
+
+/* Method for password validation */
+typedef bool (*PasswordValidation_HookType)(const char *username, const char *password);
+extern PasswordValidation_HookType password_validation_hook;
+
+
+/*
+ * Hook for enabling running a query with nested distribution enabled.
+ */
+typedef void (*RunQueryWithNestedDistribution_HookType)(const char *query,
+														int nArgs, Oid *argTypes,
+														Datum *argDatums,
+														char *argNulls,
+														bool readOnly,
+														int expectedSPIOK,
+														Datum *datums,
+														bool *isNull,
+														int numValues);
+extern RunQueryWithNestedDistribution_HookType run_query_with_nested_distribution_hook;
+
+typedef void (*AllowNestedDistributionInCurrentTransaction_HookType)(void);
+extern AllowNestedDistributionInCurrentTransaction_HookType
+	allow_nested_distribution_in_current_transaction_hook;
+
+typedef bool (*IsShardTableForBlackboxDbTable_HookType)(const char *relName, const
+														char *numEndPointer);
+
+extern IsShardTableForBlackboxDbTable_HookType is_shard_table_for_blackboxdb_table_hook;
+
+typedef void (*HandleColocation_HookType)(MongoCollection *collection,
+										  const bson_value_t *colocationOptions);
+
+extern HandleColocation_HookType handle_colocation_hook;
+
+typedef Query *(*RewriteListCollectionsQueryForDistribution_HookType)(Query *query);
+extern RewriteListCollectionsQueryForDistribution_HookType
+	rewrite_list_collections_query_hook;
+
+typedef struct AggregationPipelineBuildContext AggregationPipelineBuildContext;
+typedef Query *(*RewriteListExtendedIndexesQuery_HookType)(const bson_value_t *specValue,
+														   Query *query,
+														   AggregationPipelineBuildContext
+														   *context);
+extern RewriteListExtendedIndexesQuery_HookType rewrite_list_extended_indexes_query_hook;
+
+typedef Query *(*RewriteConfigQueryForDistribution_HookType)(Query *query);
+extern RewriteConfigQueryForDistribution_HookType rewrite_config_shards_query_hook;
+extern RewriteConfigQueryForDistribution_HookType rewrite_config_chunks_query_hook;
+
+typedef const char *(*TryGetShardNameForUnshardedCollection_HookType)(Oid relationOid,
+																	  uint64 collectionId,
+																	  const char *
+																	  tableName,
+																	  bool *
+																	  isSingleShardTable);
+extern TryGetShardNameForUnshardedCollection_HookType
+	try_get_shard_name_for_unsharded_collection_hook;
+
+typedef const char *(*GetDistributedApplicationName_HookType)(void);
+extern GetDistributedApplicationName_HookType get_distributed_application_name_hook;
+
+typedef bool (*IsNtoReturnSupported_HookType)(void);
+extern IsNtoReturnSupported_HookType is_n_to_return_supported_hook;
+
+typedef bool (*EnsureMetadataTableReplicated_HookType)(const char *);
+extern EnsureMetadataTableReplicated_HookType ensure_metadata_table_replicated_hook;
+
+typedef void (*PostSetupCluster_HookType)(bool (shouldUpgradeFunc(void *, int, int,
+																  int)), void *);
+extern PostSetupCluster_HookType post_setup_cluster_hook;
+
+/*
+ * Hook for customizing the validation of vector query spec.
+ */
+typedef struct VectorSearchOptions VectorSearchOptions;
+typedef void
+(*TryCustomParseAndValidateVectorQuerySpec_HookType)(const char *key,
+													 const bson_value_t *value,
+													 VectorSearchOptions *
+													 vectorSearchOptions);
+extern TryCustomParseAndValidateVectorQuerySpec_HookType
+	try_custom_parse_and_validate_vector_query_spec_hook;
+
+extern bool DefaultInlineWriteOperations;
+extern bool ShouldUpgradeDataTables;
+
+typedef char *(*TryGetExtendedVersionRefreshQuery_HookType)(void);
+extern TryGetExtendedVersionRefreshQuery_HookType
+	try_get_extended_version_refresh_query_hook;
+
+extern TryGetExtendedVersionRefreshQuery_HookType
+	try_get_extended_initialized_version_refresh_query_hook;
+
+typedef void (*GetShardIdsAndNamesForCollection_HookType)(Oid relationOid, const
+														  char *tableName,
+														  Datum **shardOidArray,
+														  Datum **shardNameArray,
+														  int32_t *shardCount);
+extern GetShardIdsAndNamesForCollection_HookType
+	get_shard_ids_and_names_for_collection_hook;
+
+
+typedef const char *(*GetPidForIndexBuild_HookType)(void);
+extern GetPidForIndexBuild_HookType get_pid_for_index_build_hook;
+
+
+typedef const char *(*TryGetIndexBuildJobOpIdQuery_HookType)(void);
+extern TryGetIndexBuildJobOpIdQuery_HookType try_get_index_build_job_op_id_query_hook;
+
+
+typedef char *(*TryGetCancelIndexBuildQuery_HookType)(int32_t indexId, char cmdType);
+extern TryGetCancelIndexBuildQuery_HookType try_get_cancel_index_build_query_hook;
+
+
+typedef bool (*ShouldScheduleIndexBuilds_HookType)();
+extern ShouldScheduleIndexBuilds_HookType should_schedule_index_builds_hook;
+
+typedef List *(*GetShardIndexOids_HookType)(uint64_t collectionId, Oid indexOid, bool
+											ignoreMissing);
+extern GetShardIndexOids_HookType get_shard_index_oids_hook;
+
+typedef void (*UpdatePostgresIndex_HookType)(uint64_t collectionId, int indexId, int
+											 operation, bool value);
+extern UpdatePostgresIndex_HookType update_postgres_index_hook;
+
+typedef const char *(*GetOperationCancellationQuery_HookType)(int64 shardId,
+															  StringView *opIdString,
+															  int *nargs, Oid **argTypes,
+															  Datum **argValues,
+															  char **argNulls);
+extern GetOperationCancellationQuery_HookType get_operation_cancellation_query_hook;
+
+typedef bool (*DefaultEnableCompositeOpClass_HookType)(void);
+extern DefaultEnableCompositeOpClass_HookType default_enable_composite_op_class_hook;
+
+typedef bool (*DefaultEnableStatsCreationOnNewCollections_HookType)();
+extern DefaultEnableStatsCreationOnNewCollections_HookType
+	default_enable_stats_creation_on_new_collections_hook;
+
+/*
+ * Hook for resolving a search operator definition by operator name.
+ * Called when the built-in operator list does not contain a match,
+ * allowing extended index types to provide additional operators.
+ *
+ * Returns a pointer to the matching BlackboxDBSearchOperatorDef, or NULL if
+ * no matching operator is found.
+ */
+typedef struct BlackboxDBSearchOperatorDef BlackboxDBSearchOperatorDef;
+typedef const BlackboxDBSearchOperatorDef *(*ExtendedSearchOperatorDefByName_HookType)(
+	const char *key);
+extern ExtendedSearchOperatorDefByName_HookType extended_search_operator_def_by_name_hook;
+
+
+/*
+ * Hook for creating a TTL metrics aggregation context before the TTL purge loop.
+ * The MemoryContext parameter should be used for allocations that need to survive
+ * across batch deletes.
+ *
+ * Returns an opaque context pointer (NULL if metrics collection is disabled).
+ */
+typedef void *(*CreateTtlMetricsContext_HookType)(MemoryContext metricsMemoryContext,
+												  int numTtlIndexEntries);
+extern CreateTtlMetricsContext_HookType create_ttl_metrics_context_hook;
+
+
+/*
+ * Hook for recording a single TTL metric entry after a batch delete.
+ * Called after each batch deletion to pass individual metric values
+ * to the implementation layer for aggregation.
+ */
+typedef void (*RecordTtlMetric_HookType)(void *metricsContext,
+										 uint64 collectionId,
+										 uint64 indexId,
+										 uint64 shardId,
+										 const char *indexName,
+										 double saturationRatio,
+										 double batchDeleteElapsedTimeMs,
+										 uint64 rowsDeleted);
+extern RecordTtlMetric_HookType record_ttl_metric_hook;
+
+
+/*
+ * Hook for finalizing TTL metrics aggregation after the TTL purge loop completes.
+ */
+typedef void (*FinalizeTtlMetrics_HookType)(void *metricsContext);
+extern FinalizeTtlMetrics_HookType finalize_ttl_metrics_hook;
+
+
+/*
+ * Hook called after index statistics are updated for a newly created
+ * extended index. Passes the already-opened index metadata so the
+ * hook does not need to re-open the relation.
+ */
+typedef void (*UpdateExtendedIndexStats_HookType)(uint64 collectionId,
+												  int indexId,
+												  const char *pgIndexName,
+												  IndexInfo *indexInfo);
+extern UpdateExtendedIndexStats_HookType update_extended_index_stats_hook;
+
+
+/*
+ * Optional hook that, given an Aggref, may resolve it to a different aggregate
+ * function oid that better represents the underlying aggregation for
+ * planner-classification purposes (e.g. when the surface Aggref is a wrapper
+ * around another aggregate introduced by a query rewrite).
+ *
+ * Example: With distributed-execution rewrite, a partial aggregate is pushed
+ * down to a shard, the original Aggref's aggfnoid is replaced with a wrapper.
+ *
+ * On entry *aggregateFunctionOid is initialized to aggref->aggfnoid. The hook
+ * may overwrite it with a different oid and return true; returning false (or
+ * leaving the hook unset) means the caller should keep aggref->aggfnoid as-is.
+ *
+ * Lives as a hook because the core extension intentionally has no knowledge of
+ * any aggregate-wrapping rewrites; implementations are provided by extensions
+ * that introduce such rewrites.
+ */
+typedef bool (*GetEffectiveAggregateFunctionOid_HookType)(Aggref *aggref,
+														  Oid *aggregateFunctionOid);
+extern GetEffectiveAggregateFunctionOid_HookType
+	get_effective_aggregate_function_oid_hook;
+
+#endif

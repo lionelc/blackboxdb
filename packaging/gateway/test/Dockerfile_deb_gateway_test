@@ -1,0 +1,122 @@
+# ----------- Prebuild Stage -----------
+ARG BASE_IMAGE=ubuntu:22.04
+
+FROM ${BASE_IMAGE} AS prebuild
+ARG DEBIAN_FRONTEND=noninteractive
+ARG POSTGRES_VERSION=17
+ARG DEB_PACKAGE_REL_PATH
+ARG GATEWAY_PACKAGE_PATH
+# Fail fast if caller did not pass the required deb path build arg.
+RUN [ -n "${DEB_PACKAGE_REL_PATH}" ] || (echo "ERROR: DEB_PACKAGE_REL_PATH build-arg is required. Example: --build-arg DEB_PACKAGE_REL_PATH=packaging/packages/ubuntu22.04-postgresql-16-blackboxdb_1.0.0_amd64.deb" >&2; exit 1)
+
+# Base tools + locale (single layer)
+RUN apt-get update; \
+    apt-get install -y --no-install-recommends \
+        wget \
+        gnupg2 \
+        lsb-release \
+        ca-certificates \
+        locales \
+        sudo; \
+    echo "en_US.UTF-8 UTF-8" > /etc/locale.gen; \
+    locale-gen; \
+    rm -rf /var/lib/apt/lists/*
+
+# Minimal locale env (others inherit)
+ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+
+# Add PostgreSQL upstream repo (modern keyring usage) + install extensions
+RUN install -d -m 0755 /etc/apt/keyrings; \
+    wget -qO /etc/apt/keyrings/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc; \
+    echo "deb [signed-by=/etc/apt/keyrings/pgdg.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main ${POSTGRES_VERSION}" \
+        > /etc/apt/sources.list.d/pgdg.list; \
+    apt-get update; \
+    RUM_PKG=""; \
+    if [ "${POSTGRES_VERSION}" -lt 18 ]; then \
+        RUM_PKG="postgresql-${POSTGRES_VERSION}-rum"; \
+    fi; \
+    apt-get install -y --no-install-recommends \
+        postgresql-${POSTGRES_VERSION} \
+        postgresql-${POSTGRES_VERSION}-cron \
+        postgresql-${POSTGRES_VERSION}-pgvector \
+        postgresql-${POSTGRES_VERSION}-postgis-3 \
+        $RUM_PKG \
+    ; \
+    rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /tmp/install_setup
+COPY ${DEB_PACKAGE_REL_PATH} /tmp/install_setup/
+RUN dpkg -i /tmp/install_setup/$(basename "$DEB_PACKAGE_REL_PATH")
+
+COPY ${GATEWAY_PACKAGE_PATH} /tmp/install_setup/
+RUN dpkg -i /tmp/install_setup/$(basename "$GATEWAY_PACKAGE_PATH")
+
+RUN useradd -ms /bin/bash blackboxdb -G sudo
+RUN echo "%sudo ALL=(ALL:ALL) NOPASSWD: ALL" >> /etc/sudoers.d/no-pass-ask
+
+# ----------- Final Gateway Image -----------
+FROM prebuild AS final
+ARG POSTGRES_VERSION
+
+RUN sudo groupmod -g 103 postgres && sudo usermod -u 105 -g 103 postgres
+RUN sudo apt-get update && \
+    sudo apt-get install -y --no-install-recommends \
+    jq openssl lsof libc6 python3-venv netcat-openbsd && \
+    arch="$(dpkg --print-architecture)" && \
+    sudo wget -q "https://downloads.mongodb.com/compass/mongodb-mongosh_2.5.6_${arch}.deb" \
+        -O "/tmp/mongodb-mongosh_2.5.6_${arch}.deb" && \
+    sudo dpkg -i "/tmp/mongodb-mongosh_2.5.6_${arch}.deb" && \
+    sudo rm "/tmp/mongodb-mongosh_2.5.6_${arch}.deb" && \
+    sudo rm -rf /var/lib/apt/lists/*
+
+ENV LANGUAGE=en_US.UTF-8 \
+    TERM=xterm-256color
+
+ENV CERT_PATH="" \
+    KEY_FILE="" \
+    DATA_PATH="/data" \
+    BLACKBOXDB_PORT="10260" \
+    ENABLE_TELEMETRY="false" \
+    LOG_LEVEL="info" \
+    USERNAME="default_user" \
+    CREATE_USER="true" \
+    START_POSTGRESQL="true" \
+    POSTGRESQL_PORT="9712" \
+    OWNER="blackboxdb" \
+    PG_VERSION_USED="${POSTGRES_VERSION}" \
+    ALLOW_EXTERNAL_CONNECTIONS="false" \
+    TLS_MODE="allowTLS" \
+    INIT_DATA="" \
+    INIT_DATA_PATH="/init_doc_db.d" \
+    PATH=/usr/lib/postgresql/${POSTGRES_VERSION}/bin:$PATH
+
+RUN sudo mkdir /home/blackboxdb/gateway
+RUN sudo mkdir -p /home/blackboxdb/gateway/pg_blackboxdb_gw/target/release-with-symbols
+RUN ln -s /usr/bin/blackboxdb-gateway /home/blackboxdb/gateway/pg_blackboxdb_gw/target/release-with-symbols/blackboxdb_gateway
+
+# Create /var/run/postgresql directory with proper permissions
+RUN sudo mkdir -p /var/run/postgresql && \
+    sudo chown -R blackboxdb:blackboxdb /var/run/postgresql && \
+    sudo chmod 755 /var/run/postgresql
+
+COPY pg_blackboxdb_gw/SetupConfiguration.json /home/blackboxdb/gateway/pg_blackboxdb_gw/SetupConfiguration.json
+COPY scripts/start_oss_server.sh /home/blackboxdb/gateway/scripts/start_oss_server.sh
+COPY scripts/build_and_start_gateway.sh /home/blackboxdb/gateway/scripts/build_and_start_gateway.sh
+COPY blackboxdb-local/scripts/emulator_entrypoint.sh /home/blackboxdb/gateway/scripts/emulator_entrypoint.sh
+COPY blackboxdb-local/scripts/init_blackboxdb_data.sh /home/blackboxdb/gateway/scripts/init_blackboxdb_data.sh
+COPY scripts/utils.sh /home/blackboxdb/gateway/scripts/utils.sh
+COPY scripts/preload_libraries.sh /home/blackboxdb/gateway/scripts/preload_libraries.sh
+COPY scripts/setup_psqlrc.sh /home/blackboxdb/gateway/scripts/setup_psqlrc.sh
+COPY blackboxdb-local/sample-data /home/blackboxdb/gateway/sample-data
+COPY packaging/test_packages/test_gateway.py /home/blackboxdb/gateway/scripts/test_gateway.py
+COPY packaging/test_packages/test-gateway-install-entrypoint.sh /home/blackboxdb/gateway/scripts/test-gateway-install-entrypoint.sh
+
+# Create default initialization directory for user-provided scripts
+RUN sudo mkdir -p /init_doc_db.d
+
+USER blackboxdb
+RUN sudo chown -R blackboxdb:blackboxdb /home/blackboxdb/gateway
+RUN sudo chmod +x /home/blackboxdb/gateway/scripts/init_blackboxdb_data.sh
+
+WORKDIR /home/blackboxdb/gateway/scripts
+ENTRYPOINT ["/bin/bash", "-c", "/home/blackboxdb/gateway/scripts/test-gateway-install-entrypoint.sh"]

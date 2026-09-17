@@ -1,0 +1,450 @@
+SET search_path TO blackboxdb_api_catalog, blackboxdb_api, blackboxdb_core, public;
+SET citus.next_shard_id TO 3160000;
+SET blackboxdb.next_collection_id TO 3160;
+SET blackboxdb.next_collection_index_id TO 3160;
+
+SET citus.multi_shard_modify_mode TO 'sequential';
+set blackboxdb.useFileBasedPersistedCursors to on;
+
+CREATE SCHEMA aggregation_cursor_test_file;
+
+DO $$
+DECLARE i int;
+BEGIN
+-- each doc is "a": 500KB, "c": 5 MB - ~5.5 MB & there's 10 of them
+FOR i IN 1..10 LOOP
+PERFORM blackboxdb_api.insert_one('db', 'get_aggregation_cursor_test_file', FORMAT('{ "_id": %s, "a": "%s", "c": [ %s "d" ] }',  i, repeat('Sample', 100000), repeat('"' || repeat('a', 1000) || '", ', 5000))::blackboxdb_core.bson);
+END LOOP;
+END;
+$$;
+
+CREATE TYPE aggregation_cursor_test_file.drain_result AS (filteredDoc bson, docSize int, continuationFiltered bson, persistConnection bool);
+
+-- A file-based persisted cursor continuation embeds per-run volatile serialized
+-- file state ("qf") that differs on every run. Replace it with a constant so the
+-- continuation is deterministic, while leaving every other field intact. The
+-- "$type" guard makes this a no-op for continuations that have no "qf".
+CREATE FUNCTION aggregation_cursor_test_file.mask_continuation(cont bson)
+    RETURNS bson
+    LANGUAGE sql
+AS $fn$
+    SELECT blackboxdb_api_catalog.bson_dollar_add_fields(
+        blackboxdb_api_catalog.bson_dollar_project(cont, '{ "continuation.value": 0 }'::blackboxdb_core.bson),
+        '{ "qf": { "$cond": [ { "$eq": [ { "$type": "$qf" }, "missing" ] }, "$$REMOVE", "XXX" ] } }'::blackboxdb_core.bson);
+$fn$;
+
+
+CREATE FUNCTION aggregation_cursor_test_file.drain_find_query(
+    loopCount int, pageSize int, project bson DEFAULT NULL, skipVal int4 DEFAULT NULL, limitVal int4 DEFAULT NULL,
+    sort bson DEFAULT NULL, filter bson default null,
+    obfuscate_id bool DEFAULT false) RETURNS SETOF aggregation_cursor_test_file.drain_result AS
+$$
+    DECLARE
+        i int;
+        doc bson;
+        docSize int;
+        cont bson;
+        contProcessed bson;
+        persistConn bool;
+        findSpec bson;
+        getMoreSpec bson;
+    BEGIN
+
+    WITH r1 AS (SELECT 'get_aggregation_cursor_test_file' AS "find", filter AS "filter", sort AS "sort", project AS "projection", skipVal AS "skip", limitVal as "limit", pageSize AS "batchSize")
+    SELECT row_get_bson(r1) INTO findSpec FROM r1;
+
+    WITH r1 AS (SELECT 'get_aggregation_cursor_test_file' AS "collection", 4294967294::int8 AS "getMore", pageSize AS "batchSize")
+    SELECT row_get_bson(r1) INTO getMoreSpec FROM r1;
+
+    SELECT cursorPage, continuation, persistConnection INTO STRICT doc, cont, persistConn FROM
+                    blackboxdb_api.find_cursor_first_page(database => 'db', commandSpec => findSpec, cursorId => 4294967294);
+    SELECT blackboxdb_api_catalog.bson_dollar_project(doc,
+        ('{ "ok": 1, "cursor.id": 1, "cursor.ns": 1, "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } }, ' ||
+        ' "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }')::blackboxdb_core.bson), length(doc::bytea)::int INTO STRICT doc, docSize;
+
+    IF obfuscate_id THEN
+        SELECT blackboxdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::blackboxdb_core.bson) INTO STRICT doc;
+    END IF;
+    
+    SELECT aggregation_cursor_test_file.mask_continuation(cont) INTO STRICT contProcessed;
+    RETURN NEXT ROW(doc, docSize, contProcessed, persistConn)::aggregation_cursor_test_file.drain_result;
+
+    FOR i IN 1..loopCount LOOP
+        SELECT cursorPage, continuation INTO STRICT doc, cont FROM blackboxdb_api.cursor_get_more(database => 'db', getMoreSpec => getMoreSpec, continuationSpec => cont);
+
+        SELECT blackboxdb_api_catalog.bson_dollar_project(doc,
+        ('{ "ok": 1, "cursor.id": 1, "cursor.ns": 1, "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } }, ' ||
+        ' "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }')::blackboxdb_core.bson), length(doc::bytea)::int INTO STRICT doc, docSize;
+
+        IF obfuscate_id THEN
+            SELECT blackboxdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::blackboxdb_core.bson) INTO STRICT doc;
+        END IF;
+
+        SELECT aggregation_cursor_test_file.mask_continuation(cont) INTO STRICT contProcessed;
+        RETURN NEXT ROW(doc, docSize, contProcessed, FALSE)::aggregation_cursor_test_file.drain_result;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE FUNCTION aggregation_cursor_test_file.drain_aggregation_query(
+    loopCount int, pageSize int, pipeline bson DEFAULT NULL, obfuscate_id bool DEFAULT false, singleBatch bool DEFAULT NULL) RETURNS SETOF aggregation_cursor_test_file.drain_result AS
+$$
+    DECLARE
+        i int;
+        doc bson;
+        docSize int;
+        cont bson;
+        contProcessed bson;
+        persistConn bool;
+        aggregateSpec bson;
+        getMoreSpec bson;
+    BEGIN
+
+    IF pipeline IS NULL THEN
+        pipeline = '{ "": [] }'::bson;
+    END IF;
+
+    WITH r0 AS (SELECT pageSize AS "batchSize", singleBatch AS "singleBatch" ),
+    r1 AS (SELECT 'get_aggregation_cursor_test_file' AS "aggregate", pipeline AS "pipeline", row_get_bson(r0) AS "cursor" FROM r0)
+    SELECT row_get_bson(r1) INTO aggregateSpec FROM r1;
+
+    WITH r1 AS (SELECT 'get_aggregation_cursor_test_file' AS "collection", 4294967294::int8 AS "getMore", pageSize AS "batchSize" )
+    SELECT row_get_bson(r1) INTO getMoreSpec FROM r1;
+
+    SELECT cursorPage, continuation, persistConnection INTO STRICT doc, cont, persistConn FROM
+                    blackboxdb_api.aggregate_cursor_first_page(database => 'db', commandSpec => aggregateSpec, cursorId => 4294967294);
+    SELECT blackboxdb_api_catalog.bson_dollar_project(doc,
+        ('{ "ok": 1, "cursor.id": 1, "cursor.ns": 1, "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } }, ' ||
+        ' "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }')::blackboxdb_core.bson), length(doc::bytea)::int INTO STRICT doc, docSize;
+
+    IF obfuscate_id THEN
+        SELECT blackboxdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::blackboxdb_core.bson) INTO STRICT doc;
+    END IF;
+    
+    SELECT aggregation_cursor_test_file.mask_continuation(cont) INTO STRICT contProcessed;
+    RETURN NEXT ROW(doc, docSize, contProcessed, persistConn)::aggregation_cursor_test_file.drain_result;
+
+    FOR i IN 1..loopCount LOOP
+        SELECT cursorPage, continuation INTO STRICT doc, cont FROM blackboxdb_api.cursor_get_more(database => 'db', getMoreSpec => getMoreSpec, continuationSpec => cont);
+
+        SELECT blackboxdb_api_catalog.bson_dollar_project(doc,
+        ('{ "ok": 1, "cursor.id": 1, "cursor.ns": 1, "batchCount": { "$size": { "$ifNull": [ "$cursor.firstBatch", "$cursor.nextBatch" ] } }, ' ||
+        ' "ids": { "$ifNull": [ "$cursor.firstBatch._id", "$cursor.nextBatch._id" ] } }')::blackboxdb_core.bson), length(doc::bytea)::int INTO STRICT doc, docSize;
+
+        IF obfuscate_id THEN
+            SELECT blackboxdb_api_catalog.bson_dollar_add_fields(doc, '{ "ids.a": "1" }'::blackboxdb_core.bson) INTO STRICT doc;
+        END IF;
+
+        SELECT aggregation_cursor_test_file.mask_continuation(cont) INTO STRICT contProcessed;
+        RETURN NEXT ROW(doc, docSize, contProcessed, FALSE)::aggregation_cursor_test_file.drain_result;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+-- PERSISTED BASED:
+-- test getting the first page (with max page size) - should limit to 2 docs at a time.
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 6, limitVal => 300000, pageSize => 100000);
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 6, pageSize => 100000, pipeline => '{ "": [{ "$limit": 300000 }]}');
+
+
+-- test smaller docs (500KB)
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 2, limitVal => 300000, pageSize => 100000, project => '{ "a": 1 }');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 2, pageSize => 100000, pipeline => '{ "": [{ "$project": { "a": 1 } }, { "$limit": 300000 }]}');
+
+-- test smaller batch size(s)
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 2, pageSize => 0, project => '{ "a": 1 }', limitVal => 300000);
+
+-- this will fail (with cursor in use)
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 12, pageSize => 1, project => '{ "a": 1 }', limitVal => 300000);
+
+SELECT blackboxdb_api_internal.delete_cursors(ARRAY[4294967294::int8]);
+
+-- now this works
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 5, pageSize => 2, project => '{ "a": 1 }', limitVal => 300000);
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 4, pageSize => 3, project => '{ "a": 1 }', limitVal => 300000);
+
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 2, pageSize => 0, pipeline => '{ "": [{ "$project": { "a": 1 } }, { "$limit": 300000 }]}');
+
+SELECT blackboxdb_api_internal.delete_cursors(ARRAY[4294967294::int8]);
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 12, pageSize => 1, pipeline => '{ "": [{ "$project": { "a": 1 } }, { "$limit": 300000 }]}');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$project": { "a": 1 } }, { "$limit": 300000 }]}');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 4, pageSize => 3, pipeline => '{ "": [{ "$project": { "a": 1 } }, { "$limit": 300000 }]}');
+
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 4, pageSize => 3, pipeline => '{ "": [{ "$project": { "a": 1 } }, { "$skip": 1 }]}');
+
+-- FIND: Test streaming vs not
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 5, pageSize => 100000, skipVal => 2);
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 4, pageSize => 100000, filter => '{ "_id": { "$gt": 2 }} ', limitVal => 300000);
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 4, pageSize => 100000, limitVal => 3);
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 2, pageSize => 100000, limitVal => 1);
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 1, pageSize => 0, limitVal => 1);
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 5, pageSize => 100000, sort => '{ "_id": -1 }');
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 4, pageSize => 100000, filter => '{ "_id": { "$gt": 2 }} ', skipVal => 0, limitVal => 300000);
+
+-- AGGREGATE: Test streaming vs not
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$skip": 2 }]}');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 4, pageSize => 100000, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }, { "$limit": 300000 }]}');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 4, pageSize => 100000, pipeline => '{ "": [{ "$limit": 3 }]}');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 2, pageSize => 100000, pipeline => '{ "": [{ "$limit": 1 }]}');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 1, pageSize => 0, pipeline => '{ "": [{ "$limit": 1 }]}');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$sort": { "_id": -1 } }]}');
+
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }');
+
+-- $sum/$avg on UNSHARDED, local execution
+SET blackboxdb.enableNewWithExprAccumulators TO on;
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }');
+SET blackboxdb.enableNewMinMaxAccumulators TO off;
+SET blackboxdb.enableNewWithExprAccumulators TO off;
+
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+
+-- $max with file cursor - test with new aggregate implementation
+SET blackboxdb.enableNewWithExprAccumulators TO on;
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+SET blackboxdb.enableNewMinMaxAccumulators TO off;
+SET blackboxdb.enableNewWithExprAccumulators TO off;
+
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 1, pageSize => 100000, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }, { "$limit": 1 }]}');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 1, pageSize => 100000, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }, { "$limit": 1 }, { "$addFields": { "c": "$a" }}]}');
+
+BEGIN;
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 1, pageSize => 0, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }, { "$limit": 1 }, { "$addFields": { "c": "$a" }}]}');
+ROLLBACK;
+
+-- With local execution off.
+set citus.enable_local_execution to off;
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 5, pageSize => 100000, skipVal => 2);
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 4, pageSize => 100000, filter => '{ "_id": { "$gt": 2 }} ', limitVal => 300000);
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 4, pageSize => 100000, limitVal => 3);
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 2, pageSize => 100000, limitVal => 1);
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 1, pageSize => 0, limitVal => 1);
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 5, pageSize => 100000, sort => '{ "_id": -1 }');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$skip": 2 }]}');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 4, pageSize => 100000, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }]}');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 4, pageSize => 100000, pipeline => '{ "": [{ "$limit": 3 }]}');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 2, pageSize => 100000, pipeline => '{ "": [{ "$limit": 1 }]}');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 1, pageSize => 0, pipeline => '{ "": [{ "$limit": 1 }]}');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$sort": { "_id": -1 } }]}');
+
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }');
+
+-- $sum/$avg on UNSHARDED, local execution OFF
+SET blackboxdb.enableNewWithExprAccumulators TO on;
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }');
+SET blackboxdb.enableNewMinMaxAccumulators TO off;
+SET blackboxdb.enableNewWithExprAccumulators TO off;
+
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+
+-- $max with local execution off - test with new aggregate implementation
+SET blackboxdb.enableNewWithExprAccumulators TO on;
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+SET blackboxdb.enableNewMinMaxAccumulators TO off;
+SET blackboxdb.enableNewWithExprAccumulators TO off;
+
+RESET citus.enable_local_execution;
+
+-- with sharded
+SELECT blackboxdb_api.shard_collection('db', 'get_aggregation_cursor_test_file', '{ "_id": "hashed" }', false);
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 6, pageSize => 100000);
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 6, pageSize => 100000);
+
+-- FIND: Test streaming vs not
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 5, pageSize => 100000, skipVal => 2);
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 4, pageSize => 100000, filter => '{ "_id": { "$gt": 2 }} ');
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 4, pageSize => 100000, limitVal => 3);
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 2, pageSize => 100000, limitVal => 1);
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 1, pageSize => 0, limitVal => 1);
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 5, pageSize => 100000, sort => '{ "_id": -1 }');
+
+-- AGGREGATE: Test streaming vs not
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$skip": 2 }]}');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 4, pageSize => 100000, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }]}');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 4, pageSize => 100000, pipeline => '{ "": [{ "$limit": 3 }]}');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 2, pageSize => 100000, pipeline => '{ "": [{ "$limit": 1 }]}');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 1, pageSize => 0, pipeline => '{ "": [{ "$limit": 1 }]}');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$sort": { "_id": -1 } }]}');
+
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }');
+
+-- $sum/$avg on Sharded collection, local execution ON
+SET blackboxdb.enableNewWithExprAccumulators TO on;
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }');
+SET blackboxdb.enableNewMinMaxAccumulators TO off;
+SET blackboxdb.enableNewWithExprAccumulators TO off;
+
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+
+-- $max with sharded file cursor - test with new aggregate implementation
+SET blackboxdb.enableNewWithExprAccumulators TO on;
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }');
+SET blackboxdb.enableNewMinMaxAccumulators TO off;
+SET blackboxdb.enableNewWithExprAccumulators TO off;
+
+-- With local execution off.
+set citus.enable_local_execution to off;
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 5, pageSize => 100000, skipVal => 2, obfuscate_id => true);
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 4, pageSize => 100000, filter => '{ "_id": { "$gt": 2 }} ', obfuscate_id => true);
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 4, pageSize => 100000, limitVal => 3, obfuscate_id => true);
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 2, pageSize => 100000, limitVal => 1, obfuscate_id => true);
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 1, pageSize => 0, limitVal => 1, obfuscate_id => true);
+SELECT * FROM aggregation_cursor_test_file.drain_find_query(loopCount => 5, pageSize => 100000, sort => '{ "_id": -1 }');
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$skip": 2 }]}', obfuscate_id => true);
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 4, pageSize => 100000, pipeline => '{ "": [{ "$match": { "_id": { "$gt": 2 }} }]}', obfuscate_id => true);
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 4, pageSize => 100000, pipeline => '{ "": [{ "$limit": 3 }]}', obfuscate_id => true);
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 2, pageSize => 100000, pipeline => '{ "": [{ "$limit": 1 }]}', obfuscate_id => true);
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 1, pageSize => 0, pipeline => '{ "": [{ "$limit": 1 }]}', obfuscate_id => true);
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 100000, pipeline => '{ "": [{ "$sort": { "_id": -1 } }]}', obfuscate_id => true);
+
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }', obfuscate_id => true);
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }', obfuscate_id => true);
+
+-- $sum/$avg on Sharded collection, local execution off
+SET blackboxdb.enableNewWithExprAccumulators TO on;
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$sum": "$a" } } }] }', obfuscate_id => true);
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$avg": "$a" } } }] }', obfuscate_id => true);
+SET blackboxdb.enableNewMinMaxAccumulators TO off;
+SET blackboxdb.enableNewWithExprAccumulators TO off;
+
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }', obfuscate_id => true);
+
+-- $max with file cursor sharded - test with new aggregate implementation
+SET blackboxdb.enableNewWithExprAccumulators TO on;
+SELECT * FROM aggregation_cursor_test_file.drain_aggregation_query(loopCount => 5, pageSize => 2, pipeline => '{ "": [{ "$group": { "_id": "$_id", "c": { "$max": "$a" } } }] }', obfuscate_id => true);
+SET blackboxdb.enableNewMinMaxAccumulators TO off;
+SET blackboxdb.enableNewWithExprAccumulators TO off;
+
+RESET citus.enable_local_execution;
+
+-- start draining first page first (should not persist connection and have a query file)
+SELECT cursorPage, continuation, persistConnection FROM
+    blackboxdb_api.find_cursor_first_page(database => 'db', commandSpec => '{ "find": "get_aggregation_cursor_test_file", "skip": 1, "batchSize": 2, "projection": { "_id": 1 } }', cursorId => 4294967291);
+
+SELECT * FROM pg_ls_dir('pg_blackboxdb_cursor_files') f WHERE f LIKE '%4294967291%' ORDER BY 1;
+
+-- can't reuse the same cursorId
+SELECT cursorPage, continuation, persistConnection FROM
+    blackboxdb_api.find_cursor_first_page(database => 'db', commandSpec => '{ "find": "get_aggregation_cursor_test_file", "skip": 1, "batchSize": 2, "projection": { "_id": 1 } }', cursorId => 4294967291);
+
+SELECT blackboxdb_api_internal.delete_cursors(ARRAY[4294967291::int8]);
+SELECT * FROM pg_ls_dir('pg_blackboxdb_cursor_files') f WHERE f LIKE '%4294967291%' ORDER BY 1;
+
+SELECT cursorPage, continuation, persistConnection FROM
+    blackboxdb_api.find_cursor_first_page(database => 'db', commandSpec => '{ "find": "get_aggregation_cursor_test_file", "skip": 1, "batchSize": 2, "projection": { "_id": 1 } }', cursorId => 4294967291);
+
+-- set max cursors to 5
+set blackboxdb.maxCursorFileCount to 5;
+
+SELECT cursorPage, continuation, persistConnection FROM
+    blackboxdb_api.find_cursor_first_page(database => 'db', commandSpec => '{ "find": "get_aggregation_cursor_test_file", "skip": 1, "batchSize": 2, "projection": { "_id": 1 } }', cursorId => 4294967292);
+SELECT cursorPage, continuation, persistConnection FROM
+    blackboxdb_api.find_cursor_first_page(database => 'db', commandSpec => '{ "find": "get_aggregation_cursor_test_file", "skip": 1, "batchSize": 2, "projection": { "_id": 1 } }', cursorId => 4294967293);
+SELECT cursorPage, continuation, persistConnection FROM
+    blackboxdb_api.find_cursor_first_page(database => 'db', commandSpec => '{ "find": "get_aggregation_cursor_test_file", "skip": 1, "batchSize": 2, "projection": { "_id": 1 } }', cursorId => 4294967294);
+SELECT cursorPage, continuation, persistConnection FROM
+    blackboxdb_api.find_cursor_first_page(database => 'db', commandSpec => '{ "find": "get_aggregation_cursor_test_file", "skip": 1, "batchSize": 2, "projection": { "_id": 1 } }', cursorId => 4294967295);
+SELECT cursorPage, continuation, persistConnection FROM
+    blackboxdb_api.find_cursor_first_page(database => 'db', commandSpec => '{ "find": "get_aggregation_cursor_test_file", "skip": 1, "batchSize": 2, "projection": { "_id": 1 } }', cursorId => 4294967296);
+
+-- delete a cursor and see that it succeeds one time.
+SELECT * FROM pg_ls_dir('pg_blackboxdb_cursor_files') f WHERE f LIKE '%429496729%' ORDER BY 1;
+SELECT blackboxdb_api_internal.delete_cursors(ARRAY[4294967295::int8]);
+SELECT * FROM pg_ls_dir('pg_blackboxdb_cursor_files') f WHERE f LIKE '%429496729%' ORDER BY 1;
+
+SELECT cursorPage, continuation, persistConnection FROM
+    blackboxdb_api.find_cursor_first_page(database => 'db', commandSpec => '{ "find": "get_aggregation_cursor_test_file", "skip": 1, "batchSize": 2, "projection": { "_id": 1 } }', cursorId => 4294967295);
+SELECT cursorPage, continuation, persistConnection FROM
+    blackboxdb_api.find_cursor_first_page(database => 'db', commandSpec => '{ "find": "get_aggregation_cursor_test_file", "skip": 1, "batchSize": 2, "projection": { "_id": 1 } }', cursorId => 4294967298);
+set blackboxdb.maxCursorFileCount to 100;
+
+-- create a cursor but don't drain it.
+SELECT cursorPage, continuation, persistConnection FROM
+    blackboxdb_api.find_cursor_first_page(database => 'db', commandSpec => '{ "find": "get_aggregation_cursor_test_file", "skip": 1, "batchSize": 2, "projection": { "_id": 1 } }', cursorId => 4294967280);
+
+-- query the cursor file (it should be there)
+SELECT * FROM pg_ls_dir('pg_blackboxdb_cursor_files') f WHERE f LIKE '%4294967280%' ORDER BY 1;
+
+-- sleep 4 seconds
+SELECT pg_sleep(4);
+
+-- now prune based on a 1s timeout - should prune the file.
+SELECT blackboxdb_api_internal.cursor_directory_cleanup(2);
+
+-- now the cursor file doesn't exist.
+SELECT * FROM pg_ls_dir('pg_blackboxdb_cursor_files') f WHERE f LIKE '%4294967280%' ORDER BY 1;
+
+-- now repeat this but sleep for the scenario for idleness with getmore.
+
+-- now start a new query
+SELECT continuation AS continuation_drain1 FROM
+    blackboxdb_api.find_cursor_first_page(database => 'db', commandSpec => '{ "find": "get_aggregation_cursor_test_file", "skip": 1, "batchSize": 2, "projection": { "_id": 1 } }', cursorId => 4294967280) \gset
+
+SELECT * FROM pg_ls_dir('pg_blackboxdb_cursor_files') f WHERE f LIKE '%4294967280%' ORDER BY 1;
+
+-- sleep 1 and access it 4 times
+SELECT pg_sleep(1);
+SELECT cursorPage, continuation FROM blackboxdb_api.cursor_get_more(database => 'db', getMoreSpec => '{ "getMore": { "$numberLong": "4294967280" }, "collection": "get_aggregation_cursor_test_file",  "batchSize": 0 }', continuationSpec => :'continuation_drain1');
+
+SELECT pg_sleep(1);
+SELECT cursorPage, continuation FROM blackboxdb_api.cursor_get_more(database => 'db', getMoreSpec => '{ "getMore": { "$numberLong": "4294967280" }, "collection": "get_aggregation_cursor_test_file",  "batchSize": 0 }', continuationSpec => :'continuation_drain1');
+
+SELECT pg_sleep(1);
+SELECT cursorPage, continuation FROM blackboxdb_api.cursor_get_more(database => 'db', getMoreSpec => '{ "getMore": { "$numberLong": "4294967280" }, "collection": "get_aggregation_cursor_test_file", "batchSize": 0 }', continuationSpec => :'continuation_drain1');
+
+SELECT pg_sleep(1);
+SELECT cursorPage, continuation FROM blackboxdb_api.cursor_get_more(database => 'db', getMoreSpec => '{ "getMore": { "$numberLong": "4294967280" }, "collection": "get_aggregation_cursor_test_file", "batchSize": 0 }', continuationSpec => :'continuation_drain1');
+
+-- now it's been at least 3 seconds, if we prune with a 2 second timeout, it should still not be pruned since getMore updated modified time.
+SELECT blackboxdb_api_internal.cursor_directory_cleanup(2);
+SELECT * FROM pg_ls_dir('pg_blackboxdb_cursor_files') f WHERE f LIKE '%4294967280%' ORDER BY 1;
+-- ===========================================================================
+-- killCursors (delete_cursors) and the cursor file name.
+-- ===========================================================================
+set blackboxdb.useFileBasedPersistedCursors to on;
+set blackboxdb.enableDelayedHoldPortal to on;
+
+-- Case 1: caller supplies an explicit cursor id. The on-disk file is named
+-- after that id, so killCursors keyed by the same id unlinks the file.
+SELECT cursorPage, persistConnection FROM
+    blackboxdb_api.find_cursor_first_page(database => 'db', commandSpec => '{ "find": "get_aggregation_cursor_test_file", "skip": 1, "batchSize": 2, "projection": { "_id": 1 } }', cursorId => 4294967270);
+-- the file exists and is named after the supplied id
+SELECT * FROM pg_ls_dir('pg_blackboxdb_cursor_files') f WHERE f LIKE '%4294967270%' ORDER BY 1;
+-- killCursors keyed by the supplied id removes it
+SELECT blackboxdb_api_internal.delete_cursors(ARRAY[4294967270::int8]);
+SELECT * FROM pg_ls_dir('pg_blackboxdb_cursor_files') f WHERE f LIKE '%4294967270%' ORDER BY 1;
+
+-- Case 2: server generated cursor id (cursorId => 0) with the delayed hold
+-- portal path. The on-disk file is named after the client-facing cursor id
+-- ("qi" in the continuation, which also equals "qn"), so killCursors
+-- (delete_cursors) keyed by that id unlinks the file. Output is reduced to
+-- stable booleans because the id is non-deterministic.
+SELECT continuation AS dlh_cont FROM
+    blackboxdb_api.find_cursor_first_page(database => 'db', commandSpec => '{ "find": "get_aggregation_cursor_test_file", "skip": 1, "batchSize": 2, "projection": { "_id": 1 } }', cursorId => 0) \gset
+SELECT blackboxdb_core.bson_get_value_text(:'dlh_cont'::blackboxdb_core.bson, 'qi') AS dlh_qi,
+       blackboxdb_core.bson_get_value_text(:'dlh_cont'::blackboxdb_core.bson, 'qn') AS dlh_qn \gset
+
+-- the on-disk file name ("qn") matches "cursor_<client cursor id>" ("qi").
+SELECT :'dlh_qn' = ('cursor_' || :'dlh_qi') AS file_named_after_client_id;
+-- the file named after the client id exists before killCursors.
+SELECT EXISTS(SELECT 1 FROM pg_ls_dir('pg_blackboxdb_cursor_files') f WHERE f = ('cursor_' || :'dlh_qi')) AS file_exists_before_kill;
+
+-- killCursors keyed by the client cursor id unlinks the file.
+SELECT blackboxdb_api_internal.delete_cursors(ARRAY[ :'dlh_qi'::int8 ]);
+SELECT EXISTS(SELECT 1 FROM pg_ls_dir('pg_blackboxdb_cursor_files') f WHERE f = ('cursor_' || :'dlh_qi')) AS file_exists_after_kill;
+
+-- a query that fully drains on the first page reports a closed cursor (id 0)
+-- and leaves no new cursor file behind.
+CREATE TEMP TABLE dlh_files_pre AS SELECT f FROM pg_ls_dir('pg_blackboxdb_cursor_files') f;
+SELECT blackboxdb_core.bson_get_value_text(cursorPage, 'cursor.id') AS reported_cursor_id
+FROM blackboxdb_api.find_cursor_first_page(database => 'db', commandSpec => '{ "find": "get_aggregation_cursor_test_file", "filter": { "_id": 1 }, "batchSize": 100, "projection": { "_id": 1 } }', cursorId => 0);
+SELECT count(*) AS new_cursor_files_after_full_drain FROM (
+    SELECT f FROM pg_ls_dir('pg_blackboxdb_cursor_files') f
+    EXCEPT SELECT f FROM dlh_files_pre) s;
+DROP TABLE dlh_files_pre;
