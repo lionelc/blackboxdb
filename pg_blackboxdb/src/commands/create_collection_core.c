@@ -238,13 +238,8 @@ CreatePostgresDataTable(uint64_t collectionId, const char *colocateWith, const
 	                  * NB: Ensure to match DOCUMENT_DATA_TABLE_DOCUMENT_VAR_ contants
 	                  *     defined in collection.h if you decide changing definiton
 	                  *     or position of document column.
-	                  *
-	                  * Perf change: the document column is TOAST-able (bson storage=extended);
-	                  * reading any field detoasts the whole value, so decompression cost dominates
-	                  * large-document scans. Use lz4 TOAST compression (much faster to decompress
-	                  * than the default pglz) to cut that per-row detoast tax.
 	                  */
-					 "document %s.bson compression lz4 not null",
+					 "document %s.bson not null",
 					 dataTableNameInfo->data,
 					 CoreSchemaName, CoreSchemaName);
 
