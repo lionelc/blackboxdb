@@ -95,6 +95,7 @@ extern bool EnableOrderByIndexTerm;
 extern bool EnableGroupByCompoundIdIndexPushdown;
 extern bool EnableSortGroupStage;
 extern bool EnableProjectPushUpBeforeUnwindWithGroup;
+extern bool EnableSkipLimitSwap;
 extern bool EnableSortPushToAccumulatorWithPrefix;
 extern bool EnableSampleScanFixOnSharded;
 extern bool EnableDistinctIndexPushdown;
@@ -392,6 +393,8 @@ static void RewriteFillToSetWindowFieldsSpec(const bson_value_t *fillSpec,
 											 bson_value_t *addFieldsForValueFill,
 											 bson_value_t *setWindowFieldsSpec,
 											 bson_value_t *partitionByFields);
+static void TrySwapSkipAndLimitStages(AggregationStage *skipStage,
+									  AggregationStage *limitStage);
 static List * TryOptimizeAggregationPipelines(List *aggregationStages,
 											  AggregationPipelineBuildContext *context);
 static bool IsPipelineStageFollowedByOtherStage(Stage firstStage, Stage secondStage,
@@ -10277,6 +10280,25 @@ TryOptimizeAggregationPipelines(List *aggregationStages,
 				continue;
 			}
 
+			case Stage_Skip:
+			{
+				/* $skip followed by $limit: rewrite to $limit (skip + limit)
+				 * followed by $skip. The output is identical, but the limit now
+				 * sits in the same query level as a preceding $sort, so the sort
+				 * can be bounded (top-N) instead of sorting every input row.
+				 */
+				if (EnableSkipLimitSwap &&
+					IsPipelineStageFollowedByOtherStage(Stage_Skip, Stage_Limit,
+														currentIndex, stagesList))
+				{
+					AggregationStage *limitStage =
+						(AggregationStage *) lfirst(list_nth_cell(stagesList, nextIndex));
+					TrySwapSkipAndLimitStages(stage, limitStage);
+				}
+
+				continue;
+			}
+
 			case Stage_ChangeStream:
 			{
 				if (IsPipelineStageFollowedByOtherStage(Stage_ChangeStream, Stage_Match,
@@ -10339,6 +10361,46 @@ TryOptimizeAggregationPipelines(List *aggregationStages,
 	}
 
 	return stagesList;
+}
+
+
+/*
+ * Rewrites an adjacent { $skip: s }, { $limit: l } pair in place into
+ * { $limit: s + l }, { $skip: s }. Both sequences return the same documents in
+ * the same order. Only well-formed, positive values whose sum fits in 64 bits
+ * are rewritten; anything else is left to the $skip and $limit handlers so
+ * their validation errors are unchanged.
+ */
+static void
+TrySwapSkipAndLimitStages(AggregationStage *skipStage, AggregationStage *limitStage)
+{
+	bool checkFixedInteger = true;
+	if (!BsonValueIsNumber(&skipStage->stageValue) ||
+		!BsonValueIsNumber(&limitStage->stageValue) ||
+		!IsBsonValueUnquantized64BitInteger(&skipStage->stageValue, checkFixedInteger) ||
+		!IsBsonValue64BitInteger(&limitStage->stageValue, checkFixedInteger))
+	{
+		return;
+	}
+
+	int64_t skipValue = BsonValueAsInt64(&skipStage->stageValue);
+	int64_t limitValue = BsonValueAsInt64(&limitStage->stageValue);
+	if (skipValue <= 0 || limitValue <= 0 || skipValue > PG_INT64_MAX - limitValue)
+	{
+		return;
+	}
+
+	const AggregationStageDefinition *skipDefinition = skipStage->stageDefinition;
+	bson_value_t originalSkip = skipStage->stageValue;
+
+	bson_value_t boundedLimit = { 0 };
+	boundedLimit.value_type = BSON_TYPE_INT64;
+	boundedLimit.value.v_int64 = skipValue + limitValue;
+
+	skipStage->stageDefinition = limitStage->stageDefinition;
+	skipStage->stageValue = boundedLimit;
+	limitStage->stageDefinition = skipDefinition;
+	limitStage->stageValue = originalSkip;
 }
 
 

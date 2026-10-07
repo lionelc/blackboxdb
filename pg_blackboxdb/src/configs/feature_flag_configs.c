@@ -285,6 +285,10 @@ bool EnableDynamicCursorFastStartupScan = DEFAULT_ENABLE_DYNAMIC_CURSOR_FAST_STA
 #define DEFAULT_ENABLE_GROUP_BY_DYNAMIC_STREAMING true
 bool EnableGroupByDynamicStreaming = DEFAULT_ENABLE_GROUP_BY_DYNAMIC_STREAMING;
 
+/* Added in v116, disabled by default while pending stabilization */
+#define DEFAULT_ENABLE_SKIP_LIMIT_SWAP false
+bool EnableSkipLimitSwap = DEFAULT_ENABLE_SKIP_LIMIT_SWAP;
+
 /* Added in v115, enabled in v115, remove after v117 */
 #define DEFAULT_ENABLE_PG_PRNG_CURSOR_ID true
 bool EnablePGPrngCursorId = DEFAULT_ENABLE_PG_PRNG_CURSOR_ID;
@@ -722,6 +726,16 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"to use a dynamic streaming cursor instead of a persisted cursor."),
 		NULL, &EnableGroupByDynamicStreaming,
 		DEFAULT_ENABLE_GROUP_BY_DYNAMIC_STREAMING,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_skip_limit_swap", newGucPrefix),
+		gettext_noop(
+			"Whether to rewrite a $skip that is immediately followed by a $limit into "
+			"a $limit of (skip + limit) followed by the $skip, so that a preceding "
+			"$sort can use a bounded (top-N) sort."),
+		NULL, &EnableSkipLimitSwap,
+		DEFAULT_ENABLE_SKIP_LIMIT_SWAP,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
