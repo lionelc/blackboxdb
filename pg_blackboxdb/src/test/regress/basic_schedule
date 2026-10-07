@@ -47,3 +47,4 @@ test: command_compact_tests
 test: bson_mem_vtable_palloc_test collection_cache_validity_test
 
 test: blackboxdb_guc_naming_conventions
+test: bson_aggregation_skip_limit_swap_tests

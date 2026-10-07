@@ -1,0 +1,241 @@
+SET search_path TO blackboxdb_api,blackboxdb_core,blackboxdb_api_catalog;
+SET blackboxdb.next_collection_id TO 25880000;
+SET blackboxdb.next_collection_index_id TO 25880000;
+-- 100 documents: k is a unique sort key (a permutation of 0..99), g a group key.
+DO $$
+DECLARE i int;
+BEGIN
+FOR i IN 0..99 LOOP
+PERFORM blackboxdb_api.insert_one('skiplimitdb', 'pages', FORMAT('{ "_id": %s, "k": %s, "g": %s }', i, (i * 37) % 100, i % 4)::blackboxdb_core.bson);
+END LOOP;
+END;
+$$;
+NOTICE:  creating collection
+-- Each query runs with the rewrite off and then on; the results must be identical.
+SET blackboxdb.enable_skip_limit_swap TO off;
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": 10 }, { "$limit": 5 }, { "$project": { "_id": 0, "k": 1 } } ], "cursor": {} }');
+             document              
+-----------------------------------
+ { "k" : { "$numberInt" : "10" } }
+ { "k" : { "$numberInt" : "11" } }
+ { "k" : { "$numberInt" : "12" } }
+ { "k" : { "$numberInt" : "13" } }
+ { "k" : { "$numberInt" : "14" } }
+(5 rows)
+
+SET blackboxdb.enable_skip_limit_swap TO on;
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": 10 }, { "$limit": 5 }, { "$project": { "_id": 0, "k": 1 } } ], "cursor": {} }');
+             document              
+-----------------------------------
+ { "k" : { "$numberInt" : "10" } }
+ { "k" : { "$numberInt" : "11" } }
+ { "k" : { "$numberInt" : "12" } }
+ { "k" : { "$numberInt" : "13" } }
+ { "k" : { "$numberInt" : "14" } }
+(5 rows)
+
+-- Descending, compound sort key, and a filter before the sort.
+SET blackboxdb.enable_skip_limit_swap TO off;
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": -1 } }, { "$skip": 3 }, { "$limit": 4 } ], "cursor": {} }');
+                                             document                                             
+--------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "8" }, "k" : { "$numberInt" : "96" }, "g" : { "$numberInt" : "0" } }
+ { "_id" : { "$numberInt" : "35" }, "k" : { "$numberInt" : "95" }, "g" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "62" }, "k" : { "$numberInt" : "94" }, "g" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "89" }, "k" : { "$numberInt" : "93" }, "g" : { "$numberInt" : "1" } }
+(4 rows)
+
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "g": 1, "k": 1 } }, { "$skip": 23 }, { "$limit": 4 } ], "cursor": {} }');
+                                             document                                             
+--------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "16" }, "k" : { "$numberInt" : "92" }, "g" : { "$numberInt" : "0" } }
+ { "_id" : { "$numberInt" : "8" }, "k" : { "$numberInt" : "96" }, "g" : { "$numberInt" : "0" } }
+ { "_id" : { "$numberInt" : "73" }, "k" : { "$numberInt" : "1" }, "g" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "65" }, "k" : { "$numberInt" : "5" }, "g" : { "$numberInt" : "1" } }
+(4 rows)
+
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$match": { "g": { "$gte": 2 } } }, { "$sort": { "k": 1 } }, { "$skip": 7 }, { "$limit": 3 } ], "cursor": {} }');
+                                             document                                             
+--------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "95" }, "k" : { "$numberInt" : "15" }, "g" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "14" }, "k" : { "$numberInt" : "18" }, "g" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "87" }, "k" : { "$numberInt" : "19" }, "g" : { "$numberInt" : "3" } }
+(3 rows)
+
+SET blackboxdb.enable_skip_limit_swap TO on;
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": -1 } }, { "$skip": 3 }, { "$limit": 4 } ], "cursor": {} }');
+                                             document                                             
+--------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "8" }, "k" : { "$numberInt" : "96" }, "g" : { "$numberInt" : "0" } }
+ { "_id" : { "$numberInt" : "35" }, "k" : { "$numberInt" : "95" }, "g" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "62" }, "k" : { "$numberInt" : "94" }, "g" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "89" }, "k" : { "$numberInt" : "93" }, "g" : { "$numberInt" : "1" } }
+(4 rows)
+
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "g": 1, "k": 1 } }, { "$skip": 23 }, { "$limit": 4 } ], "cursor": {} }');
+                                             document                                             
+--------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "16" }, "k" : { "$numberInt" : "92" }, "g" : { "$numberInt" : "0" } }
+ { "_id" : { "$numberInt" : "8" }, "k" : { "$numberInt" : "96" }, "g" : { "$numberInt" : "0" } }
+ { "_id" : { "$numberInt" : "73" }, "k" : { "$numberInt" : "1" }, "g" : { "$numberInt" : "1" } }
+ { "_id" : { "$numberInt" : "65" }, "k" : { "$numberInt" : "5" }, "g" : { "$numberInt" : "1" } }
+(4 rows)
+
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$match": { "g": { "$gte": 2 } } }, { "$sort": { "k": 1 } }, { "$skip": 7 }, { "$limit": 3 } ], "cursor": {} }');
+                                             document                                             
+--------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "95" }, "k" : { "$numberInt" : "15" }, "g" : { "$numberInt" : "3" } }
+ { "_id" : { "$numberInt" : "14" }, "k" : { "$numberInt" : "18" }, "g" : { "$numberInt" : "2" } }
+ { "_id" : { "$numberInt" : "87" }, "k" : { "$numberInt" : "19" }, "g" : { "$numberInt" : "3" } }
+(3 rows)
+
+-- Chains: $skip, $limit, $limit; $skip, $skip, $limit; $limit before $skip (not rewritten); numeric types.
+SET blackboxdb.enable_skip_limit_swap TO off;
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": 3 }, { "$limit": 10 }, { "$limit": 4 }, { "$project": { "_id": 0, "k": 1 } } ], "cursor": {} }');
+             document             
+----------------------------------
+ { "k" : { "$numberInt" : "3" } }
+ { "k" : { "$numberInt" : "4" } }
+ { "k" : { "$numberInt" : "5" } }
+ { "k" : { "$numberInt" : "6" } }
+(4 rows)
+
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": 2 }, { "$skip": 3 }, { "$limit": 4 }, { "$project": { "_id": 0, "k": 1 } } ], "cursor": {} }');
+             document             
+----------------------------------
+ { "k" : { "$numberInt" : "5" } }
+ { "k" : { "$numberInt" : "6" } }
+ { "k" : { "$numberInt" : "7" } }
+ { "k" : { "$numberInt" : "8" } }
+(4 rows)
+
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$limit": 10 }, { "$skip": 8 }, { "$project": { "_id": 0, "k": 1 } } ], "cursor": {} }');
+             document             
+----------------------------------
+ { "k" : { "$numberInt" : "8" } }
+ { "k" : { "$numberInt" : "9" } }
+(2 rows)
+
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": { "$numberLong": "95" } }, { "$limit": 10.0 }, { "$project": { "_id": 0, "k": 1 } } ], "cursor": {} }');
+             document              
+-----------------------------------
+ { "k" : { "$numberInt" : "95" } }
+ { "k" : { "$numberInt" : "96" } }
+ { "k" : { "$numberInt" : "97" } }
+ { "k" : { "$numberInt" : "98" } }
+ { "k" : { "$numberInt" : "99" } }
+(5 rows)
+
+SET blackboxdb.enable_skip_limit_swap TO on;
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": 3 }, { "$limit": 10 }, { "$limit": 4 }, { "$project": { "_id": 0, "k": 1 } } ], "cursor": {} }');
+             document             
+----------------------------------
+ { "k" : { "$numberInt" : "3" } }
+ { "k" : { "$numberInt" : "4" } }
+ { "k" : { "$numberInt" : "5" } }
+ { "k" : { "$numberInt" : "6" } }
+(4 rows)
+
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": 2 }, { "$skip": 3 }, { "$limit": 4 }, { "$project": { "_id": 0, "k": 1 } } ], "cursor": {} }');
+             document             
+----------------------------------
+ { "k" : { "$numberInt" : "5" } }
+ { "k" : { "$numberInt" : "6" } }
+ { "k" : { "$numberInt" : "7" } }
+ { "k" : { "$numberInt" : "8" } }
+(4 rows)
+
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$limit": 10 }, { "$skip": 8 }, { "$project": { "_id": 0, "k": 1 } } ], "cursor": {} }');
+             document             
+----------------------------------
+ { "k" : { "$numberInt" : "8" } }
+ { "k" : { "$numberInt" : "9" } }
+(2 rows)
+
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": { "$numberLong": "95" } }, { "$limit": 10.0 }, { "$project": { "_id": 0, "k": 1 } } ], "cursor": {} }');
+             document              
+-----------------------------------
+ { "k" : { "$numberInt" : "95" } }
+ { "k" : { "$numberInt" : "96" } }
+ { "k" : { "$numberInt" : "97" } }
+ { "k" : { "$numberInt" : "98" } }
+ { "k" : { "$numberInt" : "99" } }
+(5 rows)
+
+-- Sub-pipelines in $facet and $lookup.
+SET blackboxdb.enable_skip_limit_swap TO off;
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$facet": { "page": [ { "$sort": { "k": 1 } }, { "$skip": 50 }, { "$limit": 2 }, { "$project": { "_id": 0, "k": 1 } } ] } } ], "cursor": {} }');
+                                       document                                        
+---------------------------------------------------------------------------------------
+ { "page" : [ { "k" : { "$numberInt" : "50" } }, { "k" : { "$numberInt" : "51" } } ] }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$match": { "_id": 0 } }, { "$lookup": { "from": "pages", "pipeline": [ { "$sort": { "k": -1 } }, { "$skip": 1 }, { "$limit": 2 }, { "$project": { "_id": 0, "k": 1 } } ], "as": "top" } }, { "$project": { "_id": 1, "top": 1 } } ], "cursor": {} }');
+                                                       document                                                       
+----------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "0" }, "top" : [ { "k" : { "$numberInt" : "98" } }, { "k" : { "$numberInt" : "97" } } ] }
+(1 row)
+
+SET blackboxdb.enable_skip_limit_swap TO on;
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$facet": { "page": [ { "$sort": { "k": 1 } }, { "$skip": 50 }, { "$limit": 2 }, { "$project": { "_id": 0, "k": 1 } } ] } } ], "cursor": {} }');
+                                       document                                        
+---------------------------------------------------------------------------------------
+ { "page" : [ { "k" : { "$numberInt" : "50" } }, { "k" : { "$numberInt" : "51" } } ] }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$match": { "_id": 0 } }, { "$lookup": { "from": "pages", "pipeline": [ { "$sort": { "k": -1 } }, { "$skip": 1 }, { "$limit": 2 }, { "$project": { "_id": 0, "k": 1 } } ], "as": "top" } }, { "$project": { "_id": 1, "top": 1 } } ], "cursor": {} }');
+                                                       document                                                       
+----------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "0" }, "top" : [ { "k" : { "$numberInt" : "98" } }, { "k" : { "$numberInt" : "97" } } ] }
+(1 row)
+
+-- Values that are not rewritten keep their original behavior and errors.
+SET blackboxdb.enable_skip_limit_swap TO on;
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": 9223372036854775807 }, { "$limit": 10 } ], "cursor": {} }');
+ document 
+----------
+(0 rows)
+
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": -1 }, { "$limit": 10 } ], "cursor": {} }');
+ERROR:  Invalid argument provided to $skip stage: A non-negative numerical value was expected in $skip, but received -1.
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": 1.5 }, { "$limit": 10 } ], "cursor": {} }');
+ERROR:  Invalid parameter provided to $skip stage: value cannot be expressed as a 64-bit integer $skip: 1.500000
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": 5 }, { "$limit": 0 } ], "cursor": {} }');
+ERROR:  The specified limit value must always be positive
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": 5 }, { "$limit": -2 } ], "cursor": {} }');
+ERROR:  Invalid argument passed to the $skip stage: a non-negative number was expected but received in $limit: -2
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": 5 }, { "$limit": "a" } ], "cursor": {} }');
+ERROR:  the limit must be specified as a number
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": 0 }, { "$limit": 2 }, { "$project": { "_id": 0, "k": 1 } } ], "cursor": {} }');
+             document             
+----------------------------------
+ { "k" : { "$numberInt" : "0" } }
+ { "k" : { "$numberInt" : "1" } }
+(2 rows)
+
+-- The sort is bounded with the rewrite: top-N heapsort instead of a full sort.
+CREATE FUNCTION skip_limit_swap_plan_lines(pipeline text) RETURNS SETOF text AS $$
+DECLARE line text;
+BEGIN
+    FOR line IN EXECUTE 'EXPLAIN (ANALYZE ON, COSTS OFF, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline(''skiplimitdb'', ' || quote_literal(pipeline) || '::bson)'
+    LOOP
+        RETURN NEXT line;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+SET blackboxdb.enable_skip_limit_swap TO off;
+SELECT bool_or(l LIKE '%Sort Method: top-N heapsort%') AS bounded_sort FROM skip_limit_swap_plan_lines('{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": 10 }, { "$limit": 5 } ], "cursor": {} }') l;
+ bounded_sort 
+--------------
+ f
+(1 row)
+
+SET blackboxdb.enable_skip_limit_swap TO on;
+SELECT bool_or(l LIKE '%Sort Method: top-N heapsort%') AS bounded_sort FROM skip_limit_swap_plan_lines('{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": 10 }, { "$limit": 5 } ], "cursor": {} }') l;
+ bounded_sort 
+--------------
+ t
+(1 row)
+
+DROP FUNCTION skip_limit_swap_plan_lines(text);
+RESET blackboxdb.enable_skip_limit_swap;
