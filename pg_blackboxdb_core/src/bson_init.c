@@ -45,6 +45,11 @@ bool EnableWriteDocumentsInRepath = DEFAULT_ENABLE_WRITE_DOCUMENTS_IN_REPATH;
 bool EnableBsonSelectivityFromBtreeStats =
 	DEFAULT_ENABLE_BSON_SELECTIVITY_FROM_BTREE_STATS;
 
+/* FeatureFlag */
+/* Added in v116, Pending stabilization, enable in v117 */
+#define DEFAULT_ENABLE_DETOAST_CACHE false
+bool EnableDetoastCache = DEFAULT_ENABLE_DETOAST_CACHE;
+
 /*
  * Initializes core configurations pertaining to blackboxdb core.
  */
@@ -88,5 +93,14 @@ InitBlackboxDBCoreConfigurations(const char *prefix)
 			"Whether to enable selectivity calculations based on btree statistics for bson btree operators."),
 		NULL, &EnableBsonSelectivityFromBtreeStats,
 		DEFAULT_ENABLE_BSON_SELECTIVITY_FROM_BTREE_STATS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_detoast_cache", prefix),
+		gettext_noop(
+			"Whether a document stored out of line (TOAST) is detoasted once and "
+			"reused by later operator calls on the same document in a statement."),
+		NULL, &EnableDetoastCache,
+		DEFAULT_ENABLE_DETOAST_CACHE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 }
