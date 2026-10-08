@@ -285,8 +285,8 @@ bool EnableDynamicCursorFastStartupScan = DEFAULT_ENABLE_DYNAMIC_CURSOR_FAST_STA
 #define DEFAULT_ENABLE_GROUP_BY_DYNAMIC_STREAMING true
 bool EnableGroupByDynamicStreaming = DEFAULT_ENABLE_GROUP_BY_DYNAMIC_STREAMING;
 
-/* Added in v116, disabled by default while pending stabilization */
-#define DEFAULT_ENABLE_SKIP_LIMIT_SWAP false
+/* Added in v116, enabled in v116, remove after v118 */
+#define DEFAULT_ENABLE_SKIP_LIMIT_SWAP true
 bool EnableSkipLimitSwap = DEFAULT_ENABLE_SKIP_LIMIT_SWAP;
 
 /* Added in v115, enabled in v115, remove after v117 */
