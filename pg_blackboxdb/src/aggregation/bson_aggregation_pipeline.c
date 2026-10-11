@@ -97,6 +97,7 @@ extern bool EnableSortGroupStage;
 extern bool EnableProjectPushUpBeforeUnwindWithGroup;
 extern bool EnableSkipLimitSwap;
 extern bool EnableMatchBeforeUnwind;
+extern bool EnableMatchBeforeUnwindExtended;
 extern bool EnableSortPushToAccumulatorWithPrefix;
 extern bool EnableSampleScanFixOnSharded;
 extern bool EnableDistinctIndexPushdown;
@@ -10940,6 +10941,65 @@ ExtractUnwindInfo(const bson_value_t *unwindStageValue,
 
 
 /*
+ * Returns true if no key of a $match document refers to the unwound top-level
+ * field or to the includeArrayIndex field. Keys must be field paths; with
+ * enable_match_before_unwind_extended, $and, $or and $nor are also accepted when
+ * every clause is itself independent.
+ */
+static bool
+IsMatchIndependentOfUnwind(const bson_value_t *matchValue,
+						   const StringView *unwindTopLevel,
+						   const StringView *indexTopLevel)
+{
+	if (matchValue->value_type != BSON_TYPE_DOCUMENT)
+	{
+		return false;
+	}
+
+	bson_iter_t matchIter;
+	BsonValueInitIterator(matchValue, &matchIter);
+	while (bson_iter_next(&matchIter))
+	{
+		StringView key = bson_iter_key_string_view(&matchIter);
+		if (StringViewStartsWith(&key, '$'))
+		{
+			if (!EnableMatchBeforeUnwindExtended ||
+				!(StringViewEqualsCString(&key, "$and") ||
+				  StringViewEqualsCString(&key, "$or") ||
+				  StringViewEqualsCString(&key, "$nor")) ||
+				!BSON_ITER_HOLDS_ARRAY(&matchIter))
+			{
+				return false;
+			}
+
+			bson_iter_t clauseIter;
+			bson_iter_recurse(&matchIter, &clauseIter);
+			while (bson_iter_next(&clauseIter))
+			{
+				if (!IsMatchIndependentOfUnwind(bson_iter_value(&clauseIter),
+												unwindTopLevel, indexTopLevel))
+				{
+					return false;
+				}
+			}
+
+			continue;
+		}
+
+		StringView keyTopLevel = { 0 };
+		if (!ExtractTopLevelFieldPrefix(key, &keyTopLevel) ||
+			StringViewEquals(&keyTopLevel, unwindTopLevel) ||
+			(indexTopLevel->length > 0 && StringViewEquals(&keyTopLevel, indexTopLevel)))
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+
+/*
  * Moves a $match that does not depend on the unwound field before the $unwind
  * that immediately precedes it, by exchanging the two stages. Every unwound row
  * of a document carries the document's other fields unchanged, so such a filter
@@ -10954,26 +11014,36 @@ TrySwapUnwindAndIndependentMatchStages(AggregationStage *unwindStage,
 									   AggregationStage *matchStage)
 {
 	StringView unwindTopLevel = { 0 };
-	bool unwindReferencesId = false;
-	if (!ExtractUnwindInfo(&unwindStage->stageValue, &unwindTopLevel,
-						   &unwindReferencesId) ||
-		matchStage->stageValue.value_type != BSON_TYPE_DOCUMENT)
+	StringView indexTopLevel = { 0 };
+	if (EnableMatchBeforeUnwindExtended)
 	{
-		return false;
-	}
-
-	bson_iter_t matchIter;
-	BsonValueInitIterator(&matchStage->stageValue, &matchIter);
-	while (bson_iter_next(&matchIter))
-	{
-		StringView key = bson_iter_key_string_view(&matchIter);
-		StringView keyTopLevel = { 0 };
-		if (StringViewStartsWith(&key, '$') ||
-			!ExtractTopLevelFieldPrefix(key, &keyTopLevel) ||
-			StringViewEquals(&keyTopLevel, &unwindTopLevel))
+		/* Also an $unwind with includeArrayIndex: the $match must then not use
+		 * the index field either. */
+		UnwindArgs unwindArgs;
+		if (!TryParseUnwindStage(&unwindStage->stageValue, &unwindArgs, NULL) ||
+			!ExtractTopLevelFieldFromDollarPath(&unwindArgs.pathValue,
+												&unwindTopLevel) ||
+			(unwindArgs.includeArrayIndex.length > 0 &&
+			 !ExtractTopLevelFieldPrefix(unwindArgs.includeArrayIndex,
+										 &indexTopLevel)))
 		{
 			return false;
 		}
+	}
+	else
+	{
+		bool unwindReferencesId = false;
+		if (!ExtractUnwindInfo(&unwindStage->stageValue, &unwindTopLevel,
+							   &unwindReferencesId))
+		{
+			return false;
+		}
+	}
+
+	if (!IsMatchIndependentOfUnwind(&matchStage->stageValue, &unwindTopLevel,
+									&indexTopLevel))
+	{
+		return false;
 	}
 
 	AggregationStage unwindCopy = *unwindStage;

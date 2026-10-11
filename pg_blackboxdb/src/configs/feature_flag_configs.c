@@ -293,6 +293,10 @@ bool EnableSkipLimitSwap = DEFAULT_ENABLE_SKIP_LIMIT_SWAP;
 #define DEFAULT_ENABLE_MATCH_BEFORE_UNWIND true
 bool EnableMatchBeforeUnwind = DEFAULT_ENABLE_MATCH_BEFORE_UNWIND;
 
+/* Added in v116, Pending stabilization, enable in v117 */
+#define DEFAULT_ENABLE_MATCH_BEFORE_UNWIND_EXTENDED false
+bool EnableMatchBeforeUnwindExtended = DEFAULT_ENABLE_MATCH_BEFORE_UNWIND_EXTENDED;
+
 /* Added in v115, enabled in v115, remove after v117 */
 #define DEFAULT_ENABLE_PG_PRNG_CURSOR_ID true
 bool EnablePGPrngCursorId = DEFAULT_ENABLE_PG_PRNG_CURSOR_ID;
@@ -750,6 +754,16 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"once per unwound row."),
 		NULL, &EnableMatchBeforeUnwind,
 		DEFAULT_ENABLE_MATCH_BEFORE_UNWIND,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_match_before_unwind_extended", newGucPrefix),
+		gettext_noop(
+			"Whether the $match before $unwind rewrite also applies to an $unwind "
+			"with includeArrayIndex (when the $match does not use the index field) and "
+			"to $and, $or and $nor whose clauses are all independent of the unwound field."),
+		NULL, &EnableMatchBeforeUnwindExtended,
+		DEFAULT_ENABLE_MATCH_BEFORE_UNWIND_EXTENDED,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
