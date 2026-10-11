@@ -89,6 +89,16 @@ SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orde
 SET blackboxdb.enable_match_before_unwind TO on;
 SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "state": { "$bogus": 1 } } } ], "cursor": {} }');
 
+-- A $match that is not a document, and a key with no top-level field, keep their order and their errors.
+SET blackboxdb.enable_match_before_unwind TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": 1 } ], "cursor": {} }');
+SET blackboxdb.enable_match_before_unwind TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": 1 } ], "cursor": {} }');
+SET blackboxdb.enable_match_before_unwind TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { ".bad": 1 } } ], "cursor": {} }');
+SET blackboxdb.enable_match_before_unwind TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { ".bad": 1 } } ], "cursor": {} }');
+
 -- With the rewrite the $unwind only expands the documents that pass the filter.
 CREATE FUNCTION match_before_unwind_rows(pipeline text) RETURNS bigint AS $$
 DECLARE line text; m text[];
