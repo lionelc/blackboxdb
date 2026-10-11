@@ -785,6 +785,33 @@ ERROR:  $or/$and/$nor entries need to be full objects
 SET blackboxdb.enable_match_before_unwind_extended TO on;
 SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$and": [ 1 ] } } ], "cursor": {} }');
 ERROR:  $or/$and/$nor entries need to be full objects
+-- An $unwind that is invalid, has a variable path, or an includeArrayIndex with no top-level field keeps its order and behavior.
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": 5 } }, { "$match": { "state": "won" } } ], "cursor": {} }');
+ERROR:  A string value was expected as the path in the $unwind stage, but received int.
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": 5 } }, { "$match": { "state": "won" } } ], "cursor": {} }');
+ERROR:  A string value was expected as the path in the $unwind stage, but received int.
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$$ROOT" }, { "$match": { "state": "won" } } ], "cursor": {} }');
+ERROR:  FieldPath field names cannot begin with the symbol '$'.
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$$ROOT" }, { "$match": { "state": "won" } } ], "cursor": {} }');
+ERROR:  FieldPath field names cannot begin with the symbol '$'.
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": ".pos" } }, { "$match": { "state": "won" } }, { "$count": "rows" } ], "cursor": {} }');
+               document               
+--------------------------------------
+ { "rows" : { "$numberInt" : "19" } }
+(1 row)
+
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": ".pos" } }, { "$match": { "state": "won" } }, { "$count": "rows" } ], "cursor": {} }');
+               document               
+--------------------------------------
+ { "rows" : { "$numberInt" : "19" } }
+(1 row)
+
 -- With the extended scope the $unwind only expands the documents that pass the filter (includeArrayIndex, and $or).
 SET blackboxdb.enable_match_before_unwind_extended TO off;
 SELECT match_before_unwind_rows('{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": "pos" } }, { "$match": { "state": "won" } }, { "$count": "rows" } ], "cursor": {} }') AS index_unwound_rows_off;
