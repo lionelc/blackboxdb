@@ -297,6 +297,10 @@ bool EnableMatchBeforeUnwind = DEFAULT_ENABLE_MATCH_BEFORE_UNWIND;
 #define DEFAULT_ENABLE_MATCH_BEFORE_UNWIND_EXTENDED true
 bool EnableMatchBeforeUnwindExtended = DEFAULT_ENABLE_MATCH_BEFORE_UNWIND_EXTENDED;
 
+/* Added in v116, Pending stabilization, enable in v117 */
+#define DEFAULT_ENABLE_DOCUMENT_STORAGE_MAIN false
+bool EnableDocumentStorageMain = DEFAULT_ENABLE_DOCUMENT_STORAGE_MAIN;
+
 /* Added in v115, enabled in v115, remove after v117 */
 #define DEFAULT_ENABLE_PG_PRNG_CURSOR_ID true
 bool EnablePGPrngCursorId = DEFAULT_ENABLE_PG_PRNG_CURSOR_ID;
@@ -764,6 +768,16 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"to $and, $or and $nor whose clauses are all independent of the unwound field."),
 		NULL, &EnableMatchBeforeUnwindExtended,
 		DEFAULT_ENABLE_MATCH_BEFORE_UNWIND_EXTENDED,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_document_storage_main", newGucPrefix),
+		gettext_noop(
+			"Whether a new collection stores its documents with STORAGE MAIN, so that "
+			"documents up to a page stay inline (compressed when that helps) instead of "
+			"moving to TOAST."),
+		NULL, &EnableDocumentStorageMain,
+		DEFAULT_ENABLE_DOCUMENT_STORAGE_MAIN,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

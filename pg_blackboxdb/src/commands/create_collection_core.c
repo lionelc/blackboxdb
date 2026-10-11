@@ -29,6 +29,7 @@
 extern bool EnableNativeColocation;
 extern bool EnableDataTableWithoutCreationTime;
 extern bool EnableRbacCompliantSchemas;
+extern bool EnableDocumentStorageMain;
 
 static bool CanColocateAtDatabaseLevel(text *databaseDatum);
 static const char * CreatePostgresDataTable(uint64_t collectionId,
@@ -260,6 +261,23 @@ CreatePostgresDataTable(uint64_t collectionId, const char *colocateWith, const
 	/* Assuming it didn't throw, it's a success */
 	ExtensionExecuteQueryViaSPI(createTableStringInfo->data, readOnly, SPI_OK_UTILITY,
 								&isNull);
+
+	if (EnableDocumentStorageMain)
+	{
+		/*
+		 * Keep documents up to a page inline: with STORAGE MAIN a document is
+		 * compressed when the row is above the toast target and moved out of
+		 * line only if the row still does not fit in a page. With the default
+		 * (EXTENDED) any document that stays above the target after compression
+		 * goes to TOAST, and every read of it then fetches its chunks.
+		 */
+		resetStringInfo(createTableStringInfo);
+		appendStringInfo(createTableStringInfo,
+						 "ALTER TABLE %s ALTER COLUMN document SET STORAGE MAIN",
+						 dataTableNameInfo->data);
+		ExtensionExecuteQueryViaSPI(createTableStringInfo->data, readOnly,
+									SPI_OK_UTILITY, &isNull);
+	}
 
 	/* Change the owner to the extension admin */
 	resetStringInfo(createTableStringInfo);
