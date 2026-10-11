@@ -297,8 +297,8 @@ bool EnableMatchBeforeUnwind = DEFAULT_ENABLE_MATCH_BEFORE_UNWIND;
 #define DEFAULT_ENABLE_MATCH_BEFORE_UNWIND_EXTENDED true
 bool EnableMatchBeforeUnwindExtended = DEFAULT_ENABLE_MATCH_BEFORE_UNWIND_EXTENDED;
 
-/* Added in v116, Pending stabilization, enable in v117 */
-#define DEFAULT_ENABLE_DOCUMENT_STORAGE_MAIN false
+/* Added in v116, enabled in v116, remove after v118 */
+#define DEFAULT_ENABLE_DOCUMENT_STORAGE_MAIN true
 bool EnableDocumentStorageMain = DEFAULT_ENABLE_DOCUMENT_STORAGE_MAIN;
 
 /* Added in v115, enabled in v115, remove after v117 */

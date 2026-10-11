@@ -215,7 +215,7 @@ NOTICE:  creating collection
 -----------------+----------------------+-----------+----------+---------+----------+--------------+-------------
  shard_key_value | bigint               |           | not null |         | plain    |              | 
  object_id       | blackboxdb_core.bson |           | not null |         | extended |              | 
- document        | blackboxdb_core.bson |           | not null |         | extended |              | 
+ document        | blackboxdb_core.bson |           | not null |         | main     |              | 
 Indexes:
     "collection_pk_1909" PRIMARY KEY, btree (shard_key_value, object_id)
 Check constraints:
@@ -249,7 +249,7 @@ NOTICE:  creating collection
 -----------------+--------------------------+-----------+----------+---------+----------+--------------+-------------
  shard_key_value | bigint                   |           | not null |         | plain    |              | 
  object_id       | blackboxdb_core.bson     |           | not null |         | extended |              | 
- document        | blackboxdb_core.bson     |           | not null |         | extended |              | 
+ document        | blackboxdb_core.bson     |           | not null |         | main     |              | 
  creation_time   | timestamp with time zone |           |          |         | plain    |              | 
 Indexes:
     "collection_pk_1910" PRIMARY KEY, btree (shard_key_value, object_id)
