@@ -1,0 +1,186 @@
+SET search_path TO blackboxdb_api,blackboxdb_core,blackboxdb_api_catalog;
+SET blackboxdb.next_collection_id TO 26900000;
+SET blackboxdb.next_collection_index_id TO 26900000;
+-- 30 documents with string _ids (str_1..str_20, abc_1..abc_10), a field v and a field _idx.
+DO $$
+DECLARE i int;
+BEGIN
+FOR i IN 1..20 LOOP
+PERFORM blackboxdb_api.insert_one('skfdb', 'items', FORMAT('{ "_id": "str_%s", "v": %s, "_idx": %s }', i, i, i % 7)::blackboxdb_core.bson);
+END LOOP;
+FOR i IN 1..10 LOOP
+PERFORM blackboxdb_api.insert_one('skfdb', 'items', FORMAT('{ "_id": "abc_%s", "v": %s, "_idx": %s }', i, i, i % 7)::blackboxdb_core.bson);
+END LOOP;
+END;
+$$;
+NOTICE:  creating collection
+-- With the shard key condition skipped on the base table, every filter on _id must keep the primary key index.
+-- Sequential scans are disabled, so a lost index path raises an error. Each filter runs with the flag off, then on.
+SET blackboxdb.forceDisableSeqScan TO on;
+SET blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO off;
+SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "_id": { "$regex": "^str_1" } }, "sort": { "_id": 1 } }');
+                                       document                                       
+--------------------------------------------------------------------------------------
+ { "_id" : "str_1", "v" : { "$numberInt" : "1" }, "_idx" : { "$numberInt" : "1" } }
+ { "_id" : "str_10", "v" : { "$numberInt" : "10" }, "_idx" : { "$numberInt" : "3" } }
+ { "_id" : "str_11", "v" : { "$numberInt" : "11" }, "_idx" : { "$numberInt" : "4" } }
+ { "_id" : "str_12", "v" : { "$numberInt" : "12" }, "_idx" : { "$numberInt" : "5" } }
+ { "_id" : "str_13", "v" : { "$numberInt" : "13" }, "_idx" : { "$numberInt" : "6" } }
+ { "_id" : "str_14", "v" : { "$numberInt" : "14" }, "_idx" : { "$numberInt" : "0" } }
+ { "_id" : "str_15", "v" : { "$numberInt" : "15" }, "_idx" : { "$numberInt" : "1" } }
+ { "_id" : "str_16", "v" : { "$numberInt" : "16" }, "_idx" : { "$numberInt" : "2" } }
+ { "_id" : "str_17", "v" : { "$numberInt" : "17" }, "_idx" : { "$numberInt" : "3" } }
+ { "_id" : "str_18", "v" : { "$numberInt" : "18" }, "_idx" : { "$numberInt" : "4" } }
+ { "_id" : "str_19", "v" : { "$numberInt" : "19" }, "_idx" : { "$numberInt" : "5" } }
+(11 rows)
+
+SET blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO on;
+SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "_id": { "$regex": "^str_1" } }, "sort": { "_id": 1 } }');
+                                       document                                       
+--------------------------------------------------------------------------------------
+ { "_id" : "str_1", "v" : { "$numberInt" : "1" }, "_idx" : { "$numberInt" : "1" } }
+ { "_id" : "str_10", "v" : { "$numberInt" : "10" }, "_idx" : { "$numberInt" : "3" } }
+ { "_id" : "str_11", "v" : { "$numberInt" : "11" }, "_idx" : { "$numberInt" : "4" } }
+ { "_id" : "str_12", "v" : { "$numberInt" : "12" }, "_idx" : { "$numberInt" : "5" } }
+ { "_id" : "str_13", "v" : { "$numberInt" : "13" }, "_idx" : { "$numberInt" : "6" } }
+ { "_id" : "str_14", "v" : { "$numberInt" : "14" }, "_idx" : { "$numberInt" : "0" } }
+ { "_id" : "str_15", "v" : { "$numberInt" : "15" }, "_idx" : { "$numberInt" : "1" } }
+ { "_id" : "str_16", "v" : { "$numberInt" : "16" }, "_idx" : { "$numberInt" : "2" } }
+ { "_id" : "str_17", "v" : { "$numberInt" : "17" }, "_idx" : { "$numberInt" : "3" } }
+ { "_id" : "str_18", "v" : { "$numberInt" : "18" }, "_idx" : { "$numberInt" : "4" } }
+ { "_id" : "str_19", "v" : { "$numberInt" : "19" }, "_idx" : { "$numberInt" : "5" } }
+(11 rows)
+
+SET blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO off;
+SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "_id": { "$gte": "str_15", "$lt": "str_3" } }, "sort": { "_id": 1 } }');
+                                       document                                       
+--------------------------------------------------------------------------------------
+ { "_id" : "str_15", "v" : { "$numberInt" : "15" }, "_idx" : { "$numberInt" : "1" } }
+ { "_id" : "str_16", "v" : { "$numberInt" : "16" }, "_idx" : { "$numberInt" : "2" } }
+ { "_id" : "str_17", "v" : { "$numberInt" : "17" }, "_idx" : { "$numberInt" : "3" } }
+ { "_id" : "str_18", "v" : { "$numberInt" : "18" }, "_idx" : { "$numberInt" : "4" } }
+ { "_id" : "str_19", "v" : { "$numberInt" : "19" }, "_idx" : { "$numberInt" : "5" } }
+ { "_id" : "str_2", "v" : { "$numberInt" : "2" }, "_idx" : { "$numberInt" : "2" } }
+ { "_id" : "str_20", "v" : { "$numberInt" : "20" }, "_idx" : { "$numberInt" : "6" } }
+(7 rows)
+
+SET blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO on;
+SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "_id": { "$gte": "str_15", "$lt": "str_3" } }, "sort": { "_id": 1 } }');
+                                       document                                       
+--------------------------------------------------------------------------------------
+ { "_id" : "str_15", "v" : { "$numberInt" : "15" }, "_idx" : { "$numberInt" : "1" } }
+ { "_id" : "str_16", "v" : { "$numberInt" : "16" }, "_idx" : { "$numberInt" : "2" } }
+ { "_id" : "str_17", "v" : { "$numberInt" : "17" }, "_idx" : { "$numberInt" : "3" } }
+ { "_id" : "str_18", "v" : { "$numberInt" : "18" }, "_idx" : { "$numberInt" : "4" } }
+ { "_id" : "str_19", "v" : { "$numberInt" : "19" }, "_idx" : { "$numberInt" : "5" } }
+ { "_id" : "str_2", "v" : { "$numberInt" : "2" }, "_idx" : { "$numberInt" : "2" } }
+ { "_id" : "str_20", "v" : { "$numberInt" : "20" }, "_idx" : { "$numberInt" : "6" } }
+(7 rows)
+
+SET blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO off;
+SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "_id": "str_7" }, "sort": { "_id": 1 } }');
+                                      document                                      
+------------------------------------------------------------------------------------
+ { "_id" : "str_7", "v" : { "$numberInt" : "7" }, "_idx" : { "$numberInt" : "0" } }
+(1 row)
+
+SET blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO on;
+SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "_id": "str_7" }, "sort": { "_id": 1 } }');
+                                      document                                      
+------------------------------------------------------------------------------------
+ { "_id" : "str_7", "v" : { "$numberInt" : "7" }, "_idx" : { "$numberInt" : "0" } }
+(1 row)
+
+SET blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO off;
+SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "$or": [ { "_id": "abc_2" }, { "_id": { "$regex": "^str_2" } } ] }, "sort": { "_id": 1 } }');
+ERROR:  Could not find any valid index to push down for query
+SET blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO on;
+SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "$or": [ { "_id": "abc_2" }, { "_id": { "$regex": "^str_2" } } ] }, "sort": { "_id": 1 } }');
+ERROR:  Could not find any valid index to push down for query
+SET blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO off;
+SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "$and": [ { "_id": { "$regex": "^abc" } }, { "v": { "$gt": 3 } } ] }, "sort": { "_id": 1 } }');
+                                       document                                       
+--------------------------------------------------------------------------------------
+ { "_id" : "abc_10", "v" : { "$numberInt" : "10" }, "_idx" : { "$numberInt" : "3" } }
+ { "_id" : "abc_4", "v" : { "$numberInt" : "4" }, "_idx" : { "$numberInt" : "4" } }
+ { "_id" : "abc_5", "v" : { "$numberInt" : "5" }, "_idx" : { "$numberInt" : "5" } }
+ { "_id" : "abc_6", "v" : { "$numberInt" : "6" }, "_idx" : { "$numberInt" : "6" } }
+ { "_id" : "abc_7", "v" : { "$numberInt" : "7" }, "_idx" : { "$numberInt" : "0" } }
+ { "_id" : "abc_8", "v" : { "$numberInt" : "8" }, "_idx" : { "$numberInt" : "1" } }
+ { "_id" : "abc_9", "v" : { "$numberInt" : "9" }, "_idx" : { "$numberInt" : "2" } }
+(7 rows)
+
+SET blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO on;
+SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "$and": [ { "_id": { "$regex": "^abc" } }, { "v": { "$gt": 3 } } ] }, "sort": { "_id": 1 } }');
+                                       document                                       
+--------------------------------------------------------------------------------------
+ { "_id" : "abc_10", "v" : { "$numberInt" : "10" }, "_idx" : { "$numberInt" : "3" } }
+ { "_id" : "abc_4", "v" : { "$numberInt" : "4" }, "_idx" : { "$numberInt" : "4" } }
+ { "_id" : "abc_5", "v" : { "$numberInt" : "5" }, "_idx" : { "$numberInt" : "5" } }
+ { "_id" : "abc_6", "v" : { "$numberInt" : "6" }, "_idx" : { "$numberInt" : "6" } }
+ { "_id" : "abc_7", "v" : { "$numberInt" : "7" }, "_idx" : { "$numberInt" : "0" } }
+ { "_id" : "abc_8", "v" : { "$numberInt" : "8" }, "_idx" : { "$numberInt" : "1" } }
+ { "_id" : "abc_9", "v" : { "$numberInt" : "9" }, "_idx" : { "$numberInt" : "2" } }
+(7 rows)
+
+SET blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO off;
+SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "$and": [ { "_id": { "$regex": "^str_2" } } ] }, "sort": { "_id": 1 } }');
+                                       document                                       
+--------------------------------------------------------------------------------------
+ { "_id" : "str_2", "v" : { "$numberInt" : "2" }, "_idx" : { "$numberInt" : "2" } }
+ { "_id" : "str_20", "v" : { "$numberInt" : "20" }, "_idx" : { "$numberInt" : "6" } }
+(2 rows)
+
+SET blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO on;
+SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "$and": [ { "_id": { "$regex": "^str_2" } } ] }, "sort": { "_id": 1 } }');
+                                       document                                       
+--------------------------------------------------------------------------------------
+ { "_id" : "str_2", "v" : { "$numberInt" : "2" }, "_idx" : { "$numberInt" : "2" } }
+ { "_id" : "str_20", "v" : { "$numberInt" : "20" }, "_idx" : { "$numberInt" : "6" } }
+(2 rows)
+
+RESET blackboxdb.forceDisableSeqScan;
+-- The plans: a prefix $regex on _id keeps the shard key condition in the index scan; a filter that does not
+-- reference _id (v, or a field merely starting with _id) drops it.
+SET blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO on;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "_id": { "$regex": "^str_1" } } }');
+                                                                  QUERY PLAN                                                                   
+-----------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_26900001 collection
+   Index Cond: ((shard_key_value = '26900001'::bigint) AND (object_id >= '{ "" : "str_1" }'::bson) AND (object_id < '{ "" : "str_2" }'::bson))
+   Filter: (document @~ '{ "_id" : { "$regularExpression" : { "pattern" : "^str_1", "options" : "" } } }'::bson)
+(3 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "_id": "str_7" } }');
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_26900001 collection
+   Index Cond: ((shard_key_value = '26900001'::bigint) AND (object_id = '{ "" : "str_7" }'::bson))
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "v": { "$gt": 25 } } }');
+                            QUERY PLAN                             
+-------------------------------------------------------------------
+ Seq Scan on documents_26900001 collection
+   Filter: (document @> '{ "v" : { "$numberInt" : "25" } }'::bson)
+(2 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "_idx": 5 } }');
+                             QUERY PLAN                              
+---------------------------------------------------------------------
+ Seq Scan on documents_26900001 collection
+   Filter: (document @= '{ "_idx" : { "$numberInt" : "5" } }'::bson)
+(2 rows)
+
+SET blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO off;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "v": { "$gt": 25 } } }');
+                            QUERY PLAN                             
+-------------------------------------------------------------------
+ Bitmap Heap Scan on documents_26900001 collection
+   Recheck Cond: (shard_key_value = '26900001'::bigint)
+   Filter: (document @> '{ "v" : { "$numberInt" : "25" } }'::bson)
+   ->  Bitmap Index Scan on _id_
+         Index Cond: (shard_key_value = '26900001'::bigint)
+(5 rows)
+
+RESET blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters;
