@@ -1,0 +1,60 @@
+SET search_path TO blackboxdb_api,blackboxdb_core,blackboxdb_api_catalog;
+
+SET blackboxdb.next_collection_id TO 26920000;
+SET blackboxdb.next_collection_index_id TO 26920000;
+
+-- The flag acts when a collection is created: 'main' is created with it on, 'extended' with it off.
+SET blackboxdb.enable_document_storage_main TO on;
+SELECT blackboxdb_api.create_collection('storagedb', 'main');
+SET blackboxdb.enable_document_storage_main TO off;
+SELECT blackboxdb_api.create_collection('storagedb', 'extended');
+RESET blackboxdb.enable_document_storage_main;
+
+SELECT col.collection_name, a.attstorage
+FROM blackboxdb_api_catalog.collections col
+JOIN pg_class c ON c.relname = 'documents_' || col.collection_id AND c.relkind = 'r'
+JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'document'
+WHERE col.database_name = 'storagedb' AND col.collection_name IN ('main', 'extended') ORDER BY 1;
+
+-- The same documents in both: 20 incompressible ~6 KB (md5 text), 20 compressible ~6 KB (one repeated word),
+-- and 5 incompressible ~12 KB.
+DO $$
+DECLARE i int; coll text;
+BEGIN
+FOREACH coll IN ARRAY ARRAY['main', 'extended'] LOOP
+FOR i IN 1..20 LOOP
+PERFORM blackboxdb_api.insert_one('storagedb', coll, FORMAT('{ "_id": %s, "kind": "random6k", "text": "%s" }', i, (SELECT string_agg(md5((i * 1000 + j)::text), '') FROM generate_series(1, 190) j))::blackboxdb_core.bson);
+PERFORM blackboxdb_api.insert_one('storagedb', coll, FORMAT('{ "_id": %s, "kind": "repeated6k", "text": "%s" }', 100 + i, repeat('word ', 1200))::blackboxdb_core.bson);
+END LOOP;
+FOR i IN 1..5 LOOP
+PERFORM blackboxdb_api.insert_one('storagedb', coll, FORMAT('{ "_id": %s, "kind": "random12k", "text": "%s" }', 200 + i, (SELECT string_agg(md5((i * 7000 + j)::text), '') FROM generate_series(1, 380) j))::blackboxdb_core.bson);
+END LOOP;
+END LOOP;
+END;
+$$;
+
+-- Where the documents are: with STORAGE MAIN the incompressible 6 KB documents stay in the heap, and only the
+-- 12 KB ones go to TOAST; with the default every incompressible document goes out of line. The compressible ones
+-- are compressed inline in both.
+SELECT col.collection_name,
+       pg_relation_size(c.oid) > 20 * 6000 AS heap_holds_6k_documents,
+       pg_relation_size(c.reltoastrelid) < 10 * 8192 AS toast_holds_only_12k_documents
+FROM blackboxdb_api_catalog.collections col
+JOIN pg_class c ON c.relname = 'documents_' || col.collection_id AND c.relkind = 'r'
+WHERE col.database_name = 'storagedb' AND col.collection_name IN ('main', 'extended') ORDER BY 1;
+
+-- Results are identical.
+SELECT document FROM bson_aggregation_pipeline('storagedb', '{ "aggregate": "main", "pipeline": [ { "$group": { "_id": "$kind", "n": { "$sum": 1 }, "len": { "$max": { "$strLenCP": "$text" } }, "head": { "$min": { "$substrCP": [ "$text", 0, 6 ] } } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('storagedb', '{ "aggregate": "extended", "pipeline": [ { "$group": { "_id": "$kind", "n": { "$sum": 1 }, "len": { "$max": { "$strLenCP": "$text" } }, "head": { "$min": { "$substrCP": [ "$text", 0, 6 ] } } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
+SELECT document FROM bson_aggregation_find('storagedb', '{ "find": "main", "filter": { "_id": { "$in": [ 3, 103, 203 ] } }, "projection": { "kind": 1, "len": { "$strLenCP": "$text" } } }');
+SELECT document FROM bson_aggregation_find('storagedb', '{ "find": "extended", "filter": { "_id": { "$in": [ 3, 103, 203 ] } }, "projection": { "kind": 1, "len": { "$strLenCP": "$text" } } }');
+
+-- An update keeps the document in the heap.
+SELECT blackboxdb_api.update('storagedb', '{ "update": "main", "updates": [ { "q": { "_id": 4 }, "u": { "$set": { "kind": "random6k-updated" } } } ] }');
+SELECT document FROM bson_aggregation_find('storagedb', '{ "find": "main", "filter": { "_id": 4 }, "projection": { "kind": 1, "len": { "$strLenCP": "$text" } } }');
+SELECT col.collection_name,
+       pg_relation_size(c.oid) > 20 * 6000 AS heap_holds_6k_documents,
+       pg_relation_size(c.reltoastrelid) < 10 * 8192 AS toast_holds_only_12k_documents
+FROM blackboxdb_api_catalog.collections col
+JOIN pg_class c ON c.relname = 'documents_' || col.collection_id AND c.relkind = 'r'
+WHERE col.database_name = 'storagedb' AND col.collection_name IN ('main', 'extended') ORDER BY 1;
