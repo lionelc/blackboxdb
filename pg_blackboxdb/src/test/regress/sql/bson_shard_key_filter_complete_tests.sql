@@ -45,6 +45,16 @@ SET blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO on;
 SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "$and": [ { "_id": { "$regex": "^str_2" } } ] }, "sort": { "_id": 1 } }');
 RESET blackboxdb.forceDisableSeqScan;
 
+-- Invalid logical operators keep their errors.
+SET blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO off;
+SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "$and": [ 1 ] } }');
+SET blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO on;
+SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "$and": [ 1 ] } }');
+SET blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO off;
+SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "$or": { "a": 1 } } }');
+SET blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO on;
+SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "$or": { "a": 1 } } }');
+
 -- The plans (no sort on _id, which would add the condition back by itself): a prefix $regex, a $regex inside $and,
 -- a range and a point read keep the shard key condition in the index scan; a filter that does not reference _id
 -- (v, or a field merely starting with _id) drops it.
