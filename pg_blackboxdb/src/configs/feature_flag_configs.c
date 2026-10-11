@@ -293,8 +293,8 @@ bool EnableSkipLimitSwap = DEFAULT_ENABLE_SKIP_LIMIT_SWAP;
 #define DEFAULT_ENABLE_MATCH_BEFORE_UNWIND true
 bool EnableMatchBeforeUnwind = DEFAULT_ENABLE_MATCH_BEFORE_UNWIND;
 
-/* Added in v116, Pending stabilization, enable in v117 */
-#define DEFAULT_ENABLE_MATCH_BEFORE_UNWIND_EXTENDED false
+/* Added in v116, enabled in v116, remove after v118 */
+#define DEFAULT_ENABLE_MATCH_BEFORE_UNWIND_EXTENDED true
 bool EnableMatchBeforeUnwindExtended = DEFAULT_ENABLE_MATCH_BEFORE_UNWIND_EXTENDED;
 
 /* Added in v115, enabled in v115, remove after v117 */
