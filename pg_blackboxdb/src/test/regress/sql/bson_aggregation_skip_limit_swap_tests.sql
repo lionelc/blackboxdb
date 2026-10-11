@@ -58,6 +58,8 @@ SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "p
 SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": 5 }, { "$limit": -2 } ], "cursor": {} }');
 SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": 5 }, { "$limit": "a" } ], "cursor": {} }');
 SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": 0 }, { "$limit": 2 }, { "$project": { "_id": 0, "k": 1 } } ], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": 5 }, { "$limit": 2.5 } ], "cursor": {} }');
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": "a" }, { "$limit": 10 } ], "cursor": {} }');
 
 -- The sort is bounded with the rewrite: top-N heapsort instead of a full sort.
 CREATE FUNCTION skip_limit_swap_plan_lines(pipeline text) RETURNS SETOF text AS $$

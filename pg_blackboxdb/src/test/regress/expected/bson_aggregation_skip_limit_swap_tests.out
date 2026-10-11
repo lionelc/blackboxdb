@@ -213,6 +213,10 @@ SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "p
  { "k" : { "$numberInt" : "1" } }
 (2 rows)
 
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": 5 }, { "$limit": 2.5 } ], "cursor": {} }');
+ERROR:  Invalid $limit stage argument: value cannot be represented as a 64-bit integer: $limit: 2.500000
+SELECT document FROM bson_aggregation_pipeline('skiplimitdb', '{ "aggregate": "pages", "pipeline": [ { "$sort": { "k": 1 } }, { "$skip": "a" }, { "$limit": 10 } ], "cursor": {} }');
+ERROR:  Invalid argument to $skip stage: Expected a non-negative integer argument
 -- The sort is bounded with the rewrite: top-N heapsort instead of a full sort.
 CREATE FUNCTION skip_limit_swap_plan_lines(pipeline text) RETURNS SETOF text AS $$
 DECLARE line text;
