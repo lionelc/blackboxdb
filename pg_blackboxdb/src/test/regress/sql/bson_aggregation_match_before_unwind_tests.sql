@@ -191,6 +191,10 @@ SET blackboxdb.enable_match_before_unwind_extended TO off;
 SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": ".pos" } }, { "$match": { "state": "won" } }, { "$count": "rows" } ], "cursor": {} }');
 SET blackboxdb.enable_match_before_unwind_extended TO on;
 SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": ".pos" } }, { "$match": { "state": "won" } }, { "$count": "rows" } ], "cursor": {} }');
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$.items" }, { "$match": { "state": "won" } }, { "$count": "rows" } ], "cursor": {} }');
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$.items" }, { "$match": { "state": "won" } }, { "$count": "rows" } ], "cursor": {} }');
 
 -- With the extended scope the $unwind only expands the documents that pass the filter (includeArrayIndex, and $or).
 SET blackboxdb.enable_match_before_unwind_extended TO off;
