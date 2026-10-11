@@ -289,8 +289,8 @@ bool EnableGroupByDynamicStreaming = DEFAULT_ENABLE_GROUP_BY_DYNAMIC_STREAMING;
 #define DEFAULT_ENABLE_SKIP_LIMIT_SWAP true
 bool EnableSkipLimitSwap = DEFAULT_ENABLE_SKIP_LIMIT_SWAP;
 
-/* Added in v116, Pending stabilization, enable in v117 */
-#define DEFAULT_ENABLE_MATCH_BEFORE_UNWIND false
+/* Added in v116, enabled in v116, remove after v118 */
+#define DEFAULT_ENABLE_MATCH_BEFORE_UNWIND true
 bool EnableMatchBeforeUnwind = DEFAULT_ENABLE_MATCH_BEFORE_UNWIND;
 
 /* Added in v115, enabled in v115, remove after v117 */

@@ -340,15 +340,15 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                                                                                                                                                                                                  QUERY PLAN                                                                                                                                                                                                 
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
-   Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (blackboxdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   ->  Subquery Scan on agg_stage_2
-         Output: blackboxdb_api_internal.bson_expression_get(agg_stage_2.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_2.document
-         Filter: (agg_stage_2.document #>= '{ "_id" : { "$numberInt" : "2" } }'::bsonquery)
+   Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (blackboxdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+   Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_3
+         Output: blackboxdb_api_internal.bson_expression_get(agg_stage_3.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_3.document
          ->  ProjectSet
-               Output: bson_dollar_unwind(blackboxdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
+               Output: bson_dollar_unwind(blackboxdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
                ->  Seq Scan on blackboxdb_data.documents_87001 collection
                      Output: collection.shard_key_value, collection.object_id, collection.document
+                     Filter: ((collection.document @>= '{ "_id" : { "$numberInt" : "2" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberInt" : "2" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
 (10 rows)
 
 -- 1.7 Group accumulator references _id ($first: "$_id") — project keeps _id.
