@@ -54,11 +54,8 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM blackboxdb_api_catalog.bson
     '{ "aggregate": "graphlookup_socialgroup", "pipeline": [ { "$graphLookup": { "from": "graphlookup_socialgroup", "startWith": "$friend", "connectFromField": "friend", "connectToField": "userName", "as": "friendChain" } } ]}');
                                                                                                                                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                                                                                                                                           
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on blackboxdb_data.documents_9200 collection
+ Seq Scan on blackboxdb_data.documents_9200 collection
    Output: blackboxdb_api_internal.bson_dollar_merge_documents(collection.document, COALESCE((SubPlan 2), '{ "friendChain" : [  ] }'::bson), true)
-   Recheck Cond: (collection.shard_key_value = '9200'::bigint)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (collection.shard_key_value = '9200'::bigint)
    SubPlan 2
      ->  Aggregate
            Output: COALESCE(blackboxdb_api_catalog.bson_array_agg("graphLookup_stage_2".document, 'friendChain'::text), '{ "friendChain" : [  ] }'::bson)
@@ -66,12 +63,9 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM blackboxdb_api_catalog.bson
                  Output: "graphLookup_stage_2".document, "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                  CTE graphLookupRecurseStage
                    ->  Recursive Union
-                         ->  Bitmap Heap Scan on blackboxdb_data.documents_9200 collection_0_2
+                         ->  Seq Scan on blackboxdb_data.documents_9200 collection_0_2
                                Output: collection_0_2.document, '{ "depth" : { "$numberInt" : "0" } }'::bson, blackboxdb_api_catalog.bson_expression_get(collection_0_2.document, '{ "_id" : "$_id" }'::bson, false), false, ARRAY[ROW(blackboxdb_api_catalog.bson_expression_get(collection_0_2.document, '{ "_id" : "$_id" }'::bson, false))]
-                               Recheck Cond: (collection_0_2.shard_key_value = '9200'::bigint)
                                Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, blackboxdb_api_internal.bson_expression_get(collection.document, '{ "userName" : { "$makeArray" : "$friend" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'userName'::text)
-                               ->  Bitmap Index Scan on _id_
-                                     Index Cond: (collection_0_2.shard_key_value = '9200'::bigint)
                          ->  Nested Loop
                                Output: collection_0_2_1.document, blackboxdb_api_catalog.bson_dollar_add_fields("lookupRecursive_stage_1".depth, '{ "depth" : { "$add" : [ "$depth", { "$numberInt" : "1" } ] } }'::bson), blackboxdb_api_catalog.bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false), CASE WHEN (ROW(blackboxdb_api_catalog.bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false)) = ANY ("lookupRecursive_stage_1".path)) THEN true ELSE false END, array_cat("lookupRecursive_stage_1".path, ARRAY[ROW(blackboxdb_api_catalog.bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false))])
                                Join Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2_1.document, blackboxdb_api_internal.bson_expression_get("lookupRecursive_stage_1".document, '{ "userName" : { "$makeArray" : "$friend" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'userName'::text)
@@ -80,17 +74,14 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM blackboxdb_api_catalog.bson
                                      Filter: (NOT "lookupRecursive_stage_1".is_cycle)
                                ->  Materialize
                                      Output: collection_0_2_1.document
-                                     ->  Bitmap Heap Scan on blackboxdb_data.documents_9200 collection_0_2_1
+                                     ->  Seq Scan on blackboxdb_data.documents_9200 collection_0_2_1
                                            Output: collection_0_2_1.document
-                                           Recheck Cond: (collection_0_2_1.shard_key_value = '9200'::bigint)
-                                           ->  Bitmap Index Scan on _id_
-                                                 Index Cond: (collection_0_2_1.shard_key_value = '9200'::bigint)
                  ->  Sort
                        Output: "graphLookup_stage_2".document, "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        Sort Key: "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        ->  CTE Scan on "graphLookupRecurseStage" "graphLookup_stage_2"
                              Output: "graphLookup_stage_2".document, "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
-(36 rows)
+(27 rows)
 
 SELECT blackboxdb_api.insert_one('db', 'graphlookup_places', '{ "_id" : 0, "placeCode" : "P1", "nearby" : [ "P2", "P3" ] }');
 NOTICE:  creating collection
@@ -155,11 +146,8 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM blackboxdb_api_catalog.bson
     '{ "aggregate": "graphlookup_visitors", "pipeline": [ { "$graphLookup": { "from": "graphlookup_places", "startWith": "$homePlace", "connectFromField": "nearby", "connectToField": "placeCode", "as": "reachablePlaces", "maxDepth": 2 } } ]}');
                                                                                                                                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                                                                                                                                           
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on blackboxdb_data.documents_9202 collection
+ Seq Scan on blackboxdb_data.documents_9202 collection
    Output: blackboxdb_api_internal.bson_dollar_merge_documents(collection.document, COALESCE((SubPlan 2), '{ "reachablePlaces" : [  ] }'::bson), true)
-   Recheck Cond: (collection.shard_key_value = '9202'::bigint)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (collection.shard_key_value = '9202'::bigint)
    SubPlan 2
      ->  Aggregate
            Output: COALESCE(blackboxdb_api_catalog.bson_array_agg("graphLookup_stage_2".document, 'reachablePlaces'::text), '{ "reachablePlaces" : [  ] }'::bson)
@@ -167,12 +155,9 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM blackboxdb_api_catalog.bson
                  Output: "graphLookup_stage_2".document, "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                  CTE graphLookupRecurseStage
                    ->  Recursive Union
-                         ->  Bitmap Heap Scan on blackboxdb_data.documents_9201 collection_0_2
+                         ->  Seq Scan on blackboxdb_data.documents_9201 collection_0_2
                                Output: collection_0_2.document, '{ "depth" : { "$numberInt" : "0" } }'::bson, blackboxdb_api_catalog.bson_expression_get(collection_0_2.document, '{ "_id" : "$_id" }'::bson, false), false, ARRAY[ROW(blackboxdb_api_catalog.bson_expression_get(collection_0_2.document, '{ "_id" : "$_id" }'::bson, false))]
-                               Recheck Cond: (collection_0_2.shard_key_value = '9201'::bigint)
                                Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, blackboxdb_api_internal.bson_expression_get(collection.document, '{ "placeCode" : { "$makeArray" : "$homePlace" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'placeCode'::text)
-                               ->  Bitmap Index Scan on _id_
-                                     Index Cond: (collection_0_2.shard_key_value = '9201'::bigint)
                          ->  Nested Loop
                                Output: collection_0_2_1.document, blackboxdb_api_catalog.bson_dollar_add_fields("lookupRecursive_stage_1".depth, '{ "depth" : { "$add" : [ "$depth", { "$numberInt" : "1" } ] } }'::bson), blackboxdb_api_catalog.bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false), CASE WHEN (ROW(blackboxdb_api_catalog.bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false)) = ANY ("lookupRecursive_stage_1".path)) THEN true ELSE false END, array_cat("lookupRecursive_stage_1".path, ARRAY[ROW(blackboxdb_api_catalog.bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false))])
                                Join Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2_1.document, blackboxdb_api_internal.bson_expression_get("lookupRecursive_stage_1".document, '{ "placeCode" : { "$makeArray" : "$nearby" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'placeCode'::text)
@@ -181,17 +166,14 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM blackboxdb_api_catalog.bson
                                      Filter: ((NOT "lookupRecursive_stage_1".is_cycle) AND ("lookupRecursive_stage_1".depth OPERATOR(blackboxdb_api_catalog.#<) '{ "depth" : { "$numberInt" : "2" } }'::bsonquery))
                                ->  Materialize
                                      Output: collection_0_2_1.document
-                                     ->  Bitmap Heap Scan on blackboxdb_data.documents_9201 collection_0_2_1
+                                     ->  Seq Scan on blackboxdb_data.documents_9201 collection_0_2_1
                                            Output: collection_0_2_1.document
-                                           Recheck Cond: (collection_0_2_1.shard_key_value = '9201'::bigint)
-                                           ->  Bitmap Index Scan on _id_
-                                                 Index Cond: (collection_0_2_1.shard_key_value = '9201'::bigint)
                  ->  Sort
                        Output: "graphLookup_stage_2".document, "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        Sort Key: "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        ->  CTE Scan on "graphLookupRecurseStage" "graphLookup_stage_2"
                              Output: "graphLookup_stage_2".document, "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
-(36 rows)
+(27 rows)
 
 SELECT document FROM blackboxdb_api_catalog.bson_aggregation_pipeline('db',
     '{ "aggregate": "graphlookup_visitors", "pipeline": [ { "$graphLookup": { "from": "graphlookup_places", "startWith": "$homePlace", "connectFromField": "nearby", "connectToField": "placeCode", "as": "reachablePlaces", "depthField": "stepsCount" } } ]}');
@@ -206,11 +188,8 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM blackboxdb_api_catalog.bson
     '{ "aggregate": "graphlookup_visitors", "pipeline": [ { "$graphLookup": { "from": "graphlookup_places", "startWith": "$homePlace", "connectFromField": "nearby", "connectToField": "placeCode", "as": "reachablePlaces", "depthField": "stepsCount" } } ]}');
                                                                                                                                                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                                                                                                                                                
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on blackboxdb_data.documents_9202 collection
+ Seq Scan on blackboxdb_data.documents_9202 collection
    Output: blackboxdb_api_internal.bson_dollar_merge_documents(collection.document, COALESCE((SubPlan 2), '{ "reachablePlaces" : [  ] }'::bson), true)
-   Recheck Cond: (collection.shard_key_value = '9202'::bigint)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (collection.shard_key_value = '9202'::bigint)
    SubPlan 2
      ->  Aggregate
            Output: COALESCE(blackboxdb_api_catalog.bson_array_agg((blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), 'reachablePlaces'::text), '{ "reachablePlaces" : [  ] }'::bson)
@@ -218,12 +197,9 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM blackboxdb_api_catalog.bson
                  Output: (blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                  CTE graphLookupRecurseStage
                    ->  Recursive Union
-                         ->  Bitmap Heap Scan on blackboxdb_data.documents_9201 collection_0_2
+                         ->  Seq Scan on blackboxdb_data.documents_9201 collection_0_2
                                Output: collection_0_2.document, '{ "stepsCount" : { "$numberInt" : "0" } }'::bson, blackboxdb_api_catalog.bson_expression_get(collection_0_2.document, '{ "_id" : "$_id" }'::bson, false), false, ARRAY[ROW(blackboxdb_api_catalog.bson_expression_get(collection_0_2.document, '{ "_id" : "$_id" }'::bson, false))]
-                               Recheck Cond: (collection_0_2.shard_key_value = '9201'::bigint)
                                Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, blackboxdb_api_internal.bson_expression_get(collection.document, '{ "placeCode" : { "$makeArray" : "$homePlace" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'placeCode'::text)
-                               ->  Bitmap Index Scan on _id_
-                                     Index Cond: (collection_0_2.shard_key_value = '9201'::bigint)
                          ->  Nested Loop
                                Output: collection_0_2_1.document, blackboxdb_api_catalog.bson_dollar_add_fields("lookupRecursive_stage_1".depth, '{ "stepsCount" : { "$add" : [ "$stepsCount", { "$numberInt" : "1" } ] } }'::bson), blackboxdb_api_catalog.bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false), CASE WHEN (ROW(blackboxdb_api_catalog.bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false)) = ANY ("lookupRecursive_stage_1".path)) THEN true ELSE false END, array_cat("lookupRecursive_stage_1".path, ARRAY[ROW(blackboxdb_api_catalog.bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false))])
                                Join Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2_1.document, blackboxdb_api_internal.bson_expression_get("lookupRecursive_stage_1".document, '{ "placeCode" : { "$makeArray" : "$nearby" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'placeCode'::text)
@@ -232,17 +208,14 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM blackboxdb_api_catalog.bson
                                      Filter: (NOT "lookupRecursive_stage_1".is_cycle)
                                ->  Materialize
                                      Output: collection_0_2_1.document
-                                     ->  Bitmap Heap Scan on blackboxdb_data.documents_9201 collection_0_2_1
+                                     ->  Seq Scan on blackboxdb_data.documents_9201 collection_0_2_1
                                            Output: collection_0_2_1.document
-                                           Recheck Cond: (collection_0_2_1.shard_key_value = '9201'::bigint)
-                                           ->  Bitmap Index Scan on _id_
-                                                 Index Cond: (collection_0_2_1.shard_key_value = '9201'::bigint)
                  ->  Sort
                        Output: (blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        Sort Key: "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        ->  CTE Scan on "graphLookupRecurseStage" "graphLookup_stage_2"
                              Output: blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
-(36 rows)
+(27 rows)
 
 -- $graphLookup inside $facet
 SELECT document FROM blackboxdb_api_catalog.bson_aggregation_pipeline('db',

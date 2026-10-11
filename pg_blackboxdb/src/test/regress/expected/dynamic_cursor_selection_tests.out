@@ -974,13 +974,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          Output: collection.shard_key_value, collection.object_id, collection.document
    ->  Aggregate
          Output: COALESCE(bson_array_agg(collection_0_1.document, 'joined'::text), '{ "joined" : [  ] }'::bson)
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_2602 collection_0_1
+         ->  Seq Scan on blackboxdb_data.documents_2602 collection_0_1
                Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
-               Recheck Cond: (collection_0_1.shard_key_value = '2602'::bigint)
                Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, blackboxdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "x" : "a" }'::bson), 'x'::text)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection_0_1.shard_key_value = '2602'::bigint)
-(12 rows)
+(9 rows)
 
 SET blackboxdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$lookup": { "from": "lookup_coll", "localField": "a", "foreignField": "x", "as": "joined" } }], "cursor": {} }');
@@ -992,13 +989,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          Output: collection.shard_key_value, collection.object_id, collection.document
    ->  Aggregate
          Output: COALESCE(bson_array_agg(collection_0_1.document, 'joined'::text), '{ "joined" : [  ] }'::bson)
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_2602 collection_0_1
+         ->  Seq Scan on blackboxdb_data.documents_2602 collection_0_1
                Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
-               Recheck Cond: (collection_0_1.shard_key_value = '2602'::bigint)
                Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, blackboxdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "x" : "a" }'::bson), 'x'::text)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection_0_1.shard_key_value = '2602'::bigint)
-(12 rows)
+(9 rows)
 
 -- Stage: $bucket (non-streamable - RequiresPersistentCursorTrue)
 SET blackboxdb.enableDynamicCursors TO on;
@@ -1291,17 +1285,19 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                          ->  Nested Loop
                                Output: collection_0_2_1.document, bson_dollar_add_fields("lookupRecursive_stage_1".depth, '{ "depth" : { "$add" : [ "$depth", { "$numberInt" : "1" } ] } }'::bson), bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false), CASE WHEN (ROW(bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false)) = ANY ("lookupRecursive_stage_1".path)) THEN true ELSE false END, array_cat("lookupRecursive_stage_1".path, ARRAY[ROW(bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false))])
                                Join Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2_1.document, blackboxdb_api_internal.bson_expression_get("lookupRecursive_stage_1".document, '{ "_id" : { "$makeArray" : "$a" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson), '_id'::text)
-                               ->  Seq Scan on blackboxdb_data.documents_2601 collection_0_2_1
-                                     Output: collection_0_2_1.shard_key_value, collection_0_2_1.object_id, collection_0_2_1.document
                                ->  WorkTable Scan on "graphLookupRecurseStage" "lookupRecursive_stage_1"
                                      Output: "lookupRecursive_stage_1".depth, "lookupRecursive_stage_1".path, "lookupRecursive_stage_1".document
                                      Filter: (NOT "lookupRecursive_stage_1".is_cycle)
+                               ->  Materialize
+                                     Output: collection_0_2_1.document
+                                     ->  Seq Scan on blackboxdb_data.documents_2601 collection_0_2_1
+                                           Output: collection_0_2_1.document
                  ->  Sort
                        Output: "graphLookup_stage_2".document, "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        Sort Key: "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        ->  CTE Scan on "graphLookupRecurseStage" "graphLookup_stage_2"
                              Output: "graphLookup_stage_2".document, "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
-(29 rows)
+(31 rows)
 
 SET blackboxdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$graphLookup": { "from": "dyncoll", "startWith": "$a", "connectFromField": "a", "connectToField": "_id", "as": "linked" } }], "cursor": {} }');
@@ -1322,17 +1318,19 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                          ->  Nested Loop
                                Output: collection_0_2_1.document, bson_dollar_add_fields("lookupRecursive_stage_1".depth, '{ "depth" : { "$add" : [ "$depth", { "$numberInt" : "1" } ] } }'::bson), bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false), CASE WHEN (ROW(bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false)) = ANY ("lookupRecursive_stage_1".path)) THEN true ELSE false END, array_cat("lookupRecursive_stage_1".path, ARRAY[ROW(bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false))])
                                Join Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2_1.document, blackboxdb_api_internal.bson_expression_get("lookupRecursive_stage_1".document, '{ "_id" : { "$makeArray" : "$a" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson), '_id'::text)
-                               ->  Seq Scan on blackboxdb_data.documents_2601 collection_0_2_1
-                                     Output: collection_0_2_1.shard_key_value, collection_0_2_1.object_id, collection_0_2_1.document
                                ->  WorkTable Scan on "graphLookupRecurseStage" "lookupRecursive_stage_1"
                                      Output: "lookupRecursive_stage_1".depth, "lookupRecursive_stage_1".path, "lookupRecursive_stage_1".document
                                      Filter: (NOT "lookupRecursive_stage_1".is_cycle)
+                               ->  Materialize
+                                     Output: collection_0_2_1.document
+                                     ->  Seq Scan on blackboxdb_data.documents_2601 collection_0_2_1
+                                           Output: collection_0_2_1.document
                  ->  Sort
                        Output: "graphLookup_stage_2".document, "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        Sort Key: "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        ->  CTE Scan on "graphLookupRecurseStage" "graphLookup_stage_2"
                              Output: "graphLookup_stage_2".document, "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
-(25 rows)
+(27 rows)
 
 -- Stage: $setWindowFields (non-streamable - RequiresPersistentCursorTrue)
 SET blackboxdb.enableDynamicCursors TO on;
@@ -1381,26 +1379,20 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          indexName: _id_
          ->  Index Scan using _id_ on blackboxdb_data.documents_2601 collection
                Output: collection.shard_key_value, collection.object_id, collection.document
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_2602 collection_0_1
+   ->  Seq Scan on blackboxdb_data.documents_2602 collection_0_1
          Output: collection_0_1.document
-         Recheck Cond: (collection_0_1.shard_key_value = '2602'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection_0_1.shard_key_value = '2602'::bigint)
-(12 rows)
+(9 rows)
 
 SET blackboxdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$unionWith": "lookup_coll" }], "cursor": {} }');
-                                 QUERY PLAN                                  
------------------------------------------------------------------------------
+                           QUERY PLAN                            
+-----------------------------------------------------------------
  Append
    ->  Seq Scan on blackboxdb_data.documents_2601 collection
          Output: collection.document
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_2602 collection_0_1
+   ->  Seq Scan on blackboxdb_data.documents_2602 collection_0_1
          Output: collection_0_1.document
-         Recheck Cond: (collection_0_1.shard_key_value = '2602'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection_0_1.shard_key_value = '2602'::bigint)
-(8 rows)
+(5 rows)
 
 -- Stage: $collStats (non-streamable - RequiresPersistentCursorTrueSingleRow)
 SET blackboxdb.enableDynamicCursors TO on;
@@ -1832,17 +1824,22 @@ NOTICE:  creating collection
 
 SET blackboxdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$merge": { "into": "merge_output" } }], "cursor": {} }');
-                                                                                      QUERY PLAN                                                                                      
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
  Merge on blackboxdb_data.documents_2605
    ->  Nested Loop Left Join
          Output: documents_2605.ctid, collection.document, collection.ctid
+         Join Filter: (documents_2605.object_id = bson_get_value(collection.document, '_id'::text))
          ->  Seq Scan on blackboxdb_data.documents_2601 collection
                Output: collection.document, collection.ctid
-         ->  Index Scan using _id_ on blackboxdb_data.documents_2605
+         ->  Materialize
                Output: documents_2605.ctid, documents_2605.object_id
-               Index Cond: ((documents_2605.shard_key_value OPERATOR(pg_catalog.=) '2605'::bigint) AND (documents_2605.object_id = bson_get_value(collection.document, '_id'::text)))
-(8 rows)
+               ->  Bitmap Heap Scan on blackboxdb_data.documents_2605
+                     Output: documents_2605.ctid, documents_2605.object_id
+                     Recheck Cond: (documents_2605.shard_key_value OPERATOR(pg_catalog.=) '2605'::bigint)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (documents_2605.shard_key_value OPERATOR(pg_catalog.=) '2605'::bigint)
+(13 rows)
 
 -- $out — non-streamable (RequiresPersistentCursorTrue)
 -- $out creates the target collection, so we need it to exist first
@@ -1855,35 +1852,39 @@ NOTICE:  creating collection
 
 SET blackboxdb.enableDynamicCursors TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$out": "out_target" }], "cursor": {} }');
-                                               QUERY PLAN                                               
---------------------------------------------------------------------------------------------------------
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
  Merge on blackboxdb_data.documents_2606
    ->  Nested Loop Left Join
          Output: documents_2606.ctid, collection.document, collection.ctid
          ->  Seq Scan on blackboxdb_data.documents_2601 collection
                Output: collection.document, collection.ctid
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_2606
+         ->  Materialize
                Output: documents_2606.ctid
-               Recheck Cond: (documents_2606.shard_key_value OPERATOR(pg_catalog.=) '2606'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (documents_2606.shard_key_value OPERATOR(pg_catalog.=) '2606'::bigint)
-(10 rows)
+               ->  Bitmap Heap Scan on blackboxdb_data.documents_2606
+                     Output: documents_2606.ctid
+                     Recheck Cond: (documents_2606.shard_key_value OPERATOR(pg_catalog.=) '2606'::bigint)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (documents_2606.shard_key_value OPERATOR(pg_catalog.=) '2606'::bigint)
+(12 rows)
 
 SET blackboxdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$out": "out_target" }], "cursor": {} }');
-                                               QUERY PLAN                                               
---------------------------------------------------------------------------------------------------------
+                                                  QUERY PLAN                                                  
+--------------------------------------------------------------------------------------------------------------
  Merge on blackboxdb_data.documents_2606
    ->  Nested Loop Left Join
          Output: documents_2606.ctid, collection.document, collection.ctid
          ->  Seq Scan on blackboxdb_data.documents_2601 collection
                Output: collection.document, collection.ctid
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_2606
+         ->  Materialize
                Output: documents_2606.ctid
-               Recheck Cond: (documents_2606.shard_key_value OPERATOR(pg_catalog.=) '2606'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (documents_2606.shard_key_value OPERATOR(pg_catalog.=) '2606'::bigint)
-(10 rows)
+               ->  Bitmap Heap Scan on blackboxdb_data.documents_2606
+                     Output: documents_2606.ctid
+                     Recheck Cond: (documents_2606.shard_key_value OPERATOR(pg_catalog.=) '2606'::bigint)
+                     ->  Bitmap Index Scan on _id_
+                           Index Cond: (documents_2606.shard_key_value OPERATOR(pg_catalog.=) '2606'::bigint)
+(12 rows)
 
 -- ============================================================================
 -- Section 9: Internal combined stages and admin stages
@@ -1921,13 +1922,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Output: blackboxdb_api_internal.bson_dollar_merge_documents_at_path(collection.document, collection_0_1.document, 'joined'::text)
    ->  Seq Scan on blackboxdb_data.documents_2601 collection
          Output: collection.shard_key_value, collection.object_id, collection.document
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_2602 collection_0_1
+   ->  Seq Scan on blackboxdb_data.documents_2602 collection_0_1
          Output: collection_0_1.document
-         Recheck Cond: (collection_0_1.shard_key_value = '2602'::bigint)
          Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, blackboxdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "x" : "a" }'::bson), 'x'::text)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection_0_1.shard_key_value = '2602'::bigint)
-(10 rows)
+(7 rows)
 
 SET blackboxdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$lookup": { "from": "lookup_coll", "localField": "a", "foreignField": "x", "as": "joined" } }, { "$unwind": "$joined" }], "cursor": {} }');
@@ -1937,13 +1935,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Output: blackboxdb_api_internal.bson_dollar_merge_documents_at_path(collection.document, collection_0_1.document, 'joined'::text)
    ->  Seq Scan on blackboxdb_data.documents_2601 collection
          Output: collection.shard_key_value, collection.object_id, collection.document
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_2602 collection_0_1
+   ->  Seq Scan on blackboxdb_data.documents_2602 collection_0_1
          Output: collection_0_1.document
-         Recheck Cond: (collection_0_1.shard_key_value = '2602'::bigint)
          Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, blackboxdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "x" : "a" }'::bson), 'x'::text)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection_0_1.shard_key_value = '2602'::bigint)
-(10 rows)
+(7 rows)
 
 -- $currentOp (admin stage) — non-streamable (RequiresPersistentCursorTrue)
 SET blackboxdb.enableDynamicCursors TO on;

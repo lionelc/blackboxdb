@@ -62,22 +62,16 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$addFields": { "newField" : "1", "a.y": ["p", "q"] } }, { "$addFields": { "newField2": "someOtherField" } } ], "cursor": {} }');
                                                                                                                                                                             QUERY PLAN                                                                                                                                                                            
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on blackboxdb_data.documents_3500 collection
+ Seq Scan on blackboxdb_data.documents_3500 collection
    Output: blackboxdb_api_internal.bson_dollar_add_fields(blackboxdb_api_internal.bson_dollar_add_fields(document, '{ "newField" : "1", "a.y" : [ "p", "q" ] }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "newField2" : "someOtherField" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   Recheck Cond: (collection.shard_key_value = '3500'::bigint)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (collection.shard_key_value = '3500'::bigint)
-(5 rows)
+(2 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$addFields": { "newField" : "1", "a.y": ["p", "q"] } }, { "$set": { "newField2": "someOtherField" } } ], "cursor": {} }');
                                                                                                                                                                             QUERY PLAN                                                                                                                                                                            
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on blackboxdb_data.documents_3500 collection
+ Seq Scan on blackboxdb_data.documents_3500 collection
    Output: blackboxdb_api_internal.bson_dollar_add_fields(blackboxdb_api_internal.bson_dollar_add_fields(document, '{ "newField" : "1", "a.y" : [ "p", "q" ] }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "newField2" : "someOtherField" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   Recheck Cond: (collection.shard_key_value = '3500'::bigint)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (collection.shard_key_value = '3500'::bigint)
-(5 rows)
+(2 rows)
 
 -- add $project
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$project": { "_id" : 1, "a.b": 1 } } ], "cursor": {} }');
@@ -91,12 +85,9 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$project": { "_id" : 1, "a.b": 1 } }, { "$set": { "newField2": "someOtherField" } }], "cursor": {} }');
                                                                                                                                                                                       QUERY PLAN                                                                                                                                                                                       
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on blackboxdb_data.documents_3500 collection
+ Seq Scan on blackboxdb_data.documents_3500 collection
    Output: blackboxdb_api_internal.bson_dollar_add_fields(blackboxdb_api_internal.bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "a.b" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "newField2" : "someOtherField" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   Recheck Cond: (collection.shard_key_value = '3500'::bigint)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (collection.shard_key_value = '3500'::bigint)
-(5 rows)
+(2 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$project": { "_id" : 1, "a.b": 1 } }, { "$set": { "newField2": "someOtherField" } }], "cursor": {} }');
                                                               document                                                               
@@ -128,12 +119,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    Output: (blackboxdb_api_internal.bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "a.b" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_3500 collection
+   ->  Seq Scan on blackboxdb_data.documents_3500 collection
          Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "_id" : { "$numberInt" : "1" }, "a.b" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         Recheck Cond: (collection.shard_key_value = '3500'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '3500'::bigint)
-(7 rows)
+(4 rows)
 
 -- add limit
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$project": { "_id" : 1, "a.b": 1 } }, { "$limit": 1 }], "cursor": {} }');
@@ -181,12 +169,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Output: (blackboxdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "a.b" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
    ->  Limit
          Output: (blackboxdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "a.b" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_3500 collection
+         ->  Seq Scan on blackboxdb_data.documents_3500 collection
                Output: blackboxdb_api_internal.bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" }, "a.b" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-               Recheck Cond: (collection.shard_key_value = '3500'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '3500'::bigint)
-(9 rows)
+(6 rows)
 
 -- try match
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$match": { "_id": { "$gt": "1" } } }], "cursor": {} }');
@@ -288,12 +273,9 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 EXPLAIN (COSTS OFF, VERBOSE ON ) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$addFields": { "x": 1, "y": 2, "xyz": 3 } }, { "$addFields": { "xyz": "$_id" } } ], "cursor": {} }');
                                                                                                                                                                                               QUERY PLAN                                                                                                                                                                                              
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on blackboxdb_data.documents_3500 collection
+ Seq Scan on blackboxdb_data.documents_3500 collection
    Output: blackboxdb_api_internal.bson_dollar_add_fields(blackboxdb_api_internal.bson_dollar_add_fields(document, '{ "x" : { "$numberInt" : "1" }, "y" : { "$numberInt" : "2" }, "xyz" : { "$numberInt" : "3" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "xyz" : "$_id" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   Recheck Cond: (collection.shard_key_value = '3500'::bigint)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (collection.shard_key_value = '3500'::bigint)
-(5 rows)
+(2 rows)
 
 -- $project then addFields can be inlined only on exclusion today
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$project": { "a": 0, "boolean": 0 } }, { "$addFields": { "a": 1, "xyz": "$_id" } } ], "cursor": {} }');
@@ -307,12 +289,9 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 EXPLAIN (COSTS OFF, VERBOSE ON ) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$project": { "a": 0, "boolean": 0 } }, { "$addFields": { "a": 1, "xyz": "$_id" } } ], "cursor": {} }');
                                                                                                          QUERY PLAN                                                                                                          
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on blackboxdb_data.documents_3500 collection
+ Seq Scan on blackboxdb_data.documents_3500 collection
    Output: blackboxdb_api_internal.bson_dollar_add_fields(document, '{ "a" : { "$numberInt" : "1" }, "xyz" : "$_id", "boolean" : "$$REMOVE" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   Recheck Cond: (collection.shard_key_value = '3500'::bigint)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (collection.shard_key_value = '3500'::bigint)
-(5 rows)
+(2 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$project": { "a": 0, "boolean": 1 } }, { "$addFields": { "a": 1, "xyz": "$_id" } } ], "cursor": {} }');
 ERROR:  exclusion cannot be applied to field boolean within the inclusion projection.
@@ -436,18 +415,12 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregatio
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$group": { "_id": { "$mod": [ { "$toInt": "$_id" }, 2 ] }, "d": { "$first": "$_id" }, "e": { "$last":  "$_id" } } }], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                    
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'd'::text, bsonfirstonsorted(blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'e'::text, bsonlastonsorted(blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$_id" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (blackboxdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_3500 collection
-               Output: blackboxdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
-               Recheck Cond: (collection.shard_key_value = '3500'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '3500'::bigint)
-(11 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Seq Scan on blackboxdb_data.documents_3500 collection
+         Output: blackboxdb_api_internal.bson_expression_get(document, '{ "" : { "$mod" : [ { "$toInt" : "$_id" }, { "$numberInt" : "2" } ] } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+(5 rows)
 
 -- $group with first/last sorted (TODO)
 -- add $sample
@@ -521,12 +494,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                Output: agg_stage_1.document, random()
                ->  ProjectSet
                      Output: bson_dollar_unwind(collection.document, '$a.b'::text)
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_3500 collection
+                     ->  Seq Scan on blackboxdb_data.documents_3500 collection
                            Output: collection.shard_key_value, collection.object_id, collection.document
-                           Recheck Cond: (collection.shard_key_value = '3500'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '3500'::bigint)
-(14 rows)
+(11 rows)
 
 -- internalInhibitOptimization
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$addFields": { "newField" : "1", "a.y": ["p", "q"] } }, { "$_internalInhibitOptimization": 1 }, { "$addFields": { "newField2": "someOtherField" } } ], "cursor": {} }');
@@ -543,12 +513,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  CTE Scan on internalinhibitoptimization inhibit_stage_1
    Output: blackboxdb_api_internal.bson_dollar_add_fields(inhibit_stage_1.document, '{ "newField2" : "someOtherField" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    CTE internalinhibitoptimization
-     ->  Bitmap Heap Scan on blackboxdb_data.documents_3500 collection
+     ->  Seq Scan on blackboxdb_data.documents_3500 collection
            Output: blackboxdb_api_internal.bson_dollar_add_fields(collection.document, '{ "newField" : "1", "a.y" : [ "p", "q" ] }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-           Recheck Cond: (collection.shard_key_value = '3500'::bigint)
-           ->  Bitmap Index Scan on _id_
-                 Index Cond: (collection.shard_key_value = '3500'::bigint)
-(8 rows)
+(5 rows)
 
 -- facet
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "aggregation_pipeline", "pipeline": [ { "$facet": { "a" : [ { "$addFields": { "newField" : "1", "a.y": ["p", "q"] } } ] } } ], "cursor": {} }');
@@ -575,11 +542,8 @@ EXPlAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  Aggregate
    Output: bson_object_agg((COALESCE(bson_array_agg(blackboxdb_api_internal.bson_dollar_add_fields(facetsub_stage_1.document, '{ "newField" : "1", "a.y" : [ "p", "q" ] }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'a'::text), '{ "a" : [  ] }'::bson)))
    CTE facet_base_0_0
-     ->  Bitmap Heap Scan on blackboxdb_data.documents_3500 collection
+     ->  Seq Scan on blackboxdb_data.documents_3500 collection
            Output: collection.document
-           Recheck Cond: (collection.shard_key_value = '3500'::bigint)
-           ->  Bitmap Index Scan on _id_
-                 Index Cond: (collection.shard_key_value = '3500'::bigint)
    ->  Append
          ->  Aggregate
                Output: COALESCE(bson_array_agg(blackboxdb_api_internal.bson_dollar_add_fields(facetsub_stage_1.document, '{ "newField" : "1", "a.y" : [ "p", "q" ] }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'a'::text), '{ "a" : [  ] }'::bson)
@@ -596,7 +560,7 @@ EXPlAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                      Output: bson_dollar_unwind(facetsub_stage_3.document, '$a.b'::text)
                      ->  CTE Scan on facet_base_0_0 facetsub_stage_3
                            Output: facetsub_stage_3.document
-(24 rows)
+(21 rows)
 
 -- facet with parent transform:
 SELECT document FROM bson_aggregation_pipeline('db', 
@@ -696,17 +660,14 @@ SELECT document FROM bson_aggregation_find('db', '{ "find": "aggregation_pipelin
 ERROR:  $natural sort cannot be set to a value other than -1 or 1.
 -- $natural EXPLAIN
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('db', '{ "find": "aggregation_pipeline", "projection": {}, "sort": { "$natural": 1 }}');
-                               QUERY PLAN                                
--------------------------------------------------------------------------
+                         QUERY PLAN                          
+-------------------------------------------------------------
  Sort
    Output: document, ctid
    Sort Key: collection.ctid NULLS FIRST
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_3500 collection
+   ->  Seq Scan on blackboxdb_data.documents_3500 collection
          Output: document, ctid
-         Recheck Cond: (collection.shard_key_value = '3500'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '3500'::bigint)
-(8 rows)
+(5 rows)
 
 -- count
 SELECT document FROM bson_aggregation_count('db', '{ "count": "aggregation_pipeline" }');
@@ -1209,16 +1170,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                            Output: COALESCE(bson_array_agg((bson_repath_and_build('efe'::text, blackboxdb_api_internal.bsoncount(1))), 'matched_docs'::text), '{ "matched_docs" : [  ] }'::bson)
                            ->  Aggregate
                                  Output: bson_repath_and_build('efe'::text, blackboxdb_api_internal.bsoncount(1))
-                                 ->  Bitmap Heap Scan on blackboxdb_data.documents_3503 collection_0_1
-                                       Recheck Cond: (collection_0_1.shard_key_value = '3503'::bigint)
-                                       ->  Bitmap Index Scan on _id_
-                                             Index Cond: (collection_0_1.shard_key_value = '3503'::bigint)
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_3502 collection
+                                 ->  Seq Scan on blackboxdb_data.documents_3503 collection_0_1
+                                       Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
+                     ->  Seq Scan on blackboxdb_data.documents_3502 collection
                            Output: collection.shard_key_value, collection.object_id, collection.document
-                           Recheck Cond: (collection.shard_key_value = '3502'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '3502'::bigint)
-(22 rows)
+(17 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
     '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "localField": "title", "foreignField": "title", "pipeline": [ { "$count": "efe" } ] } } ], "cursor": {} }');
@@ -1228,19 +1184,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Output: blackboxdb_api_internal.bson_dollar_merge_documents(lookup_non_inlined_stage_1."left", (SubPlan 1), true)
    ->  Nested Loop
          Output: collection.document, (COALESCE(bson_array_agg(collection_0_1.document, 'matched_docs'::text), '{ "matched_docs" : [  ] }'::bson))
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_3502 collection
+         ->  Seq Scan on blackboxdb_data.documents_3502 collection
                Output: collection.shard_key_value, collection.object_id, collection.document
-               Recheck Cond: (collection.shard_key_value = '3502'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '3502'::bigint)
          ->  Aggregate
                Output: COALESCE(bson_array_agg(collection_0_1.document, 'matched_docs'::text), '{ "matched_docs" : [  ] }'::bson)
-               ->  Bitmap Heap Scan on blackboxdb_data.documents_3503 collection_0_1
+               ->  Seq Scan on blackboxdb_data.documents_3503 collection_0_1
                      Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
-                     Recheck Cond: (collection_0_1.shard_key_value = '3503'::bigint)
                      Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, blackboxdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "title" : "title" }'::bson), 'title'::text)
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection_0_1.shard_key_value = '3503'::bigint)
    SubPlan 1
      ->  Aggregate
            Output: COALESCE(bson_array_agg((bson_repath_and_build('efe'::text, blackboxdb_api_internal.bsoncount(1))), 'matched_docs'::text), '{ "matched_docs" : [  ] }'::bson)
@@ -1249,7 +1199,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                  ->  Function Scan on blackboxdb_api_catalog.bson_lookup_unwind lookup_subpipeline_substage_0
                        Output: lookup_subpipeline_substage_0.lookup_unwind
                        Function Call: bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'matched_docs'::text)
-(25 rows)
+(19 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
     '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "coll_dne", "as": "matched_docs", "localField": "title", "foreignField": "title", "pipeline": [ { "$count": "efe" } ] } } ], "cursor": {} }');
@@ -1659,15 +1609,12 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeli
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": 1 } }, {"$count": "count"} ], "cursor": {} }');
-                          QUERY PLAN                          
---------------------------------------------------------------
+                     QUERY PLAN                     
+----------------------------------------------------
  Aggregate
-   ->  Bitmap Heap Scan on documents_3505 collection
-         Recheck Cond: (shard_key_value = '3505'::bigint)
+   ->  Seq Scan on documents_3505 collection
          Filter: (random() < '1'::double precision)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (shard_key_value = '3505'::bigint)
-(6 rows)
+(3 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": 0 } }, {"$count": "count"} ], "cursor": {} }');
                document               
@@ -1676,15 +1623,12 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeli
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": 0 } }, {"$count": "count"} ], "cursor": {} }');
-                          QUERY PLAN                          
---------------------------------------------------------------
+                     QUERY PLAN                     
+----------------------------------------------------
  Aggregate
-   ->  Bitmap Heap Scan on documents_3505 collection
-         Recheck Cond: (shard_key_value = '3505'::bigint)
+   ->  Seq Scan on documents_3505 collection
          Filter: (random() < '0'::double precision)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (shard_key_value = '3505'::bigint)
-(6 rows)
+(3 rows)
 
 /* sampleRate will random select document, use greater than 0 to make sure slice of documents is selected */
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": 0.5 } }, { "$count": "numMatches" }, { "$addFields": { "gtZero": { "$gt": ["$numMatches", 0] } } }, {"$project": { "_id": 0, "gtZero": 1 } }], "cursor": {} }');
@@ -1694,16 +1638,13 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeli
 (1 row)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": 0.5 } }, { "$count": "numMatches" }, { "$addFields": { "gtZero": { "$gt": ["$numMatches", 0] } } }, {"$project": { "_id": 0, "gtZero": 1 } }], "cursor": {} }');
-                             QUERY PLAN                             
---------------------------------------------------------------------
+                         QUERY PLAN                         
+------------------------------------------------------------
  Subquery Scan on agg_stage_2
    ->  Aggregate
-         ->  Bitmap Heap Scan on documents_3505 collection
-               Recheck Cond: (shard_key_value = '3505'::bigint)
+         ->  Seq Scan on documents_3505 collection
                Filter: (random() < '0.5'::double precision)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (shard_key_value = '3505'::bigint)
-(7 rows)
+(4 rows)
 
 /* test shard case */
 SELECT blackboxdb_api.shard_collection('db', 'agg_pipeline_samplerate', '{ "_id": "hashed" }', false);
@@ -1822,18 +1763,12 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
  Nested Loop Left Join
    Output: blackboxdb_api_internal.bson_dollar_merge_documents_at_path(collection.document, COALESCE(collection_0_1.document, '{ }'::bson), 'director_info'::text)
    Filter: (blackboxdb_api_internal.bson_dollar_merge_documents_at_path(collection.document, COALESCE(collection_0_1.document, '{ }'::bson), 'director_info'::text) #= '{ "title" : "Celestial Rift" }'::bsonquery)
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_3507 collection
+   ->  Seq Scan on blackboxdb_data.documents_3507 collection
          Output: collection.shard_key_value, collection.object_id, collection.document
-         Recheck Cond: (collection.shard_key_value = '3507'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '3507'::bigint)
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_3506 collection_0_1
+   ->  Seq Scan on blackboxdb_data.documents_3506 collection_0_1
          Output: collection_0_1.document
-         Recheck Cond: (collection_0_1.shard_key_value = '3506'::bigint)
          Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, blackboxdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "name" : "director" }'::bson), 'name'::text)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection_0_1.shard_key_value = '3506'::bigint)
-(14 rows)
+(8 rows)
 
 /* primary Index pushdown test for select*/
 SELECT blackboxdb_api.insert_one('db','indexPushDownTest','{ "_id": 1, "name": "Alex Veridian" }', NULL);

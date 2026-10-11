@@ -24,53 +24,38 @@ SELECT blackboxdb_api_internal.create_indexes_non_concurrently('exprdb', '{ "cre
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$isArray": "$a" } } }');
                                                                                  QUERY PLAN                                                                                  
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on documents_201 collection
-   Recheck Cond: (shard_key_value = '201'::bigint)
+ Seq Scan on documents_201 collection
    Filter: blackboxdb_api_internal.bson_dollar_expr(document, '{ "" : { "$isArray" : "$a" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '201'::bigint)
-(5 rows)
+(2 rows)
 
 -- pushdown does not work for a non-ordered index
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$eq": [ "$b", 10 ] } } }');
                                                                                              QUERY PLAN                                                                                              
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on documents_201 collection
-   Recheck Cond: (shard_key_value = '201'::bigint)
+ Seq Scan on documents_201 collection
    Filter: blackboxdb_api_internal.bson_dollar_expr(document, '{ "" : { "$eq" : [ "$b", { "$numberInt" : "10" } ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '201'::bigint)
-(5 rows)
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$eq": [ 10, "$b" ] } } }');
                                                                                              QUERY PLAN                                                                                              
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on documents_201 collection
-   Recheck Cond: (shard_key_value = '201'::bigint)
+ Seq Scan on documents_201 collection
    Filter: blackboxdb_api_internal.bson_dollar_expr(document, '{ "" : { "$eq" : [ { "$numberInt" : "10" }, "$b" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '201'::bigint)
-(5 rows)
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$gt": [ "$b", 10 ] } } }');
                                                                                              QUERY PLAN                                                                                              
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on documents_201 collection
-   Recheck Cond: (shard_key_value = '201'::bigint)
+ Seq Scan on documents_201 collection
    Filter: blackboxdb_api_internal.bson_dollar_expr(document, '{ "" : { "$gt" : [ "$b", { "$numberInt" : "10" } ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '201'::bigint)
-(5 rows)
+(2 rows)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$gt": [ 10, "$b" ] } } }');
                                                                                              QUERY PLAN                                                                                              
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on documents_201 collection
-   Recheck Cond: (shard_key_value = '201'::bigint)
+ Seq Scan on documents_201 collection
    Filter: blackboxdb_api_internal.bson_dollar_expr(document, '{ "" : { "$gt" : [ { "$numberInt" : "10" }, "$b" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '201'::bigint)
-(5 rows)
+(2 rows)
 
 -- simple pushdown of operators
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$eq": [ "$a", 10 ] } } }');
@@ -224,12 +209,9 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "fin
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('exprdb', '{ "find": "exprcoll", "filter": { "$expr": { "$lt": [ { "$add": [ 2, "$$myvar" ] }, "$a" ] } }, "let": { "myvar": 3 } }');
                                                                                                                                           QUERY PLAN                                                                                                                                           
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on documents_201 collection
-   Recheck Cond: (shard_key_value = '201'::bigint)
+ Seq Scan on documents_201 collection
    Filter: blackboxdb_api_internal.bson_dollar_expr(document, '{ "" : { "$lt" : [ { "$add" : [ { "$numberInt" : "2" }, "$$myvar" ] }, "$a" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "myvar" : { "$literal" : { "$numberInt" : "3" } } } }'::bson)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (shard_key_value = '201'::bigint)
-(5 rows)
+(2 rows)
 
 set blackboxdb.enableExtendedExplainPlans to on;
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$

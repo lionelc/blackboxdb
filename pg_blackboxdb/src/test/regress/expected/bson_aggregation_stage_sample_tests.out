@@ -137,12 +137,9 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '
    ->  Custom Scan (BlackboxDBApiReservoirSample)
          Sample Size: 2
          Sample Reservoir Method: Materialize
-         ->  Bitmap Heap Scan on documents_25711001 collection
-               Recheck Cond: (shard_key_value = '25711001'::bigint)
+         ->  Seq Scan on documents_25711001 collection
                Filter: (document @= '{ "product" : "p1" }'::bson)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (shard_key_value = '25711001'::bigint)
-(10 rows)
+(7 rows)
 
 -- $sample + $match (filter applied after sampling, TABLESAMPLE expected)
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('sampledb', '{ "aggregate": "samplePlanTest", "pipeline": [ { "$sample": { "size": 5 } }, { "$match": { "unitPrice": { "$gt": 4 } } } ] }');

@@ -406,8 +406,8 @@ bool EnableObjectIdFuncExprConversion = DEFAULT_ENABLE_OBJECTID_FUNC_EXPR_CONVER
 #define DEFAULT_ENABLE_SAMPLE_SCAN_FIX_ON_SHARDED true
 bool EnableSampleScanFixOnSharded = DEFAULT_ENABLE_SAMPLE_SCAN_FIX_ON_SHARDED;
 
-/* Added in v115, Pending stabilization, enable in v119 */
-#define DEFAULT_ENABLE_ADD_SHARD_KEY_ONLY_ON_PRIMARY_KEY_FILTERS false
+/* Added in v115, enabled in v116 with the add-back for every _id filter, remove after v118 */
+#define DEFAULT_ENABLE_ADD_SHARD_KEY_ONLY_ON_PRIMARY_KEY_FILTERS true
 bool EnableAddShardKeyOnlyOnPrimaryKeyFilters =
 	DEFAULT_ENABLE_ADD_SHARD_KEY_ONLY_ON_PRIMARY_KEY_FILTERS;
 

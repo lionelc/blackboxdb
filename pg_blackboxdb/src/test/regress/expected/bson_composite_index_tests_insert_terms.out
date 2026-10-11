@@ -676,9 +676,9 @@ EXPLAIN VERBOSE SELECT document FROM blackboxdb_api_catalog.bson_aggregation_fin
 LOG:  Name: collection_pk_5603, access method: btree, 1st opfamily: integer_ops, numPaths 2
 LOG:  Name: documents_rum_index_5610, access method: blackboxdb_rum, 1st opfamily: bson_rum_composite_path_ops, numPaths 1
 LOG:  Name: documents_rum_index_5609, access method: blackboxdb_rum, 1st opfamily: bson_rum_composite_path_ops, numPaths 1
-                                            QUERY PLAN                                            
---------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on blackboxdb_data.documents_5603 collection  (cost=4.43..8.45 rows=2 width=32)
+                                             QUERY PLAN                                              
+-----------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on blackboxdb_data.documents_5603 collection  (cost=0.10..10.26 rows=405 width=32)
    Output: document
    Recheck Cond: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
    ->  Bitmap Index Scan on "a_-1_comp"  (cost=0.00..0.00 rows=8 width=0)
@@ -689,9 +689,9 @@ EXPLAIN VERBOSE SELECT document FROM blackboxdb_api_catalog.bson_aggregation_fin
 LOG:  Name: collection_pk_5603, access method: btree, 1st opfamily: integer_ops, numPaths 2
 LOG:  Name: documents_rum_index_5610, access method: blackboxdb_rum, 1st opfamily: bson_rum_composite_path_ops, numPaths 1
 LOG:  Name: documents_rum_index_5609, access method: blackboxdb_rum, 1st opfamily: bson_rum_composite_path_ops, numPaths 1
-                                            QUERY PLAN                                            
---------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on blackboxdb_data.documents_5603 collection  (cost=4.43..8.45 rows=1 width=32)
+                                             QUERY PLAN                                              
+-----------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on blackboxdb_data.documents_5603 collection  (cost=0.05..10.23 rows=202 width=32)
    Output: document
    Recheck Cond: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
    Filter: (collection.document @>= '{ "b" : { "$minKey" : 1 } }'::bson)

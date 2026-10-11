@@ -31,9 +31,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson
    cursorScanType: streamingPrimaryKey
    ->  Index Scan using _id_ on blackboxdb_data.documents_602 collection
          Output: shard_key_value, object_id, document
-         Index Cond: (collection.shard_key_value = '602'::bigint)
          Filter: blackboxdb_api_internal.cursor_state(collection.document, '{ }'::bson)
-(7 rows)
+(6 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_find('sb_db', '{ "find": "sb_get_aggregation_cursor_smalldoc_test", "filter": { "a": 1 } }');
                                                                            QUERY PLAN                                                                           
@@ -43,9 +42,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson
    cursorScanType: streamingPrimaryKey
    ->  Index Scan using _id_ on blackboxdb_data.documents_602 collection
          Output: shard_key_value, object_id, document
-         Index Cond: (collection.shard_key_value = '602'::bigint)
          Filter: ((collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson) AND blackboxdb_api_internal.cursor_state(collection.document, '{ }'::bson))
-(7 rows)
+(6 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_find('sb_db', '{ "find": "sb_get_aggregation_cursor_smalldoc_test", "filter": { "a": 1 }, "skip": 0 }');
                                                                            QUERY PLAN                                                                           
@@ -55,9 +53,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson
    cursorScanType: streamingPrimaryKey
    ->  Index Scan using _id_ on blackboxdb_data.documents_602 collection
          Output: shard_key_value, object_id, document
-         Index Cond: (collection.shard_key_value = '602'::bigint)
          Filter: ((collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson) AND blackboxdb_api_internal.cursor_state(collection.document, '{ }'::bson))
-(7 rows)
+(6 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_find('sb_db', '{ "find": "sb_get_aggregation_cursor_smalldoc_test", "filter": { "a": 1 }, "limit": 0 }');
                                                                            QUERY PLAN                                                                           
@@ -67,9 +64,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson
    cursorScanType: streamingPrimaryKey
    ->  Index Scan using _id_ on blackboxdb_data.documents_602 collection
          Output: shard_key_value, object_id, document
-         Index Cond: (collection.shard_key_value = '602'::bigint)
          Filter: ((collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson) AND blackboxdb_api_internal.cursor_state(collection.document, '{ }'::bson))
-(7 rows)
+(6 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_find('sb_db', '{ "find": "sb_get_aggregation_cursor_smalldoc_test", "filter": { "a": 1 }, "skip": 0, "limit": 0 }');
                                                                            QUERY PLAN                                                                           
@@ -79,9 +75,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson
    cursorScanType: streamingPrimaryKey
    ->  Index Scan using _id_ on blackboxdb_data.documents_602 collection
          Output: shard_key_value, object_id, document
-         Index Cond: (collection.shard_key_value = '602'::bigint)
          Filter: ((collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson) AND blackboxdb_api_internal.cursor_state(collection.document, '{ }'::bson))
-(7 rows)
+(6 rows)
 
 -- projection is applied after the cursor
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_find('sb_db', '{ "find": "sb_get_aggregation_cursor_smalldoc_test", "filter": { "a": 1 }, "skip": 0, "limit": 0, "projection": { "a": 1 } }');
@@ -92,9 +87,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson
    cursorScanType: streamingPrimaryKey
    ->  Index Scan using _id_ on blackboxdb_data.documents_602 collection
          Output: shard_key_value, object_id, document
-         Index Cond: (collection.shard_key_value = '602'::bigint)
          Filter: ((collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson) AND blackboxdb_api_internal.cursor_state(collection.document, '{ }'::bson))
-(7 rows)
+(6 rows)
 
 -- with sort/skip limit it's persisted cursors
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_find('sb_db', '{ "find": "sb_get_aggregation_cursor_smalldoc_test", "filter": { "a": 1 }, "sort": { "b": 1 } }');
@@ -103,13 +97,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson
  Sort
    Output: document, (bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson))
    Sort Key: (bson_orderby(collection.document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_602 collection
+   ->  Seq Scan on blackboxdb_data.documents_602 collection
          Output: document, bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson)
-         Recheck Cond: (collection.shard_key_value = '602'::bigint)
          Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '602'::bigint)
-(9 rows)
+(6 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_find('sb_db', '{ "find": "sb_get_aggregation_cursor_smalldoc_test", "filter": { "a": 1 }, "sort": { "b": 1 }, "skip": 1 }');
                                                  QUERY PLAN                                                  
@@ -119,13 +110,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson
    ->  Sort
          Output: document, (bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson))
          Sort Key: (bson_orderby(collection.document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_602 collection
+         ->  Seq Scan on blackboxdb_data.documents_602 collection
                Output: document, bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson)
-               Recheck Cond: (collection.shard_key_value = '602'::bigint)
                Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '602'::bigint)
-(11 rows)
+(8 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_find('sb_db', '{ "find": "sb_get_aggregation_cursor_smalldoc_test", "filter": { "a": 1 }, "sort": { "b": 1 }, "limit": 1 }');
                                                  QUERY PLAN                                                  
@@ -135,39 +123,30 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson
    ->  Sort
          Output: document, (bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson))
          Sort Key: (bson_orderby(collection.document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_602 collection
+         ->  Seq Scan on blackboxdb_data.documents_602 collection
                Output: document, bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson)
-               Recheck Cond: (collection.shard_key_value = '602'::bigint)
                Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '602'::bigint)
-(11 rows)
+(8 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_find('sb_db', '{ "find": "sb_get_aggregation_cursor_smalldoc_test", "filter": { "a": 1 }, "skip": 1 }');
                                     QUERY PLAN                                     
 -----------------------------------------------------------------------------------
  Limit
    Output: document
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_602 collection
+   ->  Seq Scan on blackboxdb_data.documents_602 collection
          Output: document
-         Recheck Cond: (collection.shard_key_value = '602'::bigint)
          Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '602'::bigint)
-(8 rows)
+(5 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_find('sb_db', '{ "find": "sb_get_aggregation_cursor_smalldoc_test", "filter": { "a": 1 }, "limit": 100 }');
                                     QUERY PLAN                                     
 -----------------------------------------------------------------------------------
  Limit
    Output: document
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_602 collection
+   ->  Seq Scan on blackboxdb_data.documents_602 collection
          Output: document
-         Recheck Cond: (collection.shard_key_value = '602'::bigint)
          Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '602'::bigint)
-(8 rows)
+(5 rows)
 
 -- projection is applied after skip/limit
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_find('sb_db', '{ "find": "sb_get_aggregation_cursor_smalldoc_test", "filter": { "a": 1 }, "skip": 1, "projection": { "a": 1 }  }');
@@ -177,26 +156,20 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson
    Output: blackboxdb_api_internal.bson_dollar_project_find(agg_stage_2.document, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Limit
          Output: collection.document
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_602 collection
+         ->  Seq Scan on blackboxdb_data.documents_602 collection
                Output: collection.document
-               Recheck Cond: (collection.shard_key_value = '602'::bigint)
                Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '602'::bigint)
-(10 rows)
+(7 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_find('sb_db', '{ "find": "sb_get_aggregation_cursor_smalldoc_test", "filter": { "a": 1 }, "limit": 100, "projection": { "a": 1 }  }');
                                                                                                               QUERY PLAN                                                                                                               
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    Output: (blackboxdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_602 collection
+   ->  Seq Scan on blackboxdb_data.documents_602 collection
          Output: blackboxdb_api_internal.bson_dollar_project_find(document, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-         Recheck Cond: (collection.shard_key_value = '602'::bigint)
          Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '602'::bigint)
-(8 rows)
+(5 rows)
 
 -- for a case of limit 1 we use singleBatch cursors and not streaming
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_find('sb_db', '{ "find": "sb_get_aggregation_cursor_smalldoc_test", "filter": { "a": 1 }, "limit": 1 }');
@@ -204,52 +177,40 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson
 -----------------------------------------------------------------------------------
  Limit
    Output: document
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_602 collection
+   ->  Seq Scan on blackboxdb_data.documents_602 collection
          Output: document
-         Recheck Cond: (collection.shard_key_value = '602'::bigint)
          Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '602'::bigint)
-(8 rows)
+(5 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_find('sb_db', '{ "find": "sb_get_aggregation_cursor_smalldoc_test", "filter": { "a": 1 }, "skip": 0, "limit": 1 }');
                                     QUERY PLAN                                     
 -----------------------------------------------------------------------------------
  Limit
    Output: document
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_602 collection
+   ->  Seq Scan on blackboxdb_data.documents_602 collection
          Output: document
-         Recheck Cond: (collection.shard_key_value = '602'::bigint)
          Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '602'::bigint)
-(8 rows)
+(5 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_find('sb_db', '{ "find": "sb_get_aggregation_cursor_smalldoc_test", "filter": { "a": 1 }, "limit": 1 }');
                                     QUERY PLAN                                     
 -----------------------------------------------------------------------------------
  Limit
    Output: document
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_602 collection
+   ->  Seq Scan on blackboxdb_data.documents_602 collection
          Output: document
-         Recheck Cond: (collection.shard_key_value = '602'::bigint)
          Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '602'::bigint)
-(8 rows)
+(5 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_find('sb_db', '{ "find": "sb_get_aggregation_cursor_smalldoc_test", "filter": { "a": 1 }, "skip": 2, "limit": 1 }');
                                     QUERY PLAN                                     
 -----------------------------------------------------------------------------------
  Limit
    Output: document
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_602 collection
+   ->  Seq Scan on blackboxdb_data.documents_602 collection
          Output: document
-         Recheck Cond: (collection.shard_key_value = '602'::bigint)
          Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '602'::bigint)
-(8 rows)
+(5 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_find('sb_db', '{ "find": "sb_get_aggregation_cursor_smalldoc_test", "filter": { "a": 1 }, "skip": 2, "limit": 1, "projection": { "a": 1 } }');
                                                                                                                  QUERY PLAN                                                                                                                  
@@ -258,13 +219,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson
    Output: blackboxdb_api_internal.bson_dollar_project_find(agg_stage_3.document, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ "a" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  Limit
          Output: collection.document
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_602 collection
+         ->  Seq Scan on blackboxdb_data.documents_602 collection
                Output: collection.document
-               Recheck Cond: (collection.shard_key_value = '602'::bigint)
                Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '602'::bigint)
-(10 rows)
+(7 rows)
 
 -- do the same checks with aggregates
 -- these are streamable
@@ -276,9 +234,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson
    cursorScanType: streamingPrimaryKey
    ->  Index Scan using _id_ on blackboxdb_data.documents_602 collection
          Output: shard_key_value, object_id, document
-         Index Cond: (collection.shard_key_value = '602'::bigint)
          Filter: blackboxdb_api_internal.cursor_state(collection.document, '{ }'::bson)
-(7 rows)
+(6 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_pipeline('sb_db', '{ "aggregate": "sb_get_aggregation_cursor_smalldoc_test", "pipeline": [{ "$match": { "a": 1 }}] }');
                                                                            QUERY PLAN                                                                           
@@ -288,9 +245,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson
    cursorScanType: streamingPrimaryKey
    ->  Index Scan using _id_ on blackboxdb_data.documents_602 collection
          Output: shard_key_value, object_id, document
-         Index Cond: (collection.shard_key_value = '602'::bigint)
          Filter: ((collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson) AND blackboxdb_api_internal.cursor_state(collection.document, '{ }'::bson))
-(7 rows)
+(6 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_pipeline('sb_db', '{ "aggregate": "sb_get_aggregation_cursor_smalldoc_test", "pipeline": [{ "$match": { "a": 1 }}, { "$skip": 0 }] }');
                                                                            QUERY PLAN                                                                           
@@ -300,9 +256,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson
    cursorScanType: streamingPrimaryKey
    ->  Index Scan using _id_ on blackboxdb_data.documents_602 collection
          Output: shard_key_value, object_id, document
-         Index Cond: (collection.shard_key_value = '602'::bigint)
          Filter: ((collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson) AND blackboxdb_api_internal.cursor_state(collection.document, '{ }'::bson))
-(7 rows)
+(6 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_pipeline('sb_db', '{ "aggregate": "sb_get_aggregation_cursor_smalldoc_test", "pipeline": [ { "$skip": 0 }, { "$match": { "a": 1 }}] }');
                                                                            QUERY PLAN                                                                           
@@ -312,9 +267,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson
    cursorScanType: streamingPrimaryKey
    ->  Index Scan using _id_ on blackboxdb_data.documents_602 collection
          Output: shard_key_value, object_id, document
-         Index Cond: (collection.shard_key_value = '602'::bigint)
          Filter: ((collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson) AND blackboxdb_api_internal.cursor_state(collection.document, '{ }'::bson))
-(7 rows)
+(6 rows)
 
 -- these are persistent
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_pipeline('sb_db', '{ "aggregate": "sb_get_aggregation_cursor_smalldoc_test", "pipeline": [{ "$match": { "a": 1 }},  { "$limit": 2 }] }');
@@ -322,13 +276,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson
 -----------------------------------------------------------------------------------
  Limit
    Output: document
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_602 collection
+   ->  Seq Scan on blackboxdb_data.documents_602 collection
          Output: document
-         Recheck Cond: (collection.shard_key_value = '602'::bigint)
          Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '602'::bigint)
-(8 rows)
+(5 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_pipeline('sb_db', '{ "aggregate": "sb_get_aggregation_cursor_smalldoc_test", "pipeline": [{ "$match": { "a": 1 }}, { "$skip": 1 }, { "$limit": 4 }] }');
                                        QUERY PLAN                                        
@@ -337,13 +288,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson
    Output: collection.document
    ->  Limit
          Output: collection.document
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_602 collection
+         ->  Seq Scan on blackboxdb_data.documents_602 collection
                Output: collection.document
-               Recheck Cond: (collection.shard_key_value = '602'::bigint)
                Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '602'::bigint)
-(10 rows)
+(7 rows)
 
 -- with limit 1 is singleBatch (not streaming)
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_pipeline('sb_db', '{ "aggregate": "sb_get_aggregation_cursor_smalldoc_test", "pipeline": [ { "$limit": 1 }, { "$match": { "a": 1 }}] }');
@@ -363,13 +311,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson
 -----------------------------------------------------------------------------------
  Limit
    Output: document
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_602 collection
+   ->  Seq Scan on blackboxdb_data.documents_602 collection
          Output: document
-         Recheck Cond: (collection.shard_key_value = '602'::bigint)
          Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '602'::bigint)
-(8 rows)
+(5 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_pipeline('sb_db', '{ "aggregate": "sb_get_aggregation_cursor_smalldoc_test", "pipeline": [ { "$match": { "a": 1 }}, { "$limit": 1 }, { "$limit": 2 } ] }');
                                        QUERY PLAN                                        
@@ -378,13 +323,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson
    Output: collection.document
    ->  Limit
          Output: collection.document
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_602 collection
+         ->  Seq Scan on blackboxdb_data.documents_602 collection
                Output: collection.document
-               Recheck Cond: (collection.shard_key_value = '602'::bigint)
                Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '602'::bigint)
-(10 rows)
+(7 rows)
 
 -- streamable with batchSize 0
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_pipeline('sb_db', '{ "aggregate": "sb_get_aggregation_cursor_smalldoc_test", "pipeline": [ { "$match": { "a": 1 }}, { "$limit": 1 } ], "cursor": { "batchSize": 0 } }');
@@ -397,9 +339,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson
          cursorScanType: streamingPrimaryKey
          ->  Index Scan using _id_ on blackboxdb_data.documents_602 collection
                Output: shard_key_value, object_id, document
-               Index Cond: (collection.shard_key_value = '602'::bigint)
                Filter: ((collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson) AND blackboxdb_api_internal.cursor_state(collection.document, '{ }'::bson))
-(9 rows)
+(8 rows)
 
 -- should be singlebatch
 set client_min_messages to DEBUG1;
@@ -409,13 +350,10 @@ DEBUG:  Aggregation cursorKind is 2
 -----------------------------------------------------------------------------------
  Limit
    Output: document
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_602 collection
+   ->  Seq Scan on blackboxdb_data.documents_602 collection
          Output: document
-         Recheck Cond: (collection.shard_key_value = '602'::bigint)
          Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '602'::bigint)
-(8 rows)
+(5 rows)
 
 -- TODO: Should make this streamable
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_pipeline('sb_db', '{ "aggregate": "sb_get_aggregation_cursor_smalldoc_test", "pipeline": [ { "$match": { "a": 1 }}, { "$limit": 1 }, { "$limit": 2 } ] }');
@@ -426,13 +364,10 @@ DEBUG:  Aggregation cursorKind is 5
    Output: collection.document
    ->  Limit
          Output: collection.document
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_602 collection
+         ->  Seq Scan on blackboxdb_data.documents_602 collection
                Output: collection.document
-               Recheck Cond: (collection.shard_key_value = '602'::bigint)
                Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '602'::bigint)
-(10 rows)
+(7 rows)
 
 -- not streamable even with limit 1
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM blackboxdb_api_catalog.bson_aggregation_pipeline('sb_db', '{ "aggregate": "sb_get_aggregation_cursor_smalldoc_test", "pipeline": [ { "$match": { "a": 1 }}, { "$limit": 1 }, { "$unwind": "$a" } ] }');
@@ -443,11 +378,8 @@ DEBUG:  Aggregation cursorKind is 5
    Output: bson_dollar_unwind(collection.document, '$a'::text)
    ->  Limit
          Output: collection.document
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_602 collection
+         ->  Seq Scan on blackboxdb_data.documents_602 collection
                Output: collection.document
-               Recheck Cond: (collection.shard_key_value = '602'::bigint)
                Filter: (collection.document @= '{ "a" : { "$numberInt" : "1" } }'::bson)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '602'::bigint)
-(10 rows)
+(7 rows)
 

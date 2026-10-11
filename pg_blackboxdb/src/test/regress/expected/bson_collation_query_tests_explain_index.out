@@ -883,64 +883,36 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
                                                                                                   run_explain_and_trim                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_add_fields(document, '{ "newField" : { "$ne" : [ "$a", "CAT" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'fr-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$addFields": { "newField": { "$lte": ["$a", "CAT"] } } } ], "cursor": {}, "collation": { "locale": "fr", "strength" : 1} }')
 $cmd$);
                                                                                                    run_explain_and_trim                                                                                                   
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_add_fields(document, '{ "newField" : { "$lte" : [ "$a", "CAT" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'fr-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$addFields": { "newField": { "$gte": ["$a", "CAT"] } } } ], "cursor": {}, "collation": { "locale": "fr", "strength" : 3} }')
 $cmd$);
                                                                                                    run_explain_and_trim                                                                                                   
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_add_fields(document, '{ "newField" : { "$gte" : [ "$a", "CAT" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'fr-u-ks-level3'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$addFields": { "newField": { "$gte": ["$a", "CAT"] } } } ], "cursor": {}, "collation": { "locale": "fr", "strength" : 1} }')
 $cmd$);
                                                                                                    run_explain_and_trim                                                                                                   
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_add_fields(document, '{ "newField" : { "$gte" : [ "$a", "CAT" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'fr-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 -- project
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
@@ -980,64 +952,36 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
                                                                                                                 run_explain_and_trim                                                                                                                
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$ne" : [ "$a", "CAT" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'fr-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": { "$lte": ["$a", "CAT"] } } } ], "cursor": {}, "collation": { "locale": "fr", "strength" : 1} }')
 $cmd$);
                                                                                                                 run_explain_and_trim                                                                                                                 
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$lte" : [ "$a", "CAT" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'fr-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": { "$gte": ["$a", "CAT"] } } } ], "cursor": {}, "collation": { "locale": "fr", "strength" : 3} }')
 $cmd$);
                                                                                                                 run_explain_and_trim                                                                                                                 
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$gte" : [ "$a", "CAT" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'fr-u-ks-level3'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": { "$gte": ["$a", "CAT"] } } } ], "cursor": {}, "collation": { "locale": "fr", "strength" : 1} }')
 $cmd$);
                                                                                                                 run_explain_and_trim                                                                                                                 
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$gte" : [ "$a", "CAT" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'fr-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 -- $replaceRoot
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
@@ -1045,64 +989,36 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
                                                                                                                  run_explain_and_trim                                                                                                                  
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_replace_root(document, '{ "newRoot" : { "a" : "$a", "newField" : { "$eq" : [ "$a", "CAT" ] } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$replaceRoot": { "newRoot": { "a": "$a", "newField": { "$ne": ["$a", "CAT"] } } } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 3} }')
 $cmd$);
                                                                                                                  run_explain_and_trim                                                                                                                  
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_replace_root(document, '{ "newRoot" : { "a" : "$a", "newField" : { "$ne" : [ "$a", "CAT" ] } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$replaceRoot": { "newRoot": { "a": "$a", "newField": { "$lte": ["$a", "DoG"] } } } } ], "cursor": {}, "collation": { "locale": "fr", "strength" : 1} }')
 $cmd$);
                                                                                                                   run_explain_and_trim                                                                                                                  
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_replace_root(document, '{ "newRoot" : { "a" : "$a", "newField" : { "$lte" : [ "$a", "DoG" ] } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'fr-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$replaceRoot": { "newRoot": { "a": "$a", "newField": { "$gte": ["$a", "doG"] } } } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 3} }')
 $cmd$);
                                                                                                                   run_explain_and_trim                                                                                                                  
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_replace_root(document, '{ "newRoot" : { "a" : "$a", "newField" : { "$gte" : [ "$a", "doG" ] } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 -- $documents
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
@@ -1144,32 +1060,18 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
                                                                                                                                   run_explain_and_trim                                                                                                                                   
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8802 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "sortedArray" : { "$sortArray" : { "input" : [ "cat", "dog", "DOG" ], "sortBy" : { "$numberInt" : "1" } } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_sortArray
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8802 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8802'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8802'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_sortArray", "pipeline": [ { "$project": { "sortedArray": { "$sortArray": { "input": ["cat", "dog", "DOG"], "sortBy": 1 } } } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 3} }')
 $cmd$);
                                                                                                                                   run_explain_and_trim                                                                                                                                   
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8802 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "sortedArray" : { "$sortArray" : { "input" : [ "cat", "dog", "DOG" ], "sortBy" : { "$numberInt" : "1" } } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)
-   namespaceName: coll_q_db.coll_sortArray
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8802 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8802'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8802'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{
@@ -1186,17 +1088,10 @@ $cmd$);
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    Output: (blackboxdb_api_internal.bson_dollar_project_find(document, '{ "sortedArray" : { "$sortArray" : { "input" : "$b", "sortBy" : { "$numberInt" : "1" } } } }'::bson, '{ "a" : { "$lte" : "two" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text))
-   ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+   ->  Seq Scan on blackboxdb_data.documents_8802 collection
          Output: blackboxdb_api_internal.bson_dollar_project_find(document, '{ "sortedArray" : { "$sortArray" : { "input" : "$b", "sortBy" : { "$numberInt" : "1" } } } }'::bson, '{ "a" : { "$lte" : "two" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)
-         namespaceName: coll_q_db.coll_sortArray
-         indexName: _id_
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_8802 collection
-               Output: document
-               Recheck Cond: (collection.shard_key_value = '8802'::bigint)
-               Filter: (collection.document @<= '{ "a" : "two", "collation" : "en-u-ks-level3" }'::bson)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '8802'::bigint)
-(12 rows)
+         Filter: (collection.document @<= '{ "a" : "two", "collation" : "en-u-ks-level3" }'::bson)
+(5 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_find('coll_q_db', '{
@@ -1213,17 +1108,10 @@ $cmd$);
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit
    Output: (blackboxdb_api_internal.bson_dollar_project_find(document, '{ "sortedArray" : { "$sortArray" : { "input" : "$b", "sortBy" : { "$numberInt" : "1" } } } }'::bson, '{ "a" : { "$lte" : "two" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3-kn-true'::text))
-   ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+   ->  Seq Scan on blackboxdb_data.documents_8802 collection
          Output: blackboxdb_api_internal.bson_dollar_project_find(document, '{ "sortedArray" : { "$sortArray" : { "input" : "$b", "sortBy" : { "$numberInt" : "1" } } } }'::bson, '{ "a" : { "$lte" : "two" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3-kn-true'::text)
-         namespaceName: coll_q_db.coll_sortArray
-         indexName: _id_
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_8802 collection
-               Output: document
-               Recheck Cond: (collection.shard_key_value = '8802'::bigint)
-               Filter: (collection.document @<= '{ "a" : "two", "collation" : "en-u-ks-level3-kn-true" }'::bson)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '8802'::bigint)
-(12 rows)
+         Filter: (collection.document @<= '{ "a" : "two", "collation" : "en-u-ks-level3-kn-true" }'::bson)
+(5 rows)
 
 SELECT blackboxdb_api.drop_collection('coll_q_db', 'coll_sortArray');
  drop_collection 
@@ -1374,48 +1262,27 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
                                                                                                                                 run_explain_and_trim                                                                                                                                 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8803 collection
    Output: blackboxdb_api_internal.bson_dollar_redact(document, '{ "$cond" : { "if" : { "$eq" : [ "$level", "PUBLIC" ] }, "then" : "$$KEEP", "else" : "$$PRUNE" } }'::bson, ''::text, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_redact
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8803 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8803'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8803'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_redact", "pipeline": [ { "$redact": { "$cond": { "if": { "$eq": ["$level", "puBliC"] }, "then": "$$DESCEND", "else": "$$PRUNE" } } }  ], "cursor": {}, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
                                                                                                                                   run_explain_and_trim                                                                                                                                  
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8803 collection
    Output: blackboxdb_api_internal.bson_dollar_redact(document, '{ "$cond" : { "if" : { "$eq" : [ "$level", "puBliC" ] }, "then" : "$$DESCEND", "else" : "$$PRUNE" } }'::bson, ''::text, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_redact
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8803 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8803'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8803'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_redact", "pipeline": [ { "$redact": { "$switch": { "branches": [ { "case": { "$eq": ["$level", "PUBLIC"] }, "then": "$$PRUNE" }, { "case": { "$eq": ["$classification", "RESTRICTED"] }, "then": { "$cond": { "if": { "$eq": ["$content", null] }, "then": "$$KEEP", "else": "$$PRUNE" } } }], "default": "$$KEEP" } }  }], "cursor": {}, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
                                                                                                                                                                                                                                    run_explain_and_trim                                                                                                                                                                                                                                   
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8803 collection
    Output: blackboxdb_api_internal.bson_dollar_redact(document, '{ "$switch" : { "branches" : [ { "case" : { "$eq" : [ "$level", "PUBLIC" ] }, "then" : "$$PRUNE" }, { "case" : { "$eq" : [ "$classification", "RESTRICTED" ] }, "then" : { "$cond" : { "if" : { "$eq" : [ "$content", null ] }, "then" : "$$KEEP", "else" : "$$PRUNE" } } } ], "default" : "$$KEEP" } }'::bson, ''::text, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_redact
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8803 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8803'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8803'::bigint)
-(9 rows)
+(2 rows)
 
 -- support for $setEquals
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
@@ -1423,96 +1290,54 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
                                                                                                                        run_explain_and_trim                                                                                                                        
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setEquals" : [ [ "$a" ], [ "CAT" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setEquals": [["$a"], ["DOG"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 2} }')
 $cmd$);
                                                                                                                        run_explain_and_trim                                                                                                                        
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setEquals" : [ [ "$a" ], [ "DOG" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level2'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setEquals": [["$a"], ["DOG", "dOg"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 2} }')
 $cmd$);
                                                                                                                            run_explain_and_trim                                                                                                                           
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setEquals" : [ [ "$a" ], [ "DOG", "dOg" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level2'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setEquals": [["$a", "dog"], ["CAT", "DOG"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
                                                                                                                               run_explain_and_trim                                                                                                                               
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setEquals" : [ [ "$a", "dog" ], [ "CAT", "DOG" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setEquals": [["$a", "cAT", "dog"], ["CAT", "DOG"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
                                                                                                                                   run_explain_and_trim                                                                                                                                  
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setEquals" : [ [ "$a", "cAT", "dog" ], [ "CAT", "DOG" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setEquals": [["$a", "cAT", "dog"], ["CAT", "DOG"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 3} }')
 $cmd$);
                                                                                                                                   run_explain_and_trim                                                                                                                                  
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setEquals" : [ [ "$a", "cAT", "dog" ], [ "CAT", "DOG" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 -- support for $setIntersection
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
@@ -1520,96 +1345,54 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
                                                                                                                           run_explain_and_trim                                                                                                                           
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setIntersection" : [ [ "$a" ], [ "CAT" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setIntersection": [["$a"], ["DOG"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 2} }')
 $cmd$);
                                                                                                                           run_explain_and_trim                                                                                                                           
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setIntersection" : [ [ "$a" ], [ "DOG" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level2'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setIntersection": [["$a"], ["DOG", "dOg"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 2} }')
 $cmd$);
                                                                                                                               run_explain_and_trim                                                                                                                              
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setIntersection" : [ [ "$a" ], [ "DOG", "dOg" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level2'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setIntersection": [["$a", "dog"], ["CAT", "DOG"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
                                                                                                                                  run_explain_and_trim                                                                                                                                  
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setIntersection" : [ [ "$a", "dog" ], [ "CAT", "DOG" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setIntersection": [["$a", "cAT", "dog"], ["CAT", "DOG"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
                                                                                                                                      run_explain_and_trim                                                                                                                                     
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setIntersection" : [ [ "$a", "cAT", "dog" ], [ "CAT", "DOG" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setIntersection": [["$a", "cAT", "dog"], ["CAT", "DOG"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 3} }')
 $cmd$);
                                                                                                                                      run_explain_and_trim                                                                                                                                     
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setIntersection" : [ [ "$a", "cAT", "dog" ], [ "CAT", "DOG" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 -- support for $setUnion
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
@@ -1617,96 +1400,54 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
                                                                                                                        run_explain_and_trim                                                                                                                       
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setUnion" : [ [ "$a" ], [ "CAT" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setUnion": [["$a"], ["DOG"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 2} }')
 $cmd$);
                                                                                                                        run_explain_and_trim                                                                                                                       
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setUnion" : [ [ "$a" ], [ "DOG" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level2'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setUnion": [["$a"], ["DOG", "dOg"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 2} }')
 $cmd$);
                                                                                                                           run_explain_and_trim                                                                                                                           
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setUnion" : [ [ "$a" ], [ "DOG", "dOg" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level2'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setUnion": [["$a", "dog"], ["CAT", "DOG"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
                                                                                                                               run_explain_and_trim                                                                                                                              
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setUnion" : [ [ "$a", "dog" ], [ "CAT", "DOG" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setUnion": [["$a", "cAT", "dog"], ["CAT", "DOG"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
                                                                                                                                  run_explain_and_trim                                                                                                                                  
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setUnion" : [ [ "$a", "cAT", "dog" ], [ "CAT", "DOG" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setUnion": [["$a", "cAT", "dog"], ["CAT", "DOG"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 3} }')
 $cmd$);
                                                                                                                                  run_explain_and_trim                                                                                                                                  
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setUnion" : [ [ "$a", "cAT", "dog" ], [ "CAT", "DOG" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 -- support for $setDifference
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
@@ -1714,96 +1455,54 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
                                                                                                                          run_explain_and_trim                                                                                                                          
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setDifference" : [ [ "$a" ], [ "CAT" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setDifference": [["$a"], ["DOG"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 2} }')
 $cmd$);
                                                                                                                          run_explain_and_trim                                                                                                                          
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setDifference" : [ [ "$a" ], [ "DOG" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level2'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setDifference": [["$a"], ["DOG", "dOg"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 2} }')
 $cmd$);
                                                                                                                              run_explain_and_trim                                                                                                                             
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setDifference" : [ [ "$a" ], [ "DOG", "dOg" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level2'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setDifference": [["$a", "dog"], ["CAT", "DOG"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
                                                                                                                                 run_explain_and_trim                                                                                                                                 
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setDifference" : [ [ "$a", "dog" ], [ "CAT", "DOG" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setDifference": [["$a", "cAT", "dog"], ["CAT", "DOG"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
                                                                                                                                     run_explain_and_trim                                                                                                                                    
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setDifference" : [ [ "$a", "cAT", "dog" ], [ "CAT", "DOG" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setDifference": [["$a", "cAT", "dog"], ["CAT", "DOG"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 3} }')
 $cmd$);
                                                                                                                                     run_explain_and_trim                                                                                                                                    
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setDifference" : [ [ "$a", "cAT", "dog" ], [ "CAT", "DOG" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 -- support for $setIsSubset
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
@@ -1811,96 +1510,54 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
                                                                                                                         run_explain_and_trim                                                                                                                         
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setIsSubset" : [ [ "$a" ], [ "CAT" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setIsSubset": [["$a"], ["DOG"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 2} }')
 $cmd$);
                                                                                                                         run_explain_and_trim                                                                                                                         
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setIsSubset" : [ [ "$a" ], [ "DOG" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level2'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setIsSubset": [["$a"], ["DOG", "dOg"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 2} }')
 $cmd$);
                                                                                                                             run_explain_and_trim                                                                                                                            
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setIsSubset" : [ [ "$a" ], [ "DOG", "dOg" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level2'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setIsSubset": [["$a", "dog"], ["CAT", "DOG"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
                                                                                                                                run_explain_and_trim                                                                                                                                
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setIsSubset" : [ [ "$a", "dog" ], [ "CAT", "DOG" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setIsSubset": [["$a", "cAT", "dog"], ["CAT", "DOG"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
                                                                                                                                    run_explain_and_trim                                                                                                                                   
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setIsSubset" : [ [ "$a", "cAT", "dog" ], [ "CAT", "DOG" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": {"$setIsSubset": [["$a", "cAT", "dog"], ["CAT", "DOG"]]} } }], "cursor": {}, "collation": { "locale": "en", "strength" : 3} }')
 $cmd$);
                                                                                                                                    run_explain_and_trim                                                                                                                                   
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$setIsSubset" : [ [ "$a", "cAT", "dog" ], [ "CAT", "DOG" ] ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 -- support in $let
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
@@ -1908,32 +1565,18 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                          
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$let" : { "vars" : { "var1" : "$a" }, "in" : { "$cond" : { "if" : { "$eq" : [ "$$var1", "CAT" ] }, "then" : { "$numberInt" : "1" }, "else" : { "$numberInt" : "0" } } } } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": { "$let": { "vars": { "var1": "$a" }, "in": { "$cond": { "if": { "$eq": ["$$var1", "CAT"] }, "then": 1, "else": 0 } } } } } }], "cursor": {}, "collation": { "locale": "en", "strength" : 3} }')
 $cmd$);
                                                                                                                                                                                          run_explain_and_trim                                                                                                                                                                                          
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$let" : { "vars" : { "var1" : "$a" }, "in" : { "$cond" : { "if" : { "$eq" : [ "$$var1", "CAT" ] }, "then" : { "$numberInt" : "1" }, "else" : { "$numberInt" : "0" } } } } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 -- support for $zip
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
@@ -1941,32 +1584,18 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
                                                                                                                                                          run_explain_and_trim                                                                                                                                                         
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$zip" : { "inputs" : [ { "$cond" : [ { "$eq" : [ "CAT", "$a" ] }, [ "$a" ], [ "null" ] ] }, [ "$a" ] ] } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_agg_proj", "pipeline": [ { "$project": { "a": 1, "newField": { "$zip": { "inputs": [ {"$cond": [{"$eq": ["CAT", "$a"]}, ["$a"], ["null"]]}, ["$a"]] } } } }], "cursor": {}, "collation": { "locale": "en", "strength" : 3} }')
 $cmd$);
                                                                                                                                                          run_explain_and_trim                                                                                                                                                         
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8801 collection
    Output: blackboxdb_api_internal.bson_dollar_project(document, '{ "a" : { "$numberInt" : "1" }, "newField" : { "$zip" : { "inputs" : [ { "$cond" : [ { "$eq" : [ "CAT", "$a" ] }, [ "$a" ], [ "null" ] ] }, [ "$a" ] ] } } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text)
-   namespaceName: coll_q_db.coll_agg_proj
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8801 collection
-         Output: document
-         Recheck Cond: (collection.shard_key_value = '8801'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8801'::bigint)
-(9 rows)
+(2 rows)
 
 -- ======================================================================
 -- SECTION 6: Positional projection and bson_dollar_* operators
@@ -2795,64 +2424,36 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', 
     '{ "aggregate": "coll_lookup", "pipeline": [ { "$lookup": { "from": "coll_lookup", "as": "matched_docs", "localField": "_id", "foreignField": "_id", "pipeline": [ { "$match": { "$or" : [ { "a.b": "cat" }, { "a.b": "dog" } ] } } ] } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 1}  }')
 $cmd$);
-                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                   
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Nested Loop
    Output: blackboxdb_api_internal.bson_dollar_merge_documents(collection.document, (COALESCE(bson_array_agg(collection_0_1.document, 'matched_docs'::text), '{ "matched_docs" : [  ] }'::bson)), true)
-   ->  Custom Scan (BlackboxDBApiExplainQueryScan)
-         Output: collection.document
-         namespaceName: coll_q_db.coll_lookup
-         indexName: _id_
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_8808 collection
-               Output: collection.document
-               Recheck Cond: (collection.shard_key_value = '8808'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '8808'::bigint)
+   ->  Seq Scan on blackboxdb_data.documents_8808 collection
+         Output: collection.shard_key_value, collection.object_id, collection.document
    ->  Aggregate
          Output: COALESCE(bson_array_agg(collection_0_1.document, 'matched_docs'::text), '{ "matched_docs" : [  ] }'::bson)
-         ->  Custom Scan (BlackboxDBApiExplainQueryScan)
-               Output: collection_0_1.document
-               namespaceName: coll_q_db.coll_lookup
-               indexName: _id_
-               ->  Bitmap Heap Scan on blackboxdb_data.documents_8808 collection_0_1
-                     Output: collection_0_1.document
-                     Recheck Cond: (collection_0_1.shard_key_value = '8808'::bigint)
-                     Filter: ((collection_0_1.document @*= '{ "a.b" : [ "cat", "dog" ], "collation" : "en-u-ks-level1" }'::bson) AND blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, blackboxdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "_id" : "_id", "collation" : "en-u-ks-level1" }'::bson), '_id'::text))
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection_0_1.shard_key_value = '8808'::bigint)
-(23 rows)
+         ->  Seq Scan on blackboxdb_data.documents_8808 collection_0_1
+               Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
+               Filter: ((collection_0_1.document @*= '{ "a.b" : [ "cat", "dog" ], "collation" : "en-u-ks-level1" }'::bson) AND blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, blackboxdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "_id" : "_id", "collation" : "en-u-ks-level1" }'::bson), '_id'::text))
+(9 rows)
 
 -- lookup with non-id join (collation aware)
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', 
     '{ "aggregate": "coll_lookup", "pipeline": [ { "$lookup": { "from": "coll_lookup", "as": "matched_docs", "localField": "a.b", "foreignField": "a.b", "pipeline": [ { "$match": { "$or" : [ { "a.b": "cat" }, { "a.b": "dog" } ] } } ] } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 1}  }')
 $cmd$);
-                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                   
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Nested Loop
    Output: blackboxdb_api_internal.bson_dollar_merge_documents(collection.document, (COALESCE(bson_array_agg(collection_0_1.document, 'matched_docs'::text), '{ "matched_docs" : [  ] }'::bson)), true)
-   ->  Custom Scan (BlackboxDBApiExplainQueryScan)
-         Output: collection.document
-         namespaceName: coll_q_db.coll_lookup
-         indexName: _id_
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_8808 collection
-               Output: collection.document
-               Recheck Cond: (collection.shard_key_value = '8808'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '8808'::bigint)
+   ->  Seq Scan on blackboxdb_data.documents_8808 collection
+         Output: collection.shard_key_value, collection.object_id, collection.document
    ->  Aggregate
          Output: COALESCE(bson_array_agg(collection_0_1.document, 'matched_docs'::text), '{ "matched_docs" : [  ] }'::bson)
-         ->  Custom Scan (BlackboxDBApiExplainQueryScan)
-               Output: collection_0_1.document
-               namespaceName: coll_q_db.coll_lookup
-               indexName: _id_
-               ->  Bitmap Heap Scan on blackboxdb_data.documents_8808 collection_0_1
-                     Output: collection_0_1.document
-                     Recheck Cond: (collection_0_1.shard_key_value = '8808'::bigint)
-                     Filter: ((collection_0_1.document @*= '{ "a.b" : [ "cat", "dog" ], "collation" : "en-u-ks-level1" }'::bson) AND blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, blackboxdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "a.b" : "a.b", "collation" : "en-u-ks-level1" }'::bson), 'a.b'::text))
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection_0_1.shard_key_value = '8808'::bigint)
-(23 rows)
+         ->  Seq Scan on blackboxdb_data.documents_8808 collection_0_1
+               Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
+               Filter: ((collection_0_1.document @*= '{ "a.b" : [ "cat", "dog" ], "collation" : "en-u-ks-level1" }'::bson) AND blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, blackboxdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "a.b" : "a.b", "collation" : "en-u-ks-level1" }'::bson), 'a.b'::text))
+(9 rows)
 
 -- lookup with non-id join (collation aware - explain)
 BEGIN;
@@ -2861,32 +2462,18 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('coll_q_db', 
     '{ "aggregate": "coll_lookup", "pipeline": [ { "$lookup": { "from": "coll_lookup", "as": "matched_docs", "localField": "a.b", "foreignField": "a.b", "pipeline": [ { "$match": { "$or" : [ { "a.b": "cat" }, { "a.b": "dog" } ] } } ] } } ], "cursor": {}, "collation": { "locale": "en", "strength" : 1}  }')
 $cmd$);
-                                                                                                                                                                                  run_explain_and_trim                                                                                                                                                                                   
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Nested Loop
    Output: blackboxdb_api_internal.bson_dollar_merge_documents(collection.document, (COALESCE(bson_array_agg(collection_0_1.document, 'matched_docs'::text), '{ "matched_docs" : [  ] }'::bson)), true)
-   ->  Custom Scan (BlackboxDBApiExplainQueryScan)
-         Output: collection.document
-         namespaceName: coll_q_db.coll_lookup
-         indexName: _id_
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_8808 collection
-               Output: collection.document
-               Recheck Cond: (collection.shard_key_value = '8808'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '8808'::bigint)
+   ->  Seq Scan on blackboxdb_data.documents_8808 collection
+         Output: collection.shard_key_value, collection.object_id, collection.document
    ->  Aggregate
          Output: COALESCE(bson_array_agg(collection_0_1.document, 'matched_docs'::text), '{ "matched_docs" : [  ] }'::bson)
-         ->  Custom Scan (BlackboxDBApiExplainQueryScan)
-               Output: collection_0_1.document
-               namespaceName: coll_q_db.coll_lookup
-               indexName: _id_
-               ->  Bitmap Heap Scan on blackboxdb_data.documents_8808 collection_0_1
-                     Output: collection_0_1.document
-                     Recheck Cond: (collection_0_1.shard_key_value = '8808'::bigint)
-                     Filter: ((collection_0_1.document @*= '{ "a.b" : [ "cat", "dog" ], "collation" : "en-u-ks-level1" }'::bson) AND blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, blackboxdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "a.b" : "a.b", "collation" : "en-u-ks-level1" }'::bson), 'a.b'::text))
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection_0_1.shard_key_value = '8808'::bigint)
-(23 rows)
+         ->  Seq Scan on blackboxdb_data.documents_8808 collection_0_1
+               Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
+               Filter: ((collection_0_1.document @*= '{ "a.b" : [ "cat", "dog" ], "collation" : "en-u-ks-level1" }'::bson) AND blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, blackboxdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "a.b" : "a.b", "collation" : "en-u-ks-level1" }'::bson), 'a.b'::text))
+(9 rows)
 
 ROLLBACK;
 -- $facet and $unionwith
@@ -2898,15 +2485,8 @@ $cmd$);
  Aggregate
    Output: bson_object_agg((COALESCE(bson_array_agg((bson_repath_and_build('catCount'::text, blackboxdb_api_internal.bsoncount(1))), 'a'::text), '{ "a" : [  ] }'::bson)))
    CTE facet_base_0_0
-     ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+     ->  Seq Scan on blackboxdb_data.documents_8808 collection
            Output: collection.document
-           namespaceName: coll_q_db.coll_lookup
-           indexName: _id_
-           ->  Bitmap Heap Scan on blackboxdb_data.documents_8808 collection
-                 Output: collection.document
-                 Recheck Cond: (collection.shard_key_value = '8808'::bigint)
-                 ->  Bitmap Index Scan on _id_
-                       Index Cond: (collection.shard_key_value = '8808'::bigint)
    ->  Append
          ->  Aggregate
                Output: COALESCE(bson_array_agg((bson_repath_and_build('catCount'::text, blackboxdb_api_internal.bsoncount(1))), 'a'::text), '{ "a" : [  ] }'::bson)
@@ -2920,34 +2500,20 @@ $cmd$);
                      Output: bson_repath_and_build('dogCount'::text, blackboxdb_api_internal.bsoncount(1))
                      ->  CTE Scan on facet_base_0_0 facetsub_stage_2
                            Filter: (facetsub_stage_2.document #= '{ "a.b" : "dog", "collation" : "en-u-ks-level1" }'::bsonquery)
-(25 rows)
+(18 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_lookup", "pipeline": [ { "$unionWith": { "coll": "coll_lookup", "pipeline" : [ { "$match": { "a.b": "cat" }}] } }], "cursor": {}, "collation": { "locale": "en", "strength" : 1} }')
 $cmd$);
-                                             run_explain_and_trim                                             
---------------------------------------------------------------------------------------------------------------
+                                          run_explain_and_trim                                          
+--------------------------------------------------------------------------------------------------------
  Append
-   ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+   ->  Seq Scan on blackboxdb_data.documents_8808 collection
          Output: collection.document
-         namespaceName: coll_q_db.coll_lookup
-         indexName: _id_
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_8808 collection
-               Output: collection.document
-               Recheck Cond: (collection.shard_key_value = '8808'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '8808'::bigint)
-   ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+   ->  Seq Scan on blackboxdb_data.documents_8808 collection_0_1
          Output: collection_0_1.document
-         namespaceName: coll_q_db.coll_lookup
-         indexName: _id_
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_8808 collection_0_1
-               Output: collection_0_1.document
-               Recheck Cond: (collection_0_1.shard_key_value = '8808'::bigint)
-               Filter: (collection_0_1.document @= '{ "a.b" : "cat", "collation" : "en-u-ks-level1" }'::bson)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection_0_1.shard_key_value = '8808'::bigint)
-(20 rows)
+         Filter: (collection_0_1.document @= '{ "a.b" : "cat", "collation" : "en-u-ks-level1" }'::bson)
+(6 rows)
 
 -- $graphLookup 
 SELECT blackboxdb_api.insert_one('coll_q_db','coll_graph_src', '{"_id": "alice", "pet" : "dog" }', NULL);
@@ -2996,15 +2562,8 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
                                                                                                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                                                                                                        
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8809 collection
    Output: blackboxdb_api_internal.bson_dollar_merge_documents(collection.document, COALESCE((SubPlan 2), '{ "destinations" : [  ] }'::bson), true)
-   namespaceName: coll_q_db.coll_graph_src
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8809 collection
-         Output: collection.document
-         Recheck Cond: (collection.shard_key_value = '8809'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8809'::bigint)
    SubPlan 2
      ->  Aggregate
            Output: COALESCE(bson_array_agg((blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), 'destinations'::text), '{ "destinations" : [  ] }'::bson)
@@ -3012,16 +2571,9 @@ $cmd$);
                  Output: (blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                  CTE graphLookupRecurseStage
                    ->  Recursive Union
-                         ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+                         ->  Seq Scan on blackboxdb_data.documents_8810 collection_0_2
                                Output: collection_0_2.document, '{ "depth" : { "$numberInt" : "0" } }'::bson, bson_expression_get(collection_0_2.document, '{ "_id" : "$_id" }'::bson, false), false, ARRAY[ROW(bson_expression_get(collection_0_2.document, '{ "_id" : "$_id" }'::bson, false))]
-                               namespaceName: coll_q_db.coll_graph_dst
-                               indexName: _id_
-                               ->  Bitmap Heap Scan on blackboxdb_data.documents_8810 collection_0_2
-                                     Output: collection_0_2.document
-                                     Recheck Cond: (collection_0_2.shard_key_value = '8810'::bigint)
-                                     Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, blackboxdb_api_internal.bson_expression_get(collection.document, '{ "_id" : { "$makeArray" : "$pet" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text), '_id'::text)
-                                     ->  Bitmap Index Scan on _id_
-                                           Index Cond: (collection_0_2.shard_key_value = '8810'::bigint)
+                               Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, blackboxdb_api_internal.bson_expression_get(collection.document, '{ "_id" : { "$makeArray" : "$pet" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text), '_id'::text)
                          ->  Nested Loop
                                Output: collection_0_2_1.document, bson_dollar_add_fields("lookupRecursive_stage_1".depth, '{ "depth" : { "$add" : [ "$depth", { "$numberInt" : "1" } ] } }'::bson), bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false), CASE WHEN (ROW(bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false)) = ANY ("lookupRecursive_stage_1".path)) THEN true ELSE false END, array_cat("lookupRecursive_stage_1".path, ARRAY[ROW(bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false))])
                                Join Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2_1.document, blackboxdb_api_internal.bson_expression_get("lookupRecursive_stage_1".document, '{ "_id" : { "$makeArray" : "$name" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text), '_id'::text)
@@ -3030,21 +2582,14 @@ $cmd$);
                                      Filter: (NOT "lookupRecursive_stage_1".is_cycle)
                                ->  Materialize
                                      Output: collection_0_2_1.document
-                                     ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+                                     ->  Seq Scan on blackboxdb_data.documents_8810 collection_0_2_1
                                            Output: collection_0_2_1.document
-                                           namespaceName: coll_q_db.coll_graph_dst
-                                           indexName: _id_
-                                           ->  Bitmap Heap Scan on blackboxdb_data.documents_8810 collection_0_2_1
-                                                 Output: collection_0_2_1.document
-                                                 Recheck Cond: (collection_0_2_1.shard_key_value = '8810'::bigint)
-                                                 ->  Bitmap Index Scan on _id_
-                                                       Index Cond: (collection_0_2_1.shard_key_value = '8810'::bigint)
                  ->  Sort
                        Output: (blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        Sort Key: "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        ->  CTE Scan on "graphLookupRecurseStage" "graphLookup_stage_2"
                              Output: blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
-(48 rows)
+(27 rows)
 
 ROLLBACK;
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
@@ -3053,15 +2598,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
                                                                                                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                                                                                                        
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8808 collection
    Output: blackboxdb_api_internal.bson_dollar_merge_documents(collection.document, COALESCE((SubPlan 2), '{ "destinations" : [  ] }'::bson), true)
-   namespaceName: coll_q_db.coll_lookup
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8808 collection
-         Output: collection.document
-         Recheck Cond: (collection.shard_key_value = '8808'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8808'::bigint)
    SubPlan 2
      ->  Aggregate
            Output: COALESCE(bson_array_agg((blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), 'destinations'::text), '{ "destinations" : [  ] }'::bson)
@@ -3069,16 +2607,9 @@ $cmd$);
                  Output: (blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                  CTE graphLookupRecurseStage
                    ->  Recursive Union
-                         ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+                         ->  Seq Scan on blackboxdb_data.documents_8808 collection_0_2
                                Output: collection_0_2.document, '{ "depth" : { "$numberInt" : "0" } }'::bson, bson_expression_get(collection_0_2.document, '{ "_id" : "$_id" }'::bson, false), false, ARRAY[ROW(bson_expression_get(collection_0_2.document, '{ "_id" : "$_id" }'::bson, false))]
-                               namespaceName: coll_q_db.coll_lookup
-                               indexName: _id_
-                               ->  Bitmap Heap Scan on blackboxdb_data.documents_8808 collection_0_2
-                                     Output: collection_0_2.document
-                                     Recheck Cond: (collection_0_2.shard_key_value = '8808'::bigint)
-                                     Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, blackboxdb_api_internal.bson_expression_get(collection.document, '{ "a.b" : { "$makeArray" : "$a.b" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), 'a.b'::text)
-                                     ->  Bitmap Index Scan on _id_
-                                           Index Cond: (collection_0_2.shard_key_value = '8808'::bigint)
+                               Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, blackboxdb_api_internal.bson_expression_get(collection.document, '{ "a.b" : { "$makeArray" : "$a.b" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), 'a.b'::text)
                          ->  Nested Loop
                                Output: collection_0_2_1.document, bson_dollar_add_fields("lookupRecursive_stage_1".depth, '{ "depth" : { "$add" : [ "$depth", { "$numberInt" : "1" } ] } }'::bson), bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false), CASE WHEN (ROW(bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false)) = ANY ("lookupRecursive_stage_1".path)) THEN true ELSE false END, array_cat("lookupRecursive_stage_1".path, ARRAY[ROW(bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false))])
                                Join Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2_1.document, blackboxdb_api_internal.bson_expression_get("lookupRecursive_stage_1".document, '{ "a.b" : { "$makeArray" : "$a.b" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), 'a.b'::text)
@@ -3087,21 +2618,14 @@ $cmd$);
                                      Filter: (NOT "lookupRecursive_stage_1".is_cycle)
                                ->  Materialize
                                      Output: collection_0_2_1.document
-                                     ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+                                     ->  Seq Scan on blackboxdb_data.documents_8808 collection_0_2_1
                                            Output: collection_0_2_1.document
-                                           namespaceName: coll_q_db.coll_lookup
-                                           indexName: _id_
-                                           ->  Bitmap Heap Scan on blackboxdb_data.documents_8808 collection_0_2_1
-                                                 Output: collection_0_2_1.document
-                                                 Recheck Cond: (collection_0_2_1.shard_key_value = '8808'::bigint)
-                                                 ->  Bitmap Index Scan on _id_
-                                                       Index Cond: (collection_0_2_1.shard_key_value = '8808'::bigint)
                  ->  Sort
                        Output: (blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        Sort Key: "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        ->  CTE Scan on "graphLookupRecurseStage" "graphLookup_stage_2"
                              Output: blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
-(48 rows)
+(27 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db',
@@ -3109,15 +2633,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
                                                                                                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                                                                                                        
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8809 collection
    Output: blackboxdb_api_internal.bson_dollar_merge_documents(collection.document, COALESCE((SubPlan 2), '{ "destinations" : [  ] }'::bson), true)
-   namespaceName: coll_q_db.coll_graph_src
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8809 collection
-         Output: collection.document
-         Recheck Cond: (collection.shard_key_value = '8809'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8809'::bigint)
    SubPlan 2
      ->  Aggregate
            Output: COALESCE(bson_array_agg((blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), 'destinations'::text), '{ "destinations" : [  ] }'::bson)
@@ -3125,16 +2642,9 @@ $cmd$);
                  Output: (blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                  CTE graphLookupRecurseStage
                    ->  Recursive Union
-                         ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+                         ->  Seq Scan on blackboxdb_data.documents_8810 collection_0_2
                                Output: collection_0_2.document, '{ "depth" : { "$numberInt" : "0" } }'::bson, bson_expression_get(collection_0_2.document, '{ "_id" : "$_id" }'::bson, false), false, ARRAY[ROW(bson_expression_get(collection_0_2.document, '{ "_id" : "$_id" }'::bson, false))]
-                               namespaceName: coll_q_db.coll_graph_dst
-                               indexName: _id_
-                               ->  Bitmap Heap Scan on blackboxdb_data.documents_8810 collection_0_2
-                                     Output: collection_0_2.document
-                                     Recheck Cond: (collection_0_2.shard_key_value = '8810'::bigint)
-                                     Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, blackboxdb_api_internal.bson_expression_get(collection.document, '{ "_id" : { "$makeArray" : "$pet" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '_id'::text)
-                                     ->  Bitmap Index Scan on _id_
-                                           Index Cond: (collection_0_2.shard_key_value = '8810'::bigint)
+                               Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, blackboxdb_api_internal.bson_expression_get(collection.document, '{ "_id" : { "$makeArray" : "$pet" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '_id'::text)
                          ->  Nested Loop
                                Output: collection_0_2_1.document, bson_dollar_add_fields("lookupRecursive_stage_1".depth, '{ "depth" : { "$add" : [ "$depth", { "$numberInt" : "1" } ] } }'::bson), bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false), CASE WHEN (ROW(bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false)) = ANY ("lookupRecursive_stage_1".path)) THEN true ELSE false END, array_cat("lookupRecursive_stage_1".path, ARRAY[ROW(bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false))])
                                Join Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2_1.document, blackboxdb_api_internal.bson_expression_get("lookupRecursive_stage_1".document, '{ "_id" : { "$makeArray" : "$name" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), '_id'::text)
@@ -3143,21 +2653,14 @@ $cmd$);
                                      Filter: (NOT "lookupRecursive_stage_1".is_cycle)
                                ->  Materialize
                                      Output: collection_0_2_1.document
-                                     ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+                                     ->  Seq Scan on blackboxdb_data.documents_8810 collection_0_2_1
                                            Output: collection_0_2_1.document
-                                           namespaceName: coll_q_db.coll_graph_dst
-                                           indexName: _id_
-                                           ->  Bitmap Heap Scan on blackboxdb_data.documents_8810 collection_0_2_1
-                                                 Output: collection_0_2_1.document
-                                                 Recheck Cond: (collection_0_2_1.shard_key_value = '8810'::bigint)
-                                                 ->  Bitmap Index Scan on _id_
-                                                       Index Cond: (collection_0_2_1.shard_key_value = '8810'::bigint)
                  ->  Sort
                        Output: (blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        Sort Key: "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        ->  CTE Scan on "graphLookupRecurseStage" "graphLookup_stage_2"
                              Output: blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
-(48 rows)
+(27 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db',
@@ -3165,15 +2668,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
                                                                                                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                                                                                                        
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8809 collection
    Output: blackboxdb_api_internal.bson_dollar_merge_documents(collection.document, COALESCE((SubPlan 2), '{ "destinations" : [  ] }'::bson), true)
-   namespaceName: coll_q_db.coll_graph_src
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8809 collection
-         Output: collection.document
-         Recheck Cond: (collection.shard_key_value = '8809'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8809'::bigint)
    SubPlan 2
      ->  Aggregate
            Output: COALESCE(bson_array_agg((blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), 'destinations'::text), '{ "destinations" : [  ] }'::bson)
@@ -3181,16 +2677,9 @@ $cmd$);
                  Output: (blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                  CTE graphLookupRecurseStage
                    ->  Recursive Union
-                         ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+                         ->  Seq Scan on blackboxdb_data.documents_8810 collection_0_2
                                Output: collection_0_2.document, '{ "depth" : { "$numberInt" : "0" } }'::bson, bson_expression_get(collection_0_2.document, '{ "_id" : "$_id" }'::bson, false), false, ARRAY[ROW(bson_expression_get(collection_0_2.document, '{ "_id" : "$_id" }'::bson, false))]
-                               namespaceName: coll_q_db.coll_graph_dst
-                               indexName: _id_
-                               ->  Bitmap Heap Scan on blackboxdb_data.documents_8810 collection_0_2
-                                     Output: collection_0_2.document
-                                     Recheck Cond: (collection_0_2.shard_key_value = '8810'::bigint)
-                                     Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, blackboxdb_api_internal.bson_expression_get(collection.document, '{ "_id" : { "$makeArray" : "$pet" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level2'::text), '_id'::text)
-                                     ->  Bitmap Index Scan on _id_
-                                           Index Cond: (collection_0_2.shard_key_value = '8810'::bigint)
+                               Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, blackboxdb_api_internal.bson_expression_get(collection.document, '{ "_id" : { "$makeArray" : "$pet" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level2'::text), '_id'::text)
                          ->  Nested Loop
                                Output: collection_0_2_1.document, bson_dollar_add_fields("lookupRecursive_stage_1".depth, '{ "depth" : { "$add" : [ "$depth", { "$numberInt" : "1" } ] } }'::bson), bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false), CASE WHEN (ROW(bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false)) = ANY ("lookupRecursive_stage_1".path)) THEN true ELSE false END, array_cat("lookupRecursive_stage_1".path, ARRAY[ROW(bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false))])
                                Join Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2_1.document, blackboxdb_api_internal.bson_expression_get("lookupRecursive_stage_1".document, '{ "_id" : { "$makeArray" : "$name" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level2'::text), '_id'::text)
@@ -3199,21 +2688,14 @@ $cmd$);
                                      Filter: (NOT "lookupRecursive_stage_1".is_cycle)
                                ->  Materialize
                                      Output: collection_0_2_1.document
-                                     ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+                                     ->  Seq Scan on blackboxdb_data.documents_8810 collection_0_2_1
                                            Output: collection_0_2_1.document
-                                           namespaceName: coll_q_db.coll_graph_dst
-                                           indexName: _id_
-                                           ->  Bitmap Heap Scan on blackboxdb_data.documents_8810 collection_0_2_1
-                                                 Output: collection_0_2_1.document
-                                                 Recheck Cond: (collection_0_2_1.shard_key_value = '8810'::bigint)
-                                                 ->  Bitmap Index Scan on _id_
-                                                       Index Cond: (collection_0_2_1.shard_key_value = '8810'::bigint)
                  ->  Sort
                        Output: (blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        Sort Key: "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        ->  CTE Scan on "graphLookupRecurseStage" "graphLookup_stage_2"
                              Output: blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
-(48 rows)
+(27 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db',
@@ -3221,15 +2703,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
                                                                                                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                                                                                                        
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8809 collection
    Output: blackboxdb_api_internal.bson_dollar_merge_documents(collection.document, COALESCE((SubPlan 2), '{ "destinations" : [  ] }'::bson), true)
-   namespaceName: coll_q_db.coll_graph_src
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8809 collection
-         Output: collection.document
-         Recheck Cond: (collection.shard_key_value = '8809'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8809'::bigint)
    SubPlan 2
      ->  Aggregate
            Output: COALESCE(bson_array_agg((blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), 'destinations'::text), '{ "destinations" : [  ] }'::bson)
@@ -3237,16 +2712,9 @@ $cmd$);
                  Output: (blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                  CTE graphLookupRecurseStage
                    ->  Recursive Union
-                         ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+                         ->  Seq Scan on blackboxdb_data.documents_8810 collection_0_2
                                Output: collection_0_2.document, '{ "depth" : { "$numberInt" : "0" } }'::bson, bson_expression_get(collection_0_2.document, '{ "_id" : "$_id" }'::bson, false), false, ARRAY[ROW(bson_expression_get(collection_0_2.document, '{ "_id" : "$_id" }'::bson, false))]
-                               namespaceName: coll_q_db.coll_graph_dst
-                               indexName: _id_
-                               ->  Bitmap Heap Scan on blackboxdb_data.documents_8810 collection_0_2
-                                     Output: collection_0_2.document
-                                     Recheck Cond: (collection_0_2.shard_key_value = '8810'::bigint)
-                                     Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, blackboxdb_api_internal.bson_expression_get(collection.document, '{ "_id" : { "$makeArray" : "$pet" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'fr-u-ks-level1-ka-shifted'::text), '_id'::text)
-                                     ->  Bitmap Index Scan on _id_
-                                           Index Cond: (collection_0_2.shard_key_value = '8810'::bigint)
+                               Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, blackboxdb_api_internal.bson_expression_get(collection.document, '{ "_id" : { "$makeArray" : "$pet" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'fr-u-ks-level1-ka-shifted'::text), '_id'::text)
                          ->  Nested Loop
                                Output: collection_0_2_1.document, bson_dollar_add_fields("lookupRecursive_stage_1".depth, '{ "depth" : { "$add" : [ "$depth", { "$numberInt" : "1" } ] } }'::bson), bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false), CASE WHEN (ROW(bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false)) = ANY ("lookupRecursive_stage_1".path)) THEN true ELSE false END, array_cat("lookupRecursive_stage_1".path, ARRAY[ROW(bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false))])
                                Join Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2_1.document, blackboxdb_api_internal.bson_expression_get("lookupRecursive_stage_1".document, '{ "_id" : { "$makeArray" : "$name" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'fr-u-ks-level1-ka-shifted'::text), '_id'::text)
@@ -3255,21 +2723,14 @@ $cmd$);
                                      Filter: (NOT "lookupRecursive_stage_1".is_cycle)
                                ->  Materialize
                                      Output: collection_0_2_1.document
-                                     ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+                                     ->  Seq Scan on blackboxdb_data.documents_8810 collection_0_2_1
                                            Output: collection_0_2_1.document
-                                           namespaceName: coll_q_db.coll_graph_dst
-                                           indexName: _id_
-                                           ->  Bitmap Heap Scan on blackboxdb_data.documents_8810 collection_0_2_1
-                                                 Output: collection_0_2_1.document
-                                                 Recheck Cond: (collection_0_2_1.shard_key_value = '8810'::bigint)
-                                                 ->  Bitmap Index Scan on _id_
-                                                       Index Cond: (collection_0_2_1.shard_key_value = '8810'::bigint)
                  ->  Sort
                        Output: (blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        Sort Key: "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        ->  CTE Scan on "graphLookupRecurseStage" "graphLookup_stage_2"
                              Output: blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
-(48 rows)
+(27 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db',
@@ -3277,15 +2738,8 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
                                                                                                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                                                                                                        
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8809 collection
    Output: blackboxdb_api_internal.bson_dollar_merge_documents(collection.document, COALESCE((SubPlan 2), '{ "destinations" : [  ] }'::bson), true)
-   namespaceName: coll_q_db.coll_graph_src
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8809 collection
-         Output: collection.document
-         Recheck Cond: (collection.shard_key_value = '8809'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8809'::bigint)
    SubPlan 2
      ->  Aggregate
            Output: COALESCE(bson_array_agg((blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), 'destinations'::text), '{ "destinations" : [  ] }'::bson)
@@ -3293,16 +2747,9 @@ $cmd$);
                  Output: (blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                  CTE graphLookupRecurseStage
                    ->  Recursive Union
-                         ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+                         ->  Seq Scan on blackboxdb_data.documents_8810 collection_0_2
                                Output: collection_0_2.document, '{ "depth" : { "$numberInt" : "0" } }'::bson, bson_expression_get(collection_0_2.document, '{ "_id" : "$_id" }'::bson, false), false, ARRAY[ROW(bson_expression_get(collection_0_2.document, '{ "_id" : "$_id" }'::bson, false))]
-                               namespaceName: coll_q_db.coll_graph_dst
-                               indexName: _id_
-                               ->  Bitmap Heap Scan on blackboxdb_data.documents_8810 collection_0_2
-                                     Output: collection_0_2.document
-                                     Recheck Cond: (collection_0_2.shard_key_value = '8810'::bigint)
-                                     Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, blackboxdb_api_internal.bson_expression_get(collection.document, '{ "_id" : { "$makeArray" : "$pet" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'hi-u-ks-level2-kf-lower'::text), '_id'::text)
-                                     ->  Bitmap Index Scan on _id_
-                                           Index Cond: (collection_0_2.shard_key_value = '8810'::bigint)
+                               Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, blackboxdb_api_internal.bson_expression_get(collection.document, '{ "_id" : { "$makeArray" : "$pet" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'hi-u-ks-level2-kf-lower'::text), '_id'::text)
                          ->  Nested Loop
                                Output: collection_0_2_1.document, bson_dollar_add_fields("lookupRecursive_stage_1".depth, '{ "depth" : { "$add" : [ "$depth", { "$numberInt" : "1" } ] } }'::bson), bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false), CASE WHEN (ROW(bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false)) = ANY ("lookupRecursive_stage_1".path)) THEN true ELSE false END, array_cat("lookupRecursive_stage_1".path, ARRAY[ROW(bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false))])
                                Join Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2_1.document, blackboxdb_api_internal.bson_expression_get("lookupRecursive_stage_1".document, '{ "_id" : { "$makeArray" : "$name" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'hi-u-ks-level2-kf-lower'::text), '_id'::text)
@@ -3311,21 +2758,14 @@ $cmd$);
                                      Filter: (NOT "lookupRecursive_stage_1".is_cycle)
                                ->  Materialize
                                      Output: collection_0_2_1.document
-                                     ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+                                     ->  Seq Scan on blackboxdb_data.documents_8810 collection_0_2_1
                                            Output: collection_0_2_1.document
-                                           namespaceName: coll_q_db.coll_graph_dst
-                                           indexName: _id_
-                                           ->  Bitmap Heap Scan on blackboxdb_data.documents_8810 collection_0_2_1
-                                                 Output: collection_0_2_1.document
-                                                 Recheck Cond: (collection_0_2_1.shard_key_value = '8810'::bigint)
-                                                 ->  Bitmap Index Scan on _id_
-                                                       Index Cond: (collection_0_2_1.shard_key_value = '8810'::bigint)
                  ->  Sort
                        Output: (blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        Sort Key: "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        ->  CTE Scan on "graphLookupRecurseStage" "graphLookup_stage_2"
                              Output: blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
-(48 rows)
+(27 rows)
 
 -- test $graphlookup
 BEGIN;
@@ -3335,15 +2775,8 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
                                                                                                                                                                                                                                                                                         run_explain_and_trim                                                                                                                                                                                                                                                                                        
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Custom Scan (BlackboxDBApiExplainQueryScan)
+ Seq Scan on blackboxdb_data.documents_8809 collection
    Output: blackboxdb_api_internal.bson_dollar_merge_documents(collection.document, COALESCE((SubPlan 2), '{ "destinations" : [  ] }'::bson), true)
-   namespaceName: coll_q_db.coll_graph_src
-   indexName: _id_
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_8809 collection
-         Output: collection.document
-         Recheck Cond: (collection.shard_key_value = '8809'::bigint)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '8809'::bigint)
    SubPlan 2
      ->  Aggregate
            Output: COALESCE(bson_array_agg((blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), 'destinations'::text), '{ "destinations" : [  ] }'::bson)
@@ -3351,16 +2784,9 @@ $cmd$);
                  Output: (blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                  CTE graphLookupRecurseStage
                    ->  Recursive Union
-                         ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+                         ->  Seq Scan on blackboxdb_data.documents_8810 collection_0_2
                                Output: collection_0_2.document, '{ "depth" : { "$numberInt" : "0" } }'::bson, bson_expression_get(collection_0_2.document, '{ "_id" : "$_id" }'::bson, false), false, ARRAY[ROW(bson_expression_get(collection_0_2.document, '{ "_id" : "$_id" }'::bson, false))]
-                               namespaceName: coll_q_db.coll_graph_dst
-                               indexName: _id_
-                               ->  Bitmap Heap Scan on blackboxdb_data.documents_8810 collection_0_2
-                                     Output: collection_0_2.document
-                                     Recheck Cond: (collection_0_2.shard_key_value = '8810'::bigint)
-                                     Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, blackboxdb_api_internal.bson_expression_get(collection.document, '{ "_id" : { "$makeArray" : "$pet" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text), '_id'::text)
-                                     ->  Bitmap Index Scan on _id_
-                                           Index Cond: (collection_0_2.shard_key_value = '8810'::bigint)
+                               Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2.document, blackboxdb_api_internal.bson_expression_get(collection.document, '{ "_id" : { "$makeArray" : "$pet" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text), '_id'::text)
                          ->  Nested Loop
                                Output: collection_0_2_1.document, bson_dollar_add_fields("lookupRecursive_stage_1".depth, '{ "depth" : { "$add" : [ "$depth", { "$numberInt" : "1" } ] } }'::bson), bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false), CASE WHEN (ROW(bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false)) = ANY ("lookupRecursive_stage_1".path)) THEN true ELSE false END, array_cat("lookupRecursive_stage_1".path, ARRAY[ROW(bson_expression_get(collection_0_2_1.document, '{ "_id" : "$_id" }'::bson, false))])
                                Join Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_2_1.document, blackboxdb_api_internal.bson_expression_get("lookupRecursive_stage_1".document, '{ "_id" : { "$makeArray" : "$name" } }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level3'::text), '_id'::text)
@@ -3369,21 +2795,14 @@ $cmd$);
                                      Filter: (NOT "lookupRecursive_stage_1".is_cycle)
                                ->  Materialize
                                      Output: collection_0_2_1.document
-                                     ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+                                     ->  Seq Scan on blackboxdb_data.documents_8810 collection_0_2_1
                                            Output: collection_0_2_1.document
-                                           namespaceName: coll_q_db.coll_graph_dst
-                                           indexName: _id_
-                                           ->  Bitmap Heap Scan on blackboxdb_data.documents_8810 collection_0_2_1
-                                                 Output: collection_0_2_1.document
-                                                 Recheck Cond: (collection_0_2_1.shard_key_value = '8810'::bigint)
-                                                 ->  Bitmap Index Scan on _id_
-                                                       Index Cond: (collection_0_2_1.shard_key_value = '8810'::bigint)
                  ->  Sort
                        Output: (blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true)), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        Sort Key: "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
                        ->  CTE Scan on "graphLookupRecurseStage" "graphLookup_stage_2"
                              Output: blackboxdb_api_internal.bson_dollar_merge_documents("graphLookup_stage_2".document, "graphLookup_stage_2".depth, true), "graphLookup_stage_2"."baseDocId", "graphLookup_stage_2".depth
-(48 rows)
+(27 rows)
 
 ROLLBACK;
 -- unsupported $merge 
@@ -3857,55 +3276,35 @@ $cmd$);
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "single_field", "pipeline": [ { "$lookup": { "from": "single_field", "as": "m", "localField": "a", "foreignField": "a" } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                                                                           run_explain_and_trim                                                                                                                           
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                        run_explain_and_trim                                                                                                                        
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Nested Loop
    Output: blackboxdb_api_internal.bson_dollar_merge_documents(collection.document, (COALESCE(bson_array_agg(collection_0_1.document, 'm'::text), '{ "m" : [  ] }'::bson)), true)
-   ->  Custom Scan (BlackboxDBApiExplainQueryScan)
-         Output: collection.document
-         namespaceName: coll_q_db.single_field
-         indexName: _id_
-         ->  Index Scan using _id_ on blackboxdb_data.documents_8806 collection
-               Output: collection.document
-               Index Cond: (collection.shard_key_value = '8806'::bigint)
+   ->  Seq Scan on blackboxdb_data.documents_8806 collection
+         Output: collection.shard_key_value, collection.object_id, collection.document
    ->  Aggregate
          Output: COALESCE(bson_array_agg(collection_0_1.document, 'm'::text), '{ "m" : [  ] }'::bson)
-         ->  Custom Scan (BlackboxDBApiExplainQueryScan)
-               Output: collection_0_1.document
-               namespaceName: coll_q_db.single_field
-               indexName: _id_
-               ->  Index Scan using _id_ on blackboxdb_data.documents_8806 collection_0_1
-                     Output: collection_0_1.document
-                     Index Cond: (collection_0_1.shard_key_value = '8806'::bigint)
-                     Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, blackboxdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "a" : "a", "collation" : "en-u-ks-level1" }'::bson), 'a'::text)
-(19 rows)
+         ->  Seq Scan on blackboxdb_data.documents_8806 collection_0_1
+               Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
+               Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, blackboxdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "a" : "a", "collation" : "en-u-ks-level1" }'::bson), 'a'::text)
+(9 rows)
 
 -- Non-collated $lookup self-join on `a`: index-side gate -> _id_.
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "single_field", "pipeline": [ { "$lookup": { "from": "single_field", "as": "m", "localField": "a", "foreignField": "a" } } ], "cursor": {} }')
 $cmd$);
-                                                                                                           run_explain_and_trim                                                                                                           
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                        run_explain_and_trim                                                                                                        
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Nested Loop
    Output: blackboxdb_api_internal.bson_dollar_merge_documents(collection.document, (COALESCE(bson_array_agg(collection_0_1.document, 'm'::text), '{ "m" : [  ] }'::bson)), true)
-   ->  Custom Scan (BlackboxDBApiExplainQueryScan)
-         Output: collection.document
-         namespaceName: coll_q_db.single_field
-         indexName: _id_
-         ->  Index Scan using _id_ on blackboxdb_data.documents_8806 collection
-               Output: collection.document
-               Index Cond: (collection.shard_key_value = '8806'::bigint)
+   ->  Seq Scan on blackboxdb_data.documents_8806 collection
+         Output: collection.shard_key_value, collection.object_id, collection.document
    ->  Aggregate
          Output: COALESCE(bson_array_agg(collection_0_1.document, 'm'::text), '{ "m" : [  ] }'::bson)
-         ->  Custom Scan (BlackboxDBApiExplainQueryScan)
-               Output: collection_0_1.document
-               namespaceName: coll_q_db.single_field
-               indexName: _id_
-               ->  Index Scan using _id_ on blackboxdb_data.documents_8806 collection_0_1
-                     Output: collection_0_1.document
-                     Index Cond: (collection_0_1.shard_key_value = '8806'::bigint)
-                     Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, blackboxdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "a" : "a" }'::bson), 'a'::text)
-(19 rows)
+         ->  Seq Scan on blackboxdb_data.documents_8806 collection_0_1
+               Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
+               Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, blackboxdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "a" : "a" }'::bson), 'a'::text)
+(9 rows)
 
 -- $merge (non-collated) onto a non-_id key carrying both the required unique index
 -- and a collation-aware index: the merge join filter must use the unique key, never
@@ -3936,25 +3335,24 @@ SELECT blackboxdb_api_internal.create_indexes_non_concurrently('coll_q_db',
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_merge_src", "pipeline": [{"$merge" : { "into": "coll_merge_dst", "on": "k", "whenMatched" : "replace", "whenNotMatched": "insert" }} ], "cursor": {} }')
 $cmd$);
-                                                                                                                              run_explain_and_trim                                                                                                                               
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                       run_explain_and_trim                                                                                        
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Merge on blackboxdb_data.documents_8815
    ->  Nested Loop Left Join
          Output: documents_8815.ctid, collection.document, collection.ctid
-         ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+         Join Filter: blackboxdb_api_internal.bson_dollar_merge_join(documents_8815.document, blackboxdb_api_internal.bson_dollar_extract_merge_filter(collection.document, 'k'::text), 'k'::text)
+         ->  Seq Scan on blackboxdb_data.documents_8814 collection
                Output: collection.document, collection.ctid
-               namespaceName: coll_q_db.coll_merge_src
-               indexName: _id_
-               ->  Bitmap Heap Scan on blackboxdb_data.documents_8814 collection
-                     Output: collection.document, collection.ctid
-                     Recheck Cond: (collection.shard_key_value = '8814'::bigint)
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection.shard_key_value = '8814'::bigint)
-         ->  Index Scan using uq_merge_k on blackboxdb_data.documents_8815
+         ->  Materialize
                Output: documents_8815.ctid, documents_8815.document
-               Index Cond: (documents_8815.document @= blackboxdb_api_internal.bson_dollar_extract_merge_filter(collection.document, 'k'::text))
-               Filter: ((documents_8815.shard_key_value OPERATOR(pg_catalog.=) '8815'::bigint) AND blackboxdb_api_internal.bson_dollar_merge_join(documents_8815.document, blackboxdb_api_internal.bson_dollar_extract_merge_filter(collection.document, 'k'::text), 'k'::text))
-(16 rows)
+               ->  Custom Scan (BlackboxDBApiExplainQueryScan)
+                     Output: documents_8815.ctid, documents_8815.document
+                     namespaceName: coll_q_db.coll_merge_dst
+                     indexName: _id_
+                     ->  Index Scan using _id_ on blackboxdb_data.documents_8815
+                           Output: documents_8815.ctid, documents_8815.document
+                           Index Cond: (documents_8815.shard_key_value OPERATOR(pg_catalog.=) '8815'::bigint)
+(15 rows)
 
 SELECT blackboxdb_api.drop_collection('coll_q_db','coll_merge_src');
  drop_collection 

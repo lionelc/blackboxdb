@@ -155,13 +155,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                ->  Sort
                      Output: collection.document, (random())
                      Sort Key: (random())
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25712001 collection
+                     ->  Seq Scan on blackboxdb_data.documents_25712001 collection
                            Output: collection.document, random()
-                           Recheck Cond: (collection.shard_key_value = '25712001'::bigint)
                            Filter: (collection.document @= '{ "category" : "A" }'::bson)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25712001'::bigint)
-(16 rows)
+(13 rows)
 
 -- Plan: empty $match + $sample
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 5 } } ] }');
@@ -224,13 +221,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          Output: bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_orderby(bson_dollar_project(collection.document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '{ "_id" : { "$numberInt" : "1" } }'::bson)
          Sample Size: 3
          Sample Reservoir Method: Materialize
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_25712001 collection
+         ->  Seq Scan on blackboxdb_data.documents_25712001 collection
                Output: collection.document
-               Recheck Cond: (collection.shard_key_value = '25712001'::bigint)
                Filter: (collection.document @= '{ "category" : "A" }'::bson)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '25712001'::bigint)
-(13 rows)
+(10 rows)
 
 -- Plan: empty $match + $sample - empty $match doesn't add filters, uses TABLESAMPLE path
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": {} }, { "$sample": { "size": 5 } } ] }');
@@ -533,37 +527,31 @@ SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "s
 -- Disable reservoir, verify fallback to Limit+Sort(random()) for $match + $sample
 SET blackboxdb.enableDollarSampleReservoirScan TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 3 } } ] }');
-                                    QUERY PLAN                                     
------------------------------------------------------------------------------------
+                                 QUERY PLAN                                  
+-----------------------------------------------------------------------------
  Limit
    Output: document, (random())
    ->  Sort
          Output: document, (random())
          Sort Key: (random())
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_25712001 collection
+         ->  Seq Scan on blackboxdb_data.documents_25712001 collection
                Output: document, random()
-               Recheck Cond: (collection.shard_key_value = '25712001'::bigint)
                Filter: (collection.document @= '{ "category" : "A" }'::bson)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '25712001'::bigint)
-(11 rows)
+(8 rows)
 
 -- Re-enable reservoir (back to default), verify CustomScan returns for $match + $sample
 SET blackboxdb.enableDollarSampleReservoirScan TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('reservoirdb', '{ "aggregate": "reservoirTest", "pipeline": [ { "$match": { "category": "A" } }, { "$sample": { "size": 3 } } ] }');
-                                 QUERY PLAN                                  
------------------------------------------------------------------------------
+                              QUERY PLAN                               
+-----------------------------------------------------------------------
  Custom Scan (BlackboxDBApiReservoirSample)
    Output: document
    Sample Size: 3
    Sample Reservoir Method: Materialize
-   ->  Bitmap Heap Scan on blackboxdb_data.documents_25712001 collection
+   ->  Seq Scan on blackboxdb_data.documents_25712001 collection
          Output: document
-         Recheck Cond: (collection.shard_key_value = '25712001'::bigint)
          Filter: (collection.document @= '{ "category" : "A" }'::bson)
-         ->  Bitmap Index Scan on _id_
-               Index Cond: (collection.shard_key_value = '25712001'::bigint)
-(10 rows)
+(7 rows)
 
 -- =============================================================================
 -- ALTERNATE INDEX PATH TESTS (wildcard, single-field, compound, sparse, partial)
@@ -900,13 +888,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                Output: collection_0_1.document
                Sample Size: 2
                Sample Reservoir Method: Materialize
-               ->  Bitmap Heap Scan on blackboxdb_data.documents_25712005 collection_0_1
+               ->  Seq Scan on blackboxdb_data.documents_25712005 collection_0_1
                      Output: collection_0_1.document
-                     Recheck Cond: (collection_0_1.shard_key_value = '25712005'::bigint)
                      Filter: (collection_0_1.document @= '{ "ref" : "A" }'::bson)
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection_0_1.shard_key_value = '25712005'::bigint)
-(17 rows)
+(14 rows)
 
 -- Correlated $lookup with $sample on the right collection
 -- The inner pipeline has a correlation ($match on $$category), so it should
@@ -923,12 +908,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                Filter: ((collection.document @<= '{ "_id" : { "$numberInt" : "2" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberInt" : "2" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
          ->  Aggregate
                Output: COALESCE(bson_array_agg(collection_0_1.document, 'sampled'::text), '{ "sampled" : [  ] }'::bson)
-               ->  Bitmap Heap Scan on blackboxdb_data.documents_25712005 collection_0_1
+               ->  Seq Scan on blackboxdb_data.documents_25712005 collection_0_1
                      Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
-                     Recheck Cond: (collection_0_1.shard_key_value = '25712005'::bigint)
                      Filter: bson_dollar_expr(collection_0_1.document, '{ "" : { "$eq" : [ "$ref", "$$category" ] } }'::bson, bson_dollar_lookup_expression_eval_merge(collection.document, '{ "category" : "$category" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection_0_1.shard_key_value = '25712005'::bigint)
    SubPlan 1
      ->  Aggregate
            Output: COALESCE(bson_array_agg(lookup_subpipeline_substage_0.lookup_unwind, 'sampled'::text), '{ "sampled" : [  ] }'::bson)
@@ -940,7 +922,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                        ->  Function Scan on blackboxdb_api_catalog.bson_lookup_unwind lookup_subpipeline_substage_0
                              Output: lookup_subpipeline_substage_0.lookup_unwind, random()
                              Function Call: bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'sampled'::text)
-(26 rows)
+(23 rows)
 
 -- $match + $unwind + $sample — unwind before sample means reservoir is NOT used
 -- because sample is not directly after $match (unwind injects new tuples)
@@ -1025,13 +1007,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                Output: collection_0_1.document
                Sample Size: 2
                Sample Reservoir Method: Materialize
-               ->  Bitmap Heap Scan on blackboxdb_data.documents_25712005 collection_0_1
+               ->  Seq Scan on blackboxdb_data.documents_25712005 collection_0_1
                      Output: collection_0_1.document
-                     Recheck Cond: (collection_0_1.shard_key_value = '25712005'::bigint)
                      Filter: (collection_0_1.document @= '{ "ref" : "A" }'::bson)
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection_0_1.shard_key_value = '25712005'::bigint)
-(17 rows)
+(14 rows)
 
 -- Correlated $lookup with $match + $sample in inner pipeline
 -- Correlation ($$category) prevents reservoir optimization
@@ -1047,12 +1026,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                Filter: ((collection.document @<= '{ "_id" : { "$numberInt" : "2" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberInt" : "2" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
          ->  Aggregate
                Output: COALESCE(bson_array_agg(collection_0_1.document, 'sampled'::text), '{ "sampled" : [  ] }'::bson)
-               ->  Bitmap Heap Scan on blackboxdb_data.documents_25712005 collection_0_1
+               ->  Seq Scan on blackboxdb_data.documents_25712005 collection_0_1
                      Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
-                     Recheck Cond: (collection_0_1.shard_key_value = '25712005'::bigint)
                      Filter: bson_dollar_expr(collection_0_1.document, '{ "" : { "$eq" : [ "$ref", "$$category" ] } }'::bson, bson_dollar_lookup_expression_eval_merge(collection.document, '{ "category" : "$category" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection_0_1.shard_key_value = '25712005'::bigint)
    SubPlan 1
      ->  Aggregate
            Output: COALESCE(bson_array_agg(lookup_subpipeline_substage_0.lookup_unwind, 'sampled'::text), '{ "sampled" : [  ] }'::bson)
@@ -1064,7 +1040,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                        ->  Function Scan on blackboxdb_api_catalog.bson_lookup_unwind lookup_subpipeline_substage_0
                              Output: lookup_subpipeline_substage_0.lookup_unwind, random()
                              Function Call: bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'sampled'::text)
-(26 rows)
+(23 rows)
 
 -- =============================================================================
 -- $project + $sort + $sample TESTS

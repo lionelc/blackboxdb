@@ -1126,13 +1126,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                            Output: collection.shard_key_value, collection.object_id, collection.document
                      ->  Aggregate
                            Output: COALESCE(bson_array_agg(collection_0_1.document, 'owner_doc'::text), '{ "owner_doc" : [  ] }'::bson)
-                           ->  Bitmap Heap Scan on blackboxdb_data.documents_87002 collection_0_1
+                           ->  Seq Scan on blackboxdb_data.documents_87002 collection_0_1
                                  Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
-                                 Recheck Cond: (collection_0_1.shard_key_value = '87002'::bigint)
                                  Filter: blackboxdb_api_internal.bson_dollar_lookup_join_filter(collection_0_1.document, blackboxdb_api_internal.bson_dollar_lookup_extract_filter_expression(collection.document, '{ "ownerId" : "ownerId" }'::bson), 'ownerId'::text)
-                                 ->  Bitmap Index Scan on _id_
-                                       Index Cond: (collection_0_1.shard_key_value = '87002'::bigint)
-(19 rows)
+(16 rows)
 
 -- 2.13 Pipeline contains $unionWith — same bail reason as 2.12.
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('proj_pushup_db', '{
@@ -1156,12 +1153,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                ->  Append
                      ->  Seq Scan on blackboxdb_data.documents_87001 collection
                            Output: collection.document
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_87002 collection_0_1
+                     ->  Seq Scan on blackboxdb_data.documents_87002 collection_0_1
                            Output: collection_0_1.document
-                           Recheck Cond: (collection_0_1.shard_key_value = '87002'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection_0_1.shard_key_value = '87002'::bigint)
-(15 rows)
+(12 rows)
 
 -- 2.14 Match references more distinct top-level fields than the optimizer's
 -- PROJECT_PUSHUP_MAX_FIELDS cap (64). AddTopLevelFieldToSet returns false on

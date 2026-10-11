@@ -92,10 +92,9 @@ SELECT blackboxdb_api_catalog.bson_dollar_unwind(cursorpage, '$cursor.firstBatch
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('collmod', '{ "find": "coll_mod_test_hidden", "filter": { "a": 1 } }');
                                     QUERY PLAN                                    
 ----------------------------------------------------------------------------------
- Index Scan using _id_ on documents_8701 collection
-   Index Cond: (shard_key_value = '8701'::bigint)
+ Seq Scan on documents_8701 collection
    Filter: (document @= '{ "a" : { "$numberInt" : "1" } }'::blackboxdb_core.bson)
-(3 rows)
+(2 rows)
 
 SELECT document FROM bson_aggregation_find('collmod', '{ "find": "coll_mod_test_hidden", "filter": { "a": 1 } }');
                    document                    

@@ -346,7 +346,11 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('pfedb', '{ "find
 ERROR:  Could not find any valid index to push down for query
 -- Query with $exists: true on PFE field only (no filter on indexed key) - behavior depends on planner
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('pfedb', '{ "find": "pfecoll", "filter": { "s5_tags": { "$exists": true } } }');
-ERROR:  Could not find any valid index to push down for query
+                               QUERY PLAN                               
+------------------------------------------------------------------------
+ Index Scan using s5_name_tags_exists_pfe on documents_87101 collection
+(1 row)
+
 -- =============================================
 -- Section 6: PFE with combined conditions (AND)
 -- =============================================
@@ -418,7 +422,11 @@ SELECT blackboxdb_api_internal.create_indexes_non_concurrently('pfedb', '{ "crea
 
 -- Query with $type matching PFE - $type PFE is not currently supported for pushdown
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('pfedb', '{ "find": "pfecoll", "filter": { "s7_name": { "$type": "string" } } }');
-ERROR:  Could not find any valid index to push down for query
+                               QUERY PLAN                               
+------------------------------------------------------------------------
+ Index Scan using s7_name_type_string_pfe on documents_87101 collection
+(1 row)
+
 -- Query with $eq (string value implies type string) - $type PFE not supported
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('pfedb', '{ "find": "pfecoll", "filter": { "s7_name": "alice" } }');
 ERROR:  Could not find any valid index to push down for query

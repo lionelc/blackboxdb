@@ -58,18 +58,18 @@ SET blackboxdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "firstVal": { "$first": "$v" }, "lastName": { "$last": "$name" } } }], "cursor": {} }');
                                   document                                  
 ----------------------------------------------------------------------------
- { "_id" : "A", "firstVal" : { "$numberInt" : "10" }, "lastName" : "eta" }
- { "_id" : "B", "firstVal" : null, "lastName" : "delta" }
  { "_id" : "C", "firstVal" : { "$numberInt" : "60" }, "lastName" : "zeta" }
+ { "_id" : "B", "firstVal" : { "$numberInt" : "20" }, "lastName" : null }
+ { "_id" : "A", "firstVal" : { "$numberInt" : "10" }, "lastName" : "eta" }
 (3 rows)
 
 SET blackboxdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "firstVal": { "$first": "$v" }, "lastName": { "$last": "$name" } } }], "cursor": {} }');
                                   document                                  
 ----------------------------------------------------------------------------
- { "_id" : "A", "firstVal" : { "$numberInt" : "10" }, "lastName" : "eta" }
- { "_id" : "B", "firstVal" : null, "lastName" : "delta" }
  { "_id" : "C", "firstVal" : { "$numberInt" : "60" }, "lastName" : "zeta" }
+ { "_id" : "B", "firstVal" : { "$numberInt" : "20" }, "lastName" : null }
+ { "_id" : "A", "firstVal" : { "$numberInt" : "10" }, "lastName" : "eta" }
 (3 rows)
 
 -- 3. Computed expression in $first/$last - GUC on
@@ -77,9 +77,9 @@ SET blackboxdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "firstDoubled": { "$first": { "$multiply": ["$v", 2] } }, "lastDoubled": { "$last": { "$multiply": ["$v", 2] } } } }], "cursor": {} }');
                                                document                                               
 ------------------------------------------------------------------------------------------------------
- { "_id" : "A", "firstDoubled" : { "$numberInt" : "20" }, "lastDoubled" : null }
- { "_id" : "B", "firstDoubled" : null, "lastDoubled" : { "$numberInt" : "80" } }
  { "_id" : "C", "firstDoubled" : { "$numberInt" : "120" }, "lastDoubled" : { "$numberInt" : "120" } }
+ { "_id" : "B", "firstDoubled" : { "$numberInt" : "40" }, "lastDoubled" : null }
+ { "_id" : "A", "firstDoubled" : { "$numberInt" : "20" }, "lastDoubled" : null }
 (3 rows)
 
 -- 4. Empty collection - $first
@@ -175,15 +175,15 @@ SET blackboxdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_types", "pipeline": [{ "$group": { "_id": "$g", "firstDate": { "$first": "$d" }, "lastDate": { "$last": "$d" } } }], "cursor": {} }');
                                                                      document                                                                     
 --------------------------------------------------------------------------------------------------------------------------------------------------
- { "_id" : "T", "firstDate" : { "$date" : { "$numberLong" : "1705276800000" } }, "lastDate" : { "$date" : { "$numberLong" : "1750422600000" } } }
  { "_id" : "U", "firstDate" : { "$date" : { "$numberLong" : "1677657600000" } }, "lastDate" : { "$date" : { "$numberLong" : "1677657600000" } } }
+ { "_id" : "T", "firstDate" : { "$date" : { "$numberLong" : "1705276800000" } }, "lastDate" : { "$date" : { "$numberLong" : "1750422600000" } } }
 (2 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_types", "pipeline": [{ "$group": { "_id": "$g", "firstOid": { "$first": "$oid" }, "lastBool": { "$last": "$b" }, "firstDbl": { "$first": "$f" } } }], "cursor": {} }');
                                                                        document                                                                        
 -------------------------------------------------------------------------------------------------------------------------------------------------------
- { "_id" : "T", "firstOid" : { "$oid" : "aaaaaaaaaaaaaaaaaaaaaaaa" }, "lastBool" : false, "firstDbl" : { "$numberDouble" : "3.1400000000000001243" } }
  { "_id" : "U", "firstOid" : { "$oid" : "cccccccccccccccccccccccc" }, "lastBool" : true, "firstDbl" : { "$numberDouble" : "1.0" } }
+ { "_id" : "T", "firstOid" : { "$oid" : "aaaaaaaaaaaaaaaaaaaaaaaa" }, "lastBool" : false, "firstDbl" : { "$numberDouble" : "3.1400000000000001243" } }
 (2 rows)
 
 SELECT blackboxdb_api.drop_collection('db', 'fl_types');
@@ -236,36 +236,30 @@ SET blackboxdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "firstAdj": { "$first": { "$add": ["$v", "$$bonus"] } }, "lastAdj": { "$last": { "$add": ["$v", "$$bonus"] } } } }], "cursor": {}, "let": { "bonus": 100 } }');
                                            document                                           
 ----------------------------------------------------------------------------------------------
- { "_id" : "A", "firstAdj" : { "$numberInt" : "110" }, "lastAdj" : null }
- { "_id" : "B", "firstAdj" : null, "lastAdj" : { "$numberInt" : "140" } }
  { "_id" : "C", "firstAdj" : { "$numberInt" : "160" }, "lastAdj" : { "$numberInt" : "160" } }
+ { "_id" : "B", "firstAdj" : { "$numberInt" : "120" }, "lastAdj" : null }
+ { "_id" : "A", "firstAdj" : { "$numberInt" : "110" }, "lastAdj" : null }
 (3 rows)
 
 -- EXPLAIN shows non-empty varSpec with "let" variables
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": { "$add": ["$v", "$$bonus"] } } } }], "cursor": {}, "let": { "bonus": 100 } }');
                                                                                                                                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                    
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson)), 'f'::text, blackboxdb_api_internal.bsonfirstwithexpr(document, '{ "" : { "$add" : [ "$v", "$$bonus" ] } }'::bson, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson, NULL::text)), (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson)), document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_25701000 collection
-               Output: blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson), document
-               Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '25701000'::bigint)
-(11 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson)
+   ->  Seq Scan on blackboxdb_data.documents_25701000 collection
+         Output: blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson), document
+(5 rows)
 
 -- 9. $last where the final document in a group has a missing field
 SET blackboxdb.enableNewWithExprAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "lastV": { "$last": "$v" }, "lastName": { "$last": "$name" } } }], "cursor": {} }');
-                                 document                                 
---------------------------------------------------------------------------
- { "_id" : "A", "lastV" : null, "lastName" : "eta" }
- { "_id" : "B", "lastV" : { "$numberInt" : "40" }, "lastName" : "delta" }
+                                document                                 
+-------------------------------------------------------------------------
  { "_id" : "C", "lastV" : { "$numberInt" : "60" }, "lastName" : "zeta" }
+ { "_id" : "B", "lastV" : null, "lastName" : null }
+ { "_id" : "A", "lastV" : null, "lastName" : "eta" }
 (3 rows)
 
 -- =============================================================================
@@ -312,8 +306,8 @@ SET blackboxdb.enableCollationWithNewGroupAccumulators TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "firstName": { "$first": "$name" }, "lastName": { "$last": "$name" } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
                            document                            
 ---------------------------------------------------------------
- { "_id" : "A", "firstName" : "cherry", "lastName" : "Apple" }
  { "_id" : "a", "firstName" : "date", "lastName" : "FIG" }
+ { "_id" : "A", "firstName" : "cherry", "lastName" : "Apple" }
 (2 rows)
 
 -- Without collation baseline (binary comparison for grouping; first/last order unchanged)
@@ -334,8 +328,8 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collati
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "firstMatch": { "$first": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } }, "lastMatch": { "$last": { "$cond": { "if": { "$eq": ["$name", "CHERRY"] }, "then": "matched", "else": "no-match" } } } } }, { "$sort": { "_id": 1 } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
                                document                               
 ----------------------------------------------------------------------
- { "_id" : "A", "firstMatch" : "matched", "lastMatch" : "no-match" }
  { "_id" : "a", "firstMatch" : "no-match", "lastMatch" : "no-match" }
+ { "_id" : "A", "firstMatch" : "matched", "lastMatch" : "no-match" }
 (2 rows)
 
 -- Same query without collation (binary: "cherry" != "CHERRY")
@@ -353,35 +347,23 @@ SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collati
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$name" }, "l": { "$last": "$name" } } }], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
                                                                                                                                                                                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                        
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, blackboxdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$name" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text), 'l'::text, blackboxdb_api_internal.bsonlastwithexpr(document, '{ "" : "$name" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, 'en-u-ks-level1'::text)), (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_25701005 collection
-               Output: blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
-               Recheck Cond: (collection.shard_key_value = '25701005'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '25701005'::bigint)
-(11 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Seq Scan on blackboxdb_data.documents_25701005 collection
+         Output: blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+(5 rows)
 
 -- Without collation: NULL collation arg
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$name" }, "l": { "$last": "$name" } } }], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                                                                                                                                                            
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, blackboxdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$name" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'l'::text, blackboxdb_api_internal.bsonlastwithexpr(document, '{ "" : "$name" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_25701005 collection
-               Output: blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
-               Recheck Cond: (collection.shard_key_value = '25701005'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '25701005'::bigint)
-(11 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Seq Scan on blackboxdb_data.documents_25701005 collection
+         Output: blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+(5 rows)
 
 -- =============================================================================
 -- 14. Constant _id group with collation-sensitive expression
@@ -605,18 +587,12 @@ SET blackboxdb.enableNewWithExprAccumulators TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$v" }, "l": { "$last": "$v" } } }], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                         QUERY PLAN                                                                                                                                                                                                                                                                                                                                                         
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, blackboxdb_api_internal.bsonfirstwithexpr(document, '{ "" : "$v" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'l'::text, blackboxdb_api_internal.bsonlastwithexpr(document, '{ "" : "$v" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_25701000 collection
-               Output: blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
-               Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '25701000'::bigint)
-(11 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Seq Scan on blackboxdb_data.documents_25701000 collection
+         Output: blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+(5 rows)
 
 -- 21b. GUC off, no $sort → bsonfirstonsorted / bsonlastonsorted
 SET blackboxdb.enableNewMinMaxAccumulators TO off;
@@ -624,41 +600,29 @@ SET blackboxdb.enableNewWithExprAccumulators TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$group": { "_id": "$g", "f": { "$first": "$v" }, "l": { "$last": "$v" } } }], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                        
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$v" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'l'::text, bsonlastonsorted(blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$v" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_25701000 collection
-               Output: blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
-               Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '25701000'::bigint)
-(11 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Seq Scan on blackboxdb_data.documents_25701000 collection
+         Output: blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+(5 rows)
 
 -- 21c. GUC on, with $sort → bsonfirst / bsonlast (sorted path, not WithExpr)
 SET blackboxdb.enableNewWithExprAccumulators TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$sort": { "v": 1 } }, { "$group": { "_id": "$g", "f": { "$first": "$v" }, "l": { "$last": "$v" } } }], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                              QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                              
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, blackboxdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$v" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'l'::text, blackboxdb_api_internal.bson_expression_get(bsonlast(agg_stage_0.document, '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$v" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Subquery Scan on agg_stage_0
-               Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
-               ->  Sort
-                     Output: collection.document, (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson))
-                     Sort Key: (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701000 collection
-                           Output: collection.document, bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)
-                           Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701000'::bigint)
-(16 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_0
+         Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+         ->  Sort
+               Output: collection.document, (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson))
+               Sort Key: (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+               ->  Seq Scan on blackboxdb_data.documents_25701000 collection
+                     Output: collection.document, bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)
+(10 rows)
 
 -- 21d. GUC off, with $sort → bsonfirst / bsonlast (sorted path)
 SET blackboxdb.enableNewMinMaxAccumulators TO off;
@@ -666,23 +630,17 @@ SET blackboxdb.enableNewWithExprAccumulators TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_grp_test", "pipeline": [{ "$sort": { "v": 1 } }, { "$group": { "_id": "$g", "f": { "$first": "$v" }, "l": { "$last": "$v" } } }], "cursor": {} }');
                                                                                                                                                                                                                                                                                                                                                                                                                                              QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                              
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, blackboxdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$v" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'l'::text, blackboxdb_api_internal.bson_expression_get(bsonlast(agg_stage_0.document, '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$v" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Subquery Scan on agg_stage_0
-               Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
-               ->  Sort
-                     Output: collection.document, (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson))
-                     Sort Key: (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701000 collection
-                           Output: collection.document, bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)
-                           Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701000'::bigint)
-(16 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_0
+         Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+         ->  Sort
+               Output: collection.document, (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson))
+               Sort Key: (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+               ->  Seq Scan on blackboxdb_data.documents_25701000 collection
+                     Output: collection.document, bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)
+(10 rows)
 
 -- =============================================================================
 -- $setWindowFields tests for $first/$last with the new WithExpr accumulators
@@ -781,12 +739,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                ->  Sort
                      Output: (blackboxdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)), collection.document
                      Sort Key: (blackboxdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701000 collection
+                     ->  Seq Scan on blackboxdb_data.documents_25701000 collection
                            Output: blackboxdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson), collection.document
-                           Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701000'::bigint)
-(14 rows)
+(11 rows)
 
 -- 27b. GUC off, no sortBy → bsonfirstonsorted / bsonlastonsorted
 SET blackboxdb.enableNewMinMaxAccumulators TO off;
@@ -803,12 +758,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                ->  Sort
                      Output: (blackboxdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
                      Sort Key: (blackboxdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701000 collection
+                     ->  Seq Scan on blackboxdb_data.documents_25701000 collection
                            Output: blackboxdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
-                           Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701000'::bigint)
-(14 rows)
+(11 rows)
 
 -- 27c. GUC on, no sortBy → bsonfirstwithexpr / bsonlastwithexpr
 SET blackboxdb.enableNewWithExprAccumulators TO on;
@@ -824,12 +776,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                ->  Sort
                      Output: (blackboxdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), collection.document
                      Sort Key: (blackboxdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701000 collection
+                     ->  Seq Scan on blackboxdb_data.documents_25701000 collection
                            Output: blackboxdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), collection.document
-                           Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701000'::bigint)
-(14 rows)
+(11 rows)
 
 -- 27d. GUC on, no sortBy, with let → varSpec should include user let variables
 SET blackboxdb.enableNewWithExprAccumulators TO on;
@@ -843,12 +792,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          ->  Sort
                Output: (blackboxdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson)), collection.document
                Sort Key: (blackboxdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson))
-               ->  Bitmap Heap Scan on blackboxdb_data.documents_25701000 collection
+               ->  Seq Scan on blackboxdb_data.documents_25701000 collection
                      Output: blackboxdb_api_internal.bson_expression_partition_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE, "let" : { "bonus" : { "$literal" : { "$numberInt" : "100" } } } }'::bson), collection.document
-                     Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
-                     ->  Bitmap Index Scan on _id_
-                           Index Cond: (collection.shard_key_value = '25701000'::bigint)
-(12 rows)
+(9 rows)
 
 -- =============================================================================
 -- 28. enableSortGroupStage must keep the user $sort for order-sensitive
@@ -863,23 +809,17 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    ->  Subquery Scan on agg_stage_1
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
-         ->  GroupAggregate
+         ->  HashAggregate
                Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, blackboxdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$v" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'l'::text, blackboxdb_api_internal.bson_expression_get(bsonlast(agg_stage_0.document, '{"{ \"v\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$v" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               ->  Sort
-                     Output: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-                     Sort Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-                     ->  Subquery Scan on agg_stage_0
-                           Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
-                           ->  Sort
-                                 Output: collection.document, (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson))
-                                 Sort Key: (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-                                 ->  Bitmap Heap Scan on blackboxdb_data.documents_25701000 collection
-                                       Output: collection.document, bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)
-                                       Recheck Cond: (collection.shard_key_value = '25701000'::bigint)
-                                       ->  Bitmap Index Scan on _id_
-                                             Index Cond: (collection.shard_key_value = '25701000'::bigint)
-(21 rows)
+               Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Subquery Scan on agg_stage_0
+                     Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+                     ->  Sort
+                           Output: collection.document, (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson))
+                           Sort Key: (bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+                           ->  Seq Scan on blackboxdb_data.documents_25701000 collection
+                                 Output: collection.document, bson_orderby(collection.document, '{ "v" : { "$numberInt" : "1" } }'::bson)
+(15 rows)
 
 RESET blackboxdb.enableSortGroupStage;
 -- =============================================================================
@@ -957,32 +897,26 @@ SET blackboxdb.enableSortGroupStage TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "g": 1, "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
                  document                 
 ------------------------------------------
- { "_id" : "W", "firstVal" : "only-low" }
  { "_id" : "X", "firstVal" : "first" }
- { "_id" : "Y", "firstVal" : "earliest" }
  { "_id" : "Z", "firstVal" : "low" }
+ { "_id" : "W", "firstVal" : "only-low" }
+ { "_id" : "Y", "firstVal" : "earliest" }
 (4 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "g": 1, "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
                                                                                                                                                                                                                                                                                                                                               QUERY PLAN                                                                                                                                                                                                                                                                                                                                               
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, blackboxdb_api_internal.bson_expression_get(bsonfirst(agg_stage_1.document, '{"{ \"g\" : { \"$numberInt\" : \"1\" } }","{ \"seq\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (blackboxdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1.document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Subquery Scan on agg_stage_1
-               Output: blackboxdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
-               ->  Sort
-                     Output: collection.document, (bson_orderby(collection.document, '{ "g" : { "$numberInt" : "1" } }'::bson)), (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
-                     Sort Key: (bson_orderby(collection.document, '{ "g" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701010 collection
-                           Output: collection.document, bson_orderby(collection.document, '{ "g" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(16 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_1
+         Output: blackboxdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+         ->  Sort
+               Output: collection.document, (bson_orderby(collection.document, '{ "g" : { "$numberInt" : "1" } }'::bson)), (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+               Sort Key: (bson_orderby(collection.document, '{ "g" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+               ->  Seq Scan on blackboxdb_data.documents_25701010 collection
+                     Output: collection.document, bson_orderby(collection.document, '{ "g" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
+(10 rows)
 
 -- With sortGroup ON: Sort node for {g,seq} should disappear, and orderby pushed to aggregate
 SET blackboxdb.enableSortGroupStage TO on;
@@ -1005,12 +939,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    ->  Sort
          Output: (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
          Sort Key: (blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_25701010 collection
+         ->  Seq Scan on blackboxdb_data.documents_25701010 collection
                Output: blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-               Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(11 rows)
+(8 rows)
 
 -- =============================================================================
 -- 30. Negative tests: $sort + $group with only $first where sort should NOT
@@ -1022,46 +953,34 @@ SET blackboxdb.enableSortGroupStage TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "score": { "$meta": "textScore" } } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
                                                                                                                                                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                                                                                                                                                             
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, blackboxdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"score\" : { \"$meta\" : \"textScore\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Subquery Scan on agg_stage_0
-               Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
-               ->  Sort
-                     Output: collection.document, (bson_orderby(collection.document, '{ "score" : { "$meta" : "textScore" } }'::bson))
-                     Sort Key: (bson_orderby(collection.document, '{ "score" : { "$meta" : "textScore" } }'::bson)) DESC NULLS LAST
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701010 collection
-                           Output: collection.document, bson_orderby(collection.document, '{ "score" : { "$meta" : "textScore" } }'::bson)
-                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(16 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_0
+         Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+         ->  Sort
+               Output: collection.document, (bson_orderby(collection.document, '{ "score" : { "$meta" : "textScore" } }'::bson))
+               Sort Key: (bson_orderby(collection.document, '{ "score" : { "$meta" : "textScore" } }'::bson)) DESC NULLS LAST
+               ->  Seq Scan on blackboxdb_data.documents_25701010 collection
+                     Output: collection.document, bson_orderby(collection.document, '{ "score" : { "$meta" : "textScore" } }'::bson)
+(10 rows)
 
 -- 30b. $natural in sort spec → sort not pushed to accumulator (Sort node present)
 SET blackboxdb.enableSortGroupStage TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "$natural": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
                                                                                                                                                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                                                                                                                                                             
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, blackboxdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"$natural\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Subquery Scan on agg_stage_0
-               Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
-               ->  Sort
+   Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_0
+         Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+         ->  Sort
+               Output: collection.document, collection.ctid
+               Sort Key: collection.ctid NULLS FIRST
+               ->  Seq Scan on blackboxdb_data.documents_25701010 collection
                      Output: collection.document, collection.ctid
-                     Sort Key: collection.ctid NULLS FIRST
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701010 collection
-                           Output: collection.document, collection.ctid
-                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(16 rows)
+(10 rows)
 
 -- 30c. Mix of $first and $sum with non-prefix sort {seq} (group key is $g).
 --      Sort spec is not a prefix of the group keys, so the Sort node is
@@ -1070,32 +989,26 @@ SET blackboxdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" }, "total": { "$sum": "$seq" } } } ] }');
                                    document                                   
 ------------------------------------------------------------------------------
- { "_id" : "W", "firstVal" : "only-low", "total" : { "$numberInt" : "101" } }
  { "_id" : "X", "firstVal" : "first", "total" : { "$numberInt" : "60" } }
- { "_id" : "Y", "firstVal" : "earliest", "total" : { "$numberInt" : "55" } }
  { "_id" : "Z", "firstVal" : "low", "total" : { "$numberInt" : "80" } }
+ { "_id" : "W", "firstVal" : "only-low", "total" : { "$numberInt" : "101" } }
+ { "_id" : "Y", "firstVal" : "earliest", "total" : { "$numberInt" : "55" } }
 (4 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" }, "total": { "$sum": "$seq" } } } ] }');
                                                                                                                                                                                                                                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                       
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, blackboxdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"seq\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'total'::text, blackboxdb_api_internal.bsonsumwithexpr(agg_stage_0.document, '{ "" : "$seq" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text)), (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Subquery Scan on agg_stage_0
-               Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
-               ->  Sort
-                     Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
-                     Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701010 collection
-                           Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(16 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_0
+         Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+         ->  Sort
+               Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+               Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+               ->  Seq Scan on blackboxdb_data.documents_25701010 collection
+                     Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
+(10 rows)
 
 -- =============================================================================
 -- 31. Descending sort.  31a uses sort {seq} (non-prefix, Sort node remains);
@@ -1107,32 +1020,26 @@ SET blackboxdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": -1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
                  document                  
 -------------------------------------------
- { "_id" : "W", "firstVal" : "only-high" }
  { "_id" : "X", "firstVal" : "third" }
- { "_id" : "Y", "firstVal" : "later" }
  { "_id" : "Z", "firstVal" : "high" }
+ { "_id" : "W", "firstVal" : "only-high" }
+ { "_id" : "Y", "firstVal" : "later" }
 (4 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": -1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
                                                                                                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                                                                                                           
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, blackboxdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"seq\" : { \"$numberInt\" : \"-1\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Subquery Scan on agg_stage_0
-               Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
-               ->  Sort
-                     Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "-1" } }'::bson))
-                     Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701010 collection
-                           Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)
-                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(16 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_0
+         Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+         ->  Sort
+               Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "-1" } }'::bson))
+               Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
+               ->  Seq Scan on blackboxdb_data.documents_25701010 collection
+                     Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)
+(10 rows)
 
 -- 31b. Compound descending
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "g": -1, "seq": -1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
@@ -1163,12 +1070,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    ->  Sort
          Output: (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document, (bson_orderby(document, '{ "seq" : { "$numberInt" : "-1" } }'::bson))
          Sort Key: (blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)) USING >>> NULLS LAST
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_25701010 collection
+         ->  Seq Scan on blackboxdb_data.documents_25701010 collection
                Output: blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "seq" : { "$numberInt" : "-1" } }'::bson)
-               Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(11 rows)
+(8 rows)
 
 -- =============================================================================
 -- 32. Multiple $first accumulators with non-prefix sort {seq}.
@@ -1178,32 +1082,26 @@ SET blackboxdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" }, "firstSeq": { "$first": "$seq" } } } ] }');
                                    document                                    
 -------------------------------------------------------------------------------
- { "_id" : "W", "firstVal" : "only-low", "firstSeq" : { "$numberInt" : "1" } }
  { "_id" : "X", "firstVal" : "first", "firstSeq" : { "$numberInt" : "10" } }
- { "_id" : "Y", "firstVal" : "earliest", "firstSeq" : { "$numberInt" : "5" } }
  { "_id" : "Z", "firstVal" : "low", "firstSeq" : { "$numberInt" : "15" } }
+ { "_id" : "W", "firstVal" : "only-low", "firstSeq" : { "$numberInt" : "1" } }
+ { "_id" : "Y", "firstVal" : "earliest", "firstSeq" : { "$numberInt" : "5" } }
 (4 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" }, "firstSeq": { "$first": "$seq" } } } ] }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                         
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, blackboxdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"seq\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'firstSeq'::text, blackboxdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"seq\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$seq" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Subquery Scan on agg_stage_0
-               Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
-               ->  Sort
-                     Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
-                     Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701010 collection
-                           Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(16 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_0
+         Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+         ->  Sort
+               Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+               Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+               ->  Seq Scan on blackboxdb_data.documents_25701010 collection
+                     Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
+(10 rows)
 
 -- =============================================================================
 -- 33. $first with expression input under non-prefix sort {seq}.
@@ -1213,10 +1111,10 @@ SET blackboxdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstDoubled": { "$first": { "$multiply": ["$seq", 2] } } } } ] }');
                          document                          
 -----------------------------------------------------------
- { "_id" : "W", "firstDoubled" : { "$numberInt" : "2" } }
  { "_id" : "X", "firstDoubled" : { "$numberInt" : "20" } }
- { "_id" : "Y", "firstDoubled" : { "$numberInt" : "10" } }
  { "_id" : "Z", "firstDoubled" : { "$numberInt" : "30" } }
+ { "_id" : "W", "firstDoubled" : { "$numberInt" : "2" } }
+ { "_id" : "Y", "firstDoubled" : { "$numberInt" : "10" } }
 (4 rows)
 
 -- =============================================================================
@@ -1241,23 +1139,17 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    Sort Key: (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    ->  Subquery Scan on agg_stage_1
          Output: agg_stage_1.document, bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
-         ->  GroupAggregate
+         ->  HashAggregate
                Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, blackboxdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"seq\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               ->  Sort
-                     Output: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-                     Sort Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-                     ->  Subquery Scan on agg_stage_0
-                           Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
-                           ->  Sort
-                                 Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
-                                 Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-                                 ->  Bitmap Heap Scan on blackboxdb_data.documents_25701010 collection
-                                       Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-                                       Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-                                       ->  Bitmap Index Scan on _id_
-                                             Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(21 rows)
+               Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+               ->  Subquery Scan on agg_stage_0
+                     Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+                     ->  Sort
+                           Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+                           Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+                           ->  Seq Scan on blackboxdb_data.documents_25701010 collection
+                                 Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
+(15 rows)
 
 -- =============================================================================
 -- 35. $first + all order-insensitive accumulators combined.
@@ -1267,32 +1159,26 @@ SET blackboxdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" }, "total": { "$sum": "$seq" }, "average": { "$avg": "$seq" }, "minSeq": { "$min": "$seq" }, "maxSeq": { "$max": "$seq" }, "cnt": { "$count": {} } } } ] }');
                                                                                                                  document                                                                                                                  
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "_id" : "W", "firstVal" : "only-low", "total" : { "$numberInt" : "101" }, "average" : { "$numberDouble" : "50.5" }, "minSeq" : { "$numberInt" : "1" }, "maxSeq" : { "$numberInt" : "100" }, "cnt" : { "$numberInt" : "2" } }
  { "_id" : "X", "firstVal" : "first", "total" : { "$numberInt" : "60" }, "average" : { "$numberDouble" : "20.0" }, "minSeq" : { "$numberInt" : "10" }, "maxSeq" : { "$numberInt" : "30" }, "cnt" : { "$numberInt" : "3" } }
- { "_id" : "Y", "firstVal" : "earliest", "total" : { "$numberInt" : "55" }, "average" : { "$numberDouble" : "27.5" }, "minSeq" : { "$numberInt" : "5" }, "maxSeq" : { "$numberInt" : "50" }, "cnt" : { "$numberInt" : "2" } }
  { "_id" : "Z", "firstVal" : "low", "total" : { "$numberInt" : "80" }, "average" : { "$numberDouble" : "26.666666666666667851" }, "minSeq" : { "$numberInt" : "15" }, "maxSeq" : { "$numberInt" : "40" }, "cnt" : { "$numberInt" : "3" } }
+ { "_id" : "W", "firstVal" : "only-low", "total" : { "$numberInt" : "101" }, "average" : { "$numberDouble" : "50.5" }, "minSeq" : { "$numberInt" : "1" }, "maxSeq" : { "$numberInt" : "100" }, "cnt" : { "$numberInt" : "2" } }
+ { "_id" : "Y", "firstVal" : "earliest", "total" : { "$numberInt" : "55" }, "average" : { "$numberDouble" : "27.5" }, "minSeq" : { "$numberInt" : "5" }, "maxSeq" : { "$numberInt" : "50" }, "cnt" : { "$numberInt" : "2" } }
 (4 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" }, "total": { "$sum": "$seq" }, "average": { "$avg": "$seq" }, "minSeq": { "$min": "$seq" }, "maxSeq": { "$max": "$seq" }, "cnt": { "$count": {} } } } ] }');
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, blackboxdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"seq\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), 'total'::text, blackboxdb_api_internal.bsonsumwithexpr(agg_stage_0.document, '{ "" : "$seq" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'average'::text, blackboxdb_api_internal.bsonaveragewithexpr(agg_stage_0.document, '{ "" : "$seq" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'minSeq'::text, blackboxdb_api_internal.bsonminwithexpr(agg_stage_0.document, '{ "" : "$seq" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'maxSeq'::text, blackboxdb_api_internal.bsonmaxwithexpr(agg_stage_0.document, '{ "" : "$seq" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson, NULL::text), 'cnt'::text, blackboxdb_api_internal.bsoncount(1)), (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Subquery Scan on agg_stage_0
-               Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
-               ->  Sort
-                     Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
-                     Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701010 collection
-                           Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(16 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_0
+         Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+         ->  Sort
+               Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+               Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+               ->  Seq Scan on blackboxdb_data.documents_25701010 collection
+                     Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
+(10 rows)
 
 -- =============================================================================
 -- 36. Accumulators that block optimization (Sort node must remain)
@@ -1302,89 +1188,65 @@ SET blackboxdb.enableSortGroupStage TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "vals": { "$push": "$val" } } } ] }');
                                                                                                                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                                                                                                                       
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'vals'::text, bson_array_agg(blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$val" }'::bson, false, '{ "now" : NOW_SYS_VARIABLE }'::bson), ''::text, true)), (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Subquery Scan on agg_stage_0
-               Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
-               ->  Sort
-                     Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
-                     Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701010 collection
-                           Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(16 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_0
+         Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+         ->  Sort
+               Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+               Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+               ->  Seq Scan on blackboxdb_data.documents_25701010 collection
+                     Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
+(10 rows)
 
 -- 36b. $addToSet only → sort NOT pushed
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "vals": { "$addToSet": "$val" } } } ] }');
                                                                                                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                                                                                                           
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'vals'::text, blackboxdb_api_internal.bson_add_to_set(blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Subquery Scan on agg_stage_0
-               Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
-               ->  Sort
-                     Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
-                     Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701010 collection
-                           Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(16 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_0
+         Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+         ->  Sort
+               Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+               Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+               ->  Seq Scan on blackboxdb_data.documents_25701010 collection
+                     Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
+(10 rows)
 
 -- 36c. $last only → sort NOT pushed
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "lastVal": { "$last": "$val" } } } ] }');
                                                                                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                                                                                         
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'lastVal'::text, blackboxdb_api_internal.bson_expression_get(bsonlast(agg_stage_0.document, '{"{ \"seq\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Subquery Scan on agg_stage_0
-               Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
-               ->  Sort
-                     Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
-                     Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701010 collection
-                           Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(16 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_0
+         Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+         ->  Sort
+               Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+               Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+               ->  Seq Scan on blackboxdb_data.documents_25701010 collection
+                     Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
+(10 rows)
 
 -- 36d. $mergeObjects only → sort NOT pushed (non-positional but still blocks)
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "merged": { "$mergeObjects": { "s": "$seq", "v": "$val" } } } } ] }');
                                                                                                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                                                                                                    
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'merged'::text, blackboxdb_api_internal.bson_merge_objects(agg_stage_0.document, '2147483647'::bigint, '{"{ \"seq\" : { \"$numberInt\" : \"1\" } }"}'::bson[], '{ "" : { "s" : "$seq", "v" : "$val" } }'::bson)), (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Subquery Scan on agg_stage_0
-               Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
-               ->  Sort
-                     Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
-                     Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701010 collection
-                           Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(16 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_0
+         Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+         ->  Sort
+               Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+               Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+               ->  Seq Scan on blackboxdb_data.documents_25701010 collection
+                     Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
+(10 rows)
 
 -- =============================================================================
 -- 37. Edge case: $group with only _id, no accumulators → sort dropped entirely
@@ -1393,53 +1255,41 @@ SET blackboxdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g" } } ] }');
     document     
 -----------------
- { "_id" : "W" }
  { "_id" : "X" }
- { "_id" : "Y" }
  { "_id" : "Z" }
+ { "_id" : "W" }
+ { "_id" : "Y" }
 (4 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g" } } ] }');
                                                                                                                                                                                QUERY PLAN                                                                                                                                                                               
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_25701010 collection
-               Output: blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
-               Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(11 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Seq Scan on blackboxdb_data.documents_25701010 collection
+         Output: blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+(5 rows)
 
 -- 37b. We do not require sort ordering in the group and it is just a distinct
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "g": 1 } }, { "$group": { "_id": "$g" } } ] }');
     document     
 -----------------
- { "_id" : "W" }
  { "_id" : "X" }
- { "_id" : "Y" }
  { "_id" : "Z" }
+ { "_id" : "W" }
+ { "_id" : "Y" }
 (4 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "g": 1 } }, { "$group": { "_id": "$g" } } ] }');
                                                                                                                                                                                QUERY PLAN                                                                                                                                                                               
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Bitmap Heap Scan on blackboxdb_data.documents_25701010 collection
-               Output: blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
-               Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-               ->  Bitmap Index Scan on _id_
-                     Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(11 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(collection.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Seq Scan on blackboxdb_data.documents_25701010 collection
+         Output: blackboxdb_api_internal.bson_expression_get(document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
+(5 rows)
 
 -- =============================================================================
 -- 38. enableNewWithExprAccumulators OFF with non-prefix sort.
@@ -1452,32 +1302,26 @@ SET blackboxdb.enableNewWithExprAccumulators TO off;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
                  document                 
 ------------------------------------------
- { "_id" : "W", "firstVal" : "only-low" }
  { "_id" : "X", "firstVal" : "first" }
- { "_id" : "Y", "firstVal" : "earliest" }
  { "_id" : "Z", "firstVal" : "low" }
+ { "_id" : "W", "firstVal" : "only-low" }
+ { "_id" : "Y", "firstVal" : "earliest" }
 (4 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
                                                                                                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                                                                                                          
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, blackboxdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"seq\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Subquery Scan on agg_stage_0
-               Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
-               ->  Sort
-                     Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
-                     Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701010 collection
-                           Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(16 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_0
+         Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+         ->  Sort
+               Output: collection.document, (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+               Sort Key: (bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+               ->  Seq Scan on blackboxdb_data.documents_25701010 collection
+                     Output: collection.document, bson_orderby(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
+(10 rows)
 
 SET blackboxdb.enableNewWithExprAccumulators TO on;
 -- =============================================================================
@@ -1492,23 +1336,17 @@ SET blackboxdb.enableSortGroupStage TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
                                                                                                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                                                                                                          
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, blackboxdb_api_internal.bson_expression_get(bsonfirst(agg_stage_1.document, '{"{ \"seq\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (blackboxdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1.document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Subquery Scan on agg_stage_1
-               Output: blackboxdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
-               ->  Sort
-                     Output: collection.document, (blackboxdb_api_internal.bson_orderby_index(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
-                     Sort Key: (blackboxdb_api_internal.bson_orderby_index(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701010 collection
-                           Output: collection.document, blackboxdb_api_internal.bson_orderby_index(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(16 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_1
+         Output: blackboxdb_api_internal.bson_expression_get(agg_stage_1.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+         ->  Sort
+               Output: collection.document, (blackboxdb_api_internal.bson_orderby_index(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+               Sort Key: (blackboxdb_api_internal.bson_orderby_index(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+               ->  Seq Scan on blackboxdb_data.documents_25701010 collection
+                     Output: collection.document, blackboxdb_api_internal.bson_orderby_index(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
+(10 rows)
 
 -- 39b. enableOrderByIndexTerm ON, enableSortGroupStage ON, non-prefix sort:
 --      bson_orderby_index stays in the Sort node (no prefix-push)
@@ -1517,23 +1355,17 @@ SET blackboxdb.enableSortGroupStage TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
                                                                                                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                                                                                                          
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, blackboxdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"seq\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Subquery Scan on agg_stage_0
-               Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
-               ->  Sort
-                     Output: collection.document, (blackboxdb_api_internal.bson_orderby_index(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
-                     Sort Key: (blackboxdb_api_internal.bson_orderby_index(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701010 collection
-                           Output: collection.document, blackboxdb_api_internal.bson_orderby_index(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(16 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_0
+         Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+         ->  Sort
+               Output: collection.document, (blackboxdb_api_internal.bson_orderby_index(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+               Sort Key: (blackboxdb_api_internal.bson_orderby_index(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+               ->  Seq Scan on blackboxdb_data.documents_25701010 collection
+                     Output: collection.document, blackboxdb_api_internal.bson_orderby_index(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
+(10 rows)
 
 -- 39c. enableOrderByIndexTerm ON, descending non-prefix sort: bson_orderby_index_reverse in Sort node
 SET blackboxdb.enableOrderByIndexTerm TO on;
@@ -1541,23 +1373,17 @@ SET blackboxdb.enableSortGroupStage TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": -1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
                                                                                                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                                                                                                           
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, blackboxdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"seq\" : { \"$numberInt\" : \"-1\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Subquery Scan on agg_stage_0
-               Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
-               ->  Sort
-                     Output: collection.document, (blackboxdb_api_internal.bson_orderby_index_reverse(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
-                     Sort Key: (blackboxdb_api_internal.bson_orderby_index_reverse(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) DESC NULLS LAST
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701010 collection
-                           Output: collection.document, blackboxdb_api_internal.bson_orderby_index_reverse(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
-                           Recheck Cond: (collection.shard_key_value = '25701010'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701010'::bigint)
-(16 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_0
+         Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+         ->  Sort
+               Output: collection.document, (blackboxdb_api_internal.bson_orderby_index_reverse(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson))
+               Sort Key: (blackboxdb_api_internal.bson_orderby_index_reverse(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)) DESC NULLS LAST
+               ->  Seq Scan on blackboxdb_data.documents_25701010 collection
+                     Output: collection.document, blackboxdb_api_internal.bson_orderby_index_reverse(collection.document, '{ "seq" : { "$numberInt" : "1" } }'::bson)
+(10 rows)
 
 -- 39d. Execution: enableOrderByIndexTerm ON, enableSortGroupStage ON, prefix-eligible ascending
 --      Sort {g, seq} matches the group prefix, so suffix {seq} is pushed into aggorder.
@@ -1579,10 +1405,10 @@ SET blackboxdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_sortgroup_test", "pipeline": [ { "$sort": { "seq": -1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
                  document                  
 -------------------------------------------
- { "_id" : "W", "firstVal" : "only-high" }
  { "_id" : "X", "firstVal" : "third" }
- { "_id" : "Y", "firstVal" : "later" }
  { "_id" : "Z", "firstVal" : "high" }
+ { "_id" : "W", "firstVal" : "only-high" }
+ { "_id" : "Y", "firstVal" : "later" }
 (4 rows)
 
 RESET blackboxdb.enableOrderByIndexTerm;
@@ -1620,30 +1446,24 @@ SET blackboxdb.enableSortGroupStage TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_nested_sort", "pipeline": [ { "$sort": { "info.priority": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
                  document                 
 ------------------------------------------
- { "_id" : "A", "firstVal" : "high-pri" }
  { "_id" : "B", "firstVal" : "b-high" }
+ { "_id" : "A", "firstVal" : "high-pri" }
 (2 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_nested_sort", "pipeline": [ { "$sort": { "info.priority": 1 } }, { "$group": { "_id": "$g", "firstVal": { "$first": "$val" } } } ] }');
                                                                                                                                                                                                                                                                                                                                QUERY PLAN                                                                                                                                                                                                                                                                                                                               
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstVal'::text, blackboxdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"info.priority\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$val" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Subquery Scan on agg_stage_0
-               Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
-               ->  Sort
-                     Output: collection.document, (bson_orderby(collection.document, '{ "info.priority" : { "$numberInt" : "1" } }'::bson))
-                     Sort Key: (bson_orderby(collection.document, '{ "info.priority" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701011 collection
-                           Output: collection.document, bson_orderby(collection.document, '{ "info.priority" : { "$numberInt" : "1" } }'::bson)
-                           Recheck Cond: (collection.shard_key_value = '25701011'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701011'::bigint)
-(16 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_0
+         Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+         ->  Sort
+               Output: collection.document, (bson_orderby(collection.document, '{ "info.priority" : { "$numberInt" : "1" } }'::bson))
+               Sort Key: (bson_orderby(collection.document, '{ "info.priority" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+               ->  Seq Scan on blackboxdb_data.documents_25701011 collection
+                     Output: collection.document, bson_orderby(collection.document, '{ "info.priority" : { "$numberInt" : "1" } }'::bson)
+(10 rows)
 
 SELECT blackboxdb_api.drop_collection('db', 'fl_nested_sort');
  drop_collection 
@@ -1697,69 +1517,57 @@ SET blackboxdb_core.enableCollation TO on;
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": 1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
                   document                   
 ---------------------------------------------
- { "_id" : "A", "firstName" : "Banana" }
  { "_id" : "B", "firstName" : "Elderberry" }
+ { "_id" : "A", "firstName" : "Banana" }
 (2 rows)
 
 -- 41b. EXPLAIN: Sort node remains (non-prefix sort); collation-aware orderby applies in the Sort
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": 1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
                                                                                                                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                                                                                                                            
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstName'::text, blackboxdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"name\" : { \"$numberInt\" : \"1\" } }"}'::bson[]), '{ "" : "$name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Subquery Scan on agg_stage_0
-               Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
-               ->  Sort
-                     Output: collection.document, (blackboxdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
-                     Sort Key: (blackboxdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701012 collection
-                           Output: collection.document, blackboxdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
-                           Recheck Cond: (collection.shard_key_value = '25701012'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701012'::bigint)
-(16 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_0
+         Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+         ->  Sort
+               Output: collection.document, (blackboxdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text))
+               Sort Key: (blackboxdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
+               ->  Seq Scan on blackboxdb_data.documents_25701012 collection
+                     Output: collection.document, blackboxdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)
+(10 rows)
 
 -- 41c. Without collation (binary comparison): $first result differs from collated sort
 --      Binary: "Banana"(0x42) < "apple"(0x61) vs case-insensitive: "apple" < "Banana"
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": 1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {} }');
                   document                   
 ---------------------------------------------
- { "_id" : "A", "firstName" : "Banana" }
  { "_id" : "B", "firstName" : "Elderberry" }
+ { "_id" : "A", "firstName" : "Banana" }
 (2 rows)
 
 -- 41d. Collation with descending sort
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": -1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
                 document                 
 -----------------------------------------
- { "_id" : "A", "firstName" : "cherry" }
  { "_id" : "B", "firstName" : "date" }
+ { "_id" : "A", "firstName" : "cherry" }
 (2 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "fl_collation_sortpush", "pipeline": [ { "$sort": { "name": -1 } }, { "$group": { "_id": "$g", "firstName": { "$first": "$name" } } } ], "cursor": {}, "collation": { "locale": "en", "strength": 1 } }');
                                                                                                                                                                                                                                                                                                                             QUERY PLAN                                                                                                                                                                                                                                                                                                                            
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
+ HashAggregate
    Output: bson_repath_and_build('_id'::text, (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'firstName'::text, blackboxdb_api_internal.bson_expression_get(bsonfirst(agg_stage_0.document, '{"{ \"name\" : { \"$numberInt\" : \"-1\" } }"}'::bson[]), '{ "" : "$name" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   Group Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-   ->  Sort
-         Output: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_0.document
-         Sort Key: (blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-         ->  Subquery Scan on agg_stage_0
-               Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
-               ->  Sort
-                     Output: collection.document, (blackboxdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text))
-                     Sort Key: (blackboxdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)) USING >>> NULLS LAST
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_25701012 collection
-                           Output: collection.document, blackboxdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)
-                           Recheck Cond: (collection.shard_key_value = '25701012'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '25701012'::bigint)
-(16 rows)
+   Group Key: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)
+   ->  Subquery Scan on agg_stage_0
+         Output: blackboxdb_api_internal.bson_expression_get(agg_stage_0.document, '{ "" : "$g" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_0.document
+         ->  Sort
+               Output: collection.document, (blackboxdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text))
+               Sort Key: (blackboxdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)) USING >>> NULLS LAST
+               ->  Seq Scan on blackboxdb_data.documents_25701012 collection
+                     Output: collection.document, blackboxdb_api_internal.bson_orderby(collection.document, '{ "name" : { "$numberInt" : "-1" } }'::bson, 'en-u-ks-level1'::text)
+(10 rows)
 
 SET blackboxdb_core.enableCollation TO off;
 SET blackboxdb.enableCollationWithNewGroupAccumulators TO off;
