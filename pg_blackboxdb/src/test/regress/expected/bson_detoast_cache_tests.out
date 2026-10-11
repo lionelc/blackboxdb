@@ -19,6 +19,48 @@ FROM pg_class WHERE relname = (SELECT 'documents_' || collection_id FROM blackbo
  t
 (1 row)
 
+-- With the cache off, no read path may touch it: after a filter with a projection, a group and a sort over the
+-- documents, the session has no cache memory at all.
+SET blackboxdb_core.enable_detoast_cache TO off;
+SELECT document FROM bson_aggregation_pipeline('detoastdb', '{ "aggregate": "docs", "pipeline": [ { "$match": { "v": { "$gte": 190 } } }, { "$project": { "_id": 1, "len": { "$strLenCP": "$big" } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
+                                 document                                 
+--------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "16" }, "len" : { "$numberInt" : "12800" } }
+ { "_id" : { "$numberInt" : "27" }, "len" : { "$numberInt" : "12800" } }
+ { "_id" : { "$numberInt" : "43" }, "len" : { "$numberInt" : "12800" } }
+ { "_id" : { "$numberInt" : "54" }, "len" : { "$numberInt" : "12800" } }
+ { "_id" : { "$numberInt" : "70" }, "len" : { "$numberInt" : "12800" } }
+ { "_id" : { "$numberInt" : "81" }, "len" : { "$numberInt" : "12800" } }
+ { "_id" : { "$numberInt" : "108" }, "len" : { "$numberInt" : "12800" } }
+ { "_id" : { "$numberInt" : "135" }, "len" : { "$numberInt" : "12800" } }
+ { "_id" : { "$numberInt" : "162" }, "len" : { "$numberInt" : "12800" } }
+ { "_id" : { "$numberInt" : "189" }, "len" : { "$numberInt" : "12800" } }
+(10 rows)
+
+SELECT document FROM bson_aggregation_pipeline('detoastdb', '{ "aggregate": "docs", "pipeline": [ { "$group": { "_id": "$g", "len": { "$max": { "$strLenCP": "$big" } } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
+                                document                                
+------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "0" }, "len" : { "$numberInt" : "12800" } }
+ { "_id" : { "$numberInt" : "1" }, "len" : { "$numberInt" : "12800" } }
+ { "_id" : { "$numberInt" : "2" }, "len" : { "$numberInt" : "12800" } }
+ { "_id" : { "$numberInt" : "3" }, "len" : { "$numberInt" : "12800" } }
+ { "_id" : { "$numberInt" : "4" }, "len" : { "$numberInt" : "12800" } }
+(5 rows)
+
+SELECT document FROM bson_aggregation_pipeline('detoastdb', '{ "aggregate": "docs", "pipeline": [ { "$sort": { "v": -1, "_id": 1 } }, { "$limit": 3 }, { "$project": { "_id": 1, "v": 1 } } ], "cursor": {} }');
+                              document                               
+---------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "27" }, "v" : { "$numberInt" : "199" } }
+ { "_id" : { "$numberInt" : "54" }, "v" : { "$numberInt" : "198" } }
+ { "_id" : { "$numberInt" : "81" }, "v" : { "$numberInt" : "197" } }
+(3 rows)
+
+SELECT count(*) AS cache_contexts FROM pg_backend_memory_contexts WHERE name = 'BlackboxDB detoast cache';
+ cache_contexts 
+----------------
+              0
+(1 row)
+
 -- Each query runs with the cache off and then on; the results must be identical.
 SET blackboxdb_core.enable_detoast_cache TO off;
 SELECT document FROM bson_aggregation_pipeline('detoastdb', '{ "aggregate": "docs", "pipeline": [ { "$group": { "_id": "$g", "n": { "$sum": 1 }, "s": { "$sum": "$v" }, "len": { "$max": { "$strLenCP": "$big" } } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
@@ -142,5 +184,69 @@ SELECT detoast_cache_hits('{ "aggregate": "docs", "pipeline": [ { "$sort": { "v"
  t
 (1 row)
 
+-- A document is reused only within its statement: the second statement of a transaction reads it again.
+SET blackboxdb_core.enable_detoast_cache TO on;
+SELECT detoast_cache_hits('{ "aggregate": "docs", "pipeline": [ { "$match": { "_id": 42 } }, { "$project": { "len": { "$strLenCP": "$big" } } } ], "cursor": {} }') > 0 AS warm;
+ warm 
+------
+ t
+(1 row)
+
+BEGIN;
+SELECT detoast_cache_hits('{ "aggregate": "docs", "pipeline": [ { "$match": { "_id": 42 } }, { "$project": { "len": { "$strLenCP": "$big" } } } ], "cursor": {} }') AS first_statement_hits \gset
+SELECT detoast_cache_hits('{ "aggregate": "docs", "pipeline": [ { "$match": { "_id": 42 } }, { "$project": { "len": { "$strLenCP": "$big" } } } ], "cursor": {} }') = :first_statement_hits AS second_statement_reads_again;
+ second_statement_reads_again 
+------------------------------
+ t
+(1 row)
+
+COMMIT;
+-- The cache holds documents until the transaction ends, and is empty after it.
+BEGIN;
+SELECT document FROM bson_aggregation_pipeline('detoastdb', '{ "aggregate": "docs", "pipeline": [ { "$group": { "_id": "$g", "len": { "$max": { "$strLenCP": "$big" } }, "total": { "$sum": { "$strLenCP": "$big" } } } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
+                                                   document                                                    
+---------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "0" }, "len" : { "$numberInt" : "12800" }, "total" : { "$numberInt" : "512000" } }
+ { "_id" : { "$numberInt" : "1" }, "len" : { "$numberInt" : "12800" }, "total" : { "$numberInt" : "512000" } }
+ { "_id" : { "$numberInt" : "2" }, "len" : { "$numberInt" : "12800" }, "total" : { "$numberInt" : "512000" } }
+ { "_id" : { "$numberInt" : "3" }, "len" : { "$numberInt" : "12800" }, "total" : { "$numberInt" : "512000" } }
+ { "_id" : { "$numberInt" : "4" }, "len" : { "$numberInt" : "12800" }, "total" : { "$numberInt" : "512000" } }
+(5 rows)
+
+SELECT used_bytes > 12800 AS holds_documents FROM pg_backend_memory_contexts WHERE name = 'BlackboxDB detoast cache';
+ holds_documents 
+-----------------
+ t
+(1 row)
+
+COMMIT;
+SELECT used_bytes < 4096 AS empty_after_commit FROM pg_backend_memory_contexts WHERE name = 'BlackboxDB detoast cache';
+ empty_after_commit 
+--------------------
+ t
+(1 row)
+
+-- A document over 1 MB is never kept.
+SELECT blackboxdb_api.insert_one('detoastdb', 'huge', FORMAT('{ "_id": 1, "big": "%s" }', (SELECT string_agg(md5(j::text), '') FROM generate_series(1, 49152) j))::blackboxdb_core.bson);
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+BEGIN;
+SELECT document FROM bson_aggregation_pipeline('detoastdb', '{ "aggregate": "huge", "pipeline": [ { "$project": { "_id": 1, "len": { "$strLenCP": "$big" }, "head": { "$substrCP": [ "$big", 0, 8 ] } } } ], "cursor": {} }');
+                                           document                                            
+-----------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "len" : { "$numberInt" : "1572864" }, "head" : "c4ca4238" }
+(1 row)
+
+SELECT used_bytes < 1048576 AS huge_document_not_kept FROM pg_backend_memory_contexts WHERE name = 'BlackboxDB detoast cache';
+ huge_document_not_kept 
+------------------------
+ t
+(1 row)
+
+COMMIT;
 DROP FUNCTION detoast_cache_hits(text);
 RESET blackboxdb_core.enable_detoast_cache;
