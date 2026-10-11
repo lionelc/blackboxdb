@@ -447,5 +447,371 @@ SELECT match_before_unwind_rows('{ "aggregate": "orders", "pipeline": [ { "$unwi
               19
 (1 row)
 
+-- The extended scope (enable_match_before_unwind_extended): each query runs with it off and then on; results identical.
+-- includeArrayIndex with an independent $match: moved.
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": "pos" } }, { "$match": { "state": "won" } }, { "$project": { "_id": 1, "pos": 1, "items.p": 1 } }, { "$sort": { "_id": 1, "pos": 1 } } ], "cursor": {} }');
+                                                     document                                                     
+------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "2" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "3" } }, "pos" : { "$numberLong" : "1" } }
+ { "_id" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "4" } }, "pos" : { "$numberLong" : "2" } }
+ { "_id" : { "$numberInt" : "6" }, "items" : { "p" : { "$numberInt" : "3" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "6" }, "items" : { "p" : { "$numberInt" : "4" } }, "pos" : { "$numberLong" : "1" } }
+ { "_id" : { "$numberInt" : "9" }, "items" : { "p" : { "$numberInt" : "4" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "15" }, "items" : { "p" : { "$numberInt" : "1" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "15" }, "items" : { "p" : { "$numberInt" : "2" } }, "pos" : { "$numberLong" : "1" } }
+ { "_id" : { "$numberInt" : "15" }, "items" : { "p" : { "$numberInt" : "3" } }, "pos" : { "$numberLong" : "2" } }
+ { "_id" : { "$numberInt" : "18" }, "items" : { "p" : { "$numberInt" : "2" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "18" }, "items" : { "p" : { "$numberInt" : "3" } }, "pos" : { "$numberLong" : "1" } }
+ { "_id" : { "$numberInt" : "21" }, "items" : { "p" : { "$numberInt" : "3" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "27" }, "items" : { "p" : { "$numberInt" : "0" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "27" }, "items" : { "p" : { "$numberInt" : "1" } }, "pos" : { "$numberLong" : "1" } }
+ { "_id" : { "$numberInt" : "27" }, "items" : { "p" : { "$numberInt" : "2" } }, "pos" : { "$numberLong" : "2" } }
+ { "_id" : { "$numberInt" : "33" }, "items" : { "p" : { "$numberInt" : "2" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "39" }, "items" : { "p" : { "$numberInt" : "4" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "39" }, "items" : { "p" : { "$numberInt" : "0" } }, "pos" : { "$numberLong" : "1" } }
+ { "_id" : { "$numberInt" : "39" }, "items" : { "p" : { "$numberInt" : "1" } }, "pos" : { "$numberLong" : "2" } }
+(19 rows)
+
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": "pos" } }, { "$match": { "state": "won" } }, { "$project": { "_id": 1, "pos": 1, "items.p": 1 } }, { "$sort": { "_id": 1, "pos": 1 } } ], "cursor": {} }');
+                                                     document                                                     
+------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "2" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "3" } }, "pos" : { "$numberLong" : "1" } }
+ { "_id" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "4" } }, "pos" : { "$numberLong" : "2" } }
+ { "_id" : { "$numberInt" : "6" }, "items" : { "p" : { "$numberInt" : "3" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "6" }, "items" : { "p" : { "$numberInt" : "4" } }, "pos" : { "$numberLong" : "1" } }
+ { "_id" : { "$numberInt" : "9" }, "items" : { "p" : { "$numberInt" : "4" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "15" }, "items" : { "p" : { "$numberInt" : "1" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "15" }, "items" : { "p" : { "$numberInt" : "2" } }, "pos" : { "$numberLong" : "1" } }
+ { "_id" : { "$numberInt" : "15" }, "items" : { "p" : { "$numberInt" : "3" } }, "pos" : { "$numberLong" : "2" } }
+ { "_id" : { "$numberInt" : "18" }, "items" : { "p" : { "$numberInt" : "2" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "18" }, "items" : { "p" : { "$numberInt" : "3" } }, "pos" : { "$numberLong" : "1" } }
+ { "_id" : { "$numberInt" : "21" }, "items" : { "p" : { "$numberInt" : "3" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "27" }, "items" : { "p" : { "$numberInt" : "0" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "27" }, "items" : { "p" : { "$numberInt" : "1" } }, "pos" : { "$numberLong" : "1" } }
+ { "_id" : { "$numberInt" : "27" }, "items" : { "p" : { "$numberInt" : "2" } }, "pos" : { "$numberLong" : "2" } }
+ { "_id" : { "$numberInt" : "33" }, "items" : { "p" : { "$numberInt" : "2" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "39" }, "items" : { "p" : { "$numberInt" : "4" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "39" }, "items" : { "p" : { "$numberInt" : "0" } }, "pos" : { "$numberLong" : "1" } }
+ { "_id" : { "$numberInt" : "39" }, "items" : { "p" : { "$numberInt" : "1" } }, "pos" : { "$numberLong" : "2" } }
+(19 rows)
+
+-- includeArrayIndex with a $match on the index field, or a field under it: not moved.
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": "pos" } }, { "$match": { "pos": 0 } }, { "$project": { "_id": 1, "pos": 1, "items.p": 1 } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
+                                                     document                                                     
+------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "items" : { "p" : { "$numberInt" : "3" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "0" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "2" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "5" }, "items" : { "p" : { "$numberInt" : "1" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "6" }, "items" : { "p" : { "$numberInt" : "3" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "7" }, "items" : { "p" : { "$numberInt" : "0" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "9" }, "items" : { "p" : { "$numberInt" : "4" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "11" }, "items" : { "p" : { "$numberInt" : "3" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "13" }, "items" : { "p" : { "$numberInt" : "2" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "14" }, "items" : { "p" : { "$numberInt" : "4" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "15" }, "items" : { "p" : { "$numberInt" : "1" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "17" }, "items" : { "p" : { "$numberInt" : "0" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "18" }, "items" : { "p" : { "$numberInt" : "2" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "19" }, "items" : { "p" : { "$numberInt" : "4" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "21" }, "items" : { "p" : { "$numberInt" : "3" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "22" }, "items" : { "p" : { "$numberInt" : "0" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "23" }, "items" : { "p" : { "$numberInt" : "2" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "25" }, "items" : { "p" : { "$numberInt" : "1" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "26" }, "items" : { "p" : { "$numberInt" : "3" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "27" }, "items" : { "p" : { "$numberInt" : "0" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "29" }, "items" : { "p" : { "$numberInt" : "4" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "31" }, "items" : { "p" : { "$numberInt" : "3" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "33" }, "items" : { "p" : { "$numberInt" : "2" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "34" }, "items" : { "p" : { "$numberInt" : "4" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "35" }, "items" : { "p" : { "$numberInt" : "1" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "37" }, "items" : { "p" : { "$numberInt" : "0" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "38" }, "items" : { "p" : { "$numberInt" : "2" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "39" }, "items" : { "p" : { "$numberInt" : "4" } }, "pos" : { "$numberLong" : "0" } }
+(28 rows)
+
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": "pos" } }, { "$match": { "pos": 0 } }, { "$project": { "_id": 1, "pos": 1, "items.p": 1 } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
+                                                     document                                                     
+------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "items" : { "p" : { "$numberInt" : "3" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "0" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "2" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "5" }, "items" : { "p" : { "$numberInt" : "1" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "6" }, "items" : { "p" : { "$numberInt" : "3" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "7" }, "items" : { "p" : { "$numberInt" : "0" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "9" }, "items" : { "p" : { "$numberInt" : "4" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "11" }, "items" : { "p" : { "$numberInt" : "3" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "13" }, "items" : { "p" : { "$numberInt" : "2" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "14" }, "items" : { "p" : { "$numberInt" : "4" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "15" }, "items" : { "p" : { "$numberInt" : "1" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "17" }, "items" : { "p" : { "$numberInt" : "0" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "18" }, "items" : { "p" : { "$numberInt" : "2" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "19" }, "items" : { "p" : { "$numberInt" : "4" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "21" }, "items" : { "p" : { "$numberInt" : "3" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "22" }, "items" : { "p" : { "$numberInt" : "0" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "23" }, "items" : { "p" : { "$numberInt" : "2" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "25" }, "items" : { "p" : { "$numberInt" : "1" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "26" }, "items" : { "p" : { "$numberInt" : "3" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "27" }, "items" : { "p" : { "$numberInt" : "0" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "29" }, "items" : { "p" : { "$numberInt" : "4" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "31" }, "items" : { "p" : { "$numberInt" : "3" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "33" }, "items" : { "p" : { "$numberInt" : "2" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "34" }, "items" : { "p" : { "$numberInt" : "4" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "35" }, "items" : { "p" : { "$numberInt" : "1" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "37" }, "items" : { "p" : { "$numberInt" : "0" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "38" }, "items" : { "p" : { "$numberInt" : "2" } }, "pos" : { "$numberLong" : "0" } }
+ { "_id" : { "$numberInt" : "39" }, "items" : { "p" : { "$numberInt" : "4" } }, "pos" : { "$numberLong" : "0" } }
+(28 rows)
+
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": "pos" } }, { "$match": { "pos.x": { "$exists": false }, "state": "lost" } }, { "$count": "rows" } ], "cursor": {} }');
+               document               
+--------------------------------------
+ { "rows" : { "$numberInt" : "17" } }
+(1 row)
+
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": "pos" } }, { "$match": { "pos.x": { "$exists": false }, "state": "lost" } }, { "$count": "rows" } ], "cursor": {} }');
+               document               
+--------------------------------------
+ { "rows" : { "$numberInt" : "17" } }
+(1 row)
+
+-- A top-level $or of independent clauses: moved.
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$or": [ { "state": "won" }, { "territory": 3 } ] } }, { "$count": "rows" } ], "cursor": {} }');
+               document               
+--------------------------------------
+ { "rows" : { "$numberInt" : "37" } }
+(1 row)
+
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$or": [ { "state": "won" }, { "territory": 3 } ] } }, { "$count": "rows" } ], "cursor": {} }');
+               document               
+--------------------------------------
+ { "rows" : { "$numberInt" : "37" } }
+(1 row)
+
+-- An $or mixing independent and dependent clauses: not moved.
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$or": [ { "state": "won" }, { "items.q": { "$gte": 5 } } ] } }, { "$sort": { "_id": 1, "items.p": 1 } } ], "cursor": {} }');
+                                                                               document                                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "2" }, "q" : { "$numberInt" : "4" } } }
+ { "_id" : { "$numberInt" : "3" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "3" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "3" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "5" }, "state" : "open", "territory" : { "$numberInt" : "1" }, "items" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "6" }, "state" : "won", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "3" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "6" }, "state" : "won", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "7" }, "state" : "lost", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "9" }, "state" : "won", "territory" : { "$numberInt" : "1" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "1" } } }
+ { "_id" : { "$numberInt" : "11" }, "state" : "open", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "13" }, "state" : "lost", "territory" : { "$numberInt" : "1" }, "items" : { "p" : { "$numberInt" : "2" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "14" }, "state" : "open", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "14" }, "state" : "open", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "15" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "15" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "2" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "15" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "3" }, "q" : { "$numberInt" : "0" } } }
+ { "_id" : { "$numberInt" : "18" }, "state" : "won", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "2" }, "q" : { "$numberInt" : "1" } } }
+ { "_id" : { "$numberInt" : "18" }, "state" : "won", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "3" }, "q" : { "$numberInt" : "2" } } }
+ { "_id" : { "$numberInt" : "21" }, "state" : "won", "territory" : { "$numberInt" : "1" }, "items" : { "p" : { "$numberInt" : "3" }, "q" : { "$numberInt" : "4" } } }
+ { "_id" : { "$numberInt" : "22" }, "state" : "lost", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "22" }, "state" : "lost", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "23" }, "state" : "open", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "2" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "23" }, "state" : "open", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "3" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "23" }, "state" : "open", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "25" }, "state" : "lost", "territory" : { "$numberInt" : "1" }, "items" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "27" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "1" } } }
+ { "_id" : { "$numberInt" : "27" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "2" } } }
+ { "_id" : { "$numberInt" : "27" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "2" }, "q" : { "$numberInt" : "3" } } }
+ { "_id" : { "$numberInt" : "31" }, "state" : "lost", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "31" }, "state" : "lost", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "3" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "31" }, "state" : "lost", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "33" }, "state" : "won", "territory" : { "$numberInt" : "1" }, "items" : { "p" : { "$numberInt" : "2" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "34" }, "state" : "lost", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "39" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "39" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "39" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "4" } } }
+(35 rows)
+
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$or": [ { "state": "won" }, { "items.q": { "$gte": 5 } } ] } }, { "$sort": { "_id": 1, "items.p": 1 } } ], "cursor": {} }');
+                                                                               document                                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "2" }, "q" : { "$numberInt" : "4" } } }
+ { "_id" : { "$numberInt" : "3" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "3" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "3" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "5" }, "state" : "open", "territory" : { "$numberInt" : "1" }, "items" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "6" }, "state" : "won", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "3" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "6" }, "state" : "won", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "7" }, "state" : "lost", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "9" }, "state" : "won", "territory" : { "$numberInt" : "1" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "1" } } }
+ { "_id" : { "$numberInt" : "11" }, "state" : "open", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "13" }, "state" : "lost", "territory" : { "$numberInt" : "1" }, "items" : { "p" : { "$numberInt" : "2" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "14" }, "state" : "open", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "14" }, "state" : "open", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "15" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "15" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "2" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "15" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "3" }, "q" : { "$numberInt" : "0" } } }
+ { "_id" : { "$numberInt" : "18" }, "state" : "won", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "2" }, "q" : { "$numberInt" : "1" } } }
+ { "_id" : { "$numberInt" : "18" }, "state" : "won", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "3" }, "q" : { "$numberInt" : "2" } } }
+ { "_id" : { "$numberInt" : "21" }, "state" : "won", "territory" : { "$numberInt" : "1" }, "items" : { "p" : { "$numberInt" : "3" }, "q" : { "$numberInt" : "4" } } }
+ { "_id" : { "$numberInt" : "22" }, "state" : "lost", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "22" }, "state" : "lost", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "23" }, "state" : "open", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "2" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "23" }, "state" : "open", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "3" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "23" }, "state" : "open", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "25" }, "state" : "lost", "territory" : { "$numberInt" : "1" }, "items" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "27" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "1" } } }
+ { "_id" : { "$numberInt" : "27" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "2" } } }
+ { "_id" : { "$numberInt" : "27" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "2" }, "q" : { "$numberInt" : "3" } } }
+ { "_id" : { "$numberInt" : "31" }, "state" : "lost", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "31" }, "state" : "lost", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "3" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "31" }, "state" : "lost", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "33" }, "state" : "won", "territory" : { "$numberInt" : "1" }, "items" : { "p" : { "$numberInt" : "2" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "34" }, "state" : "lost", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "39" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "39" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "39" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "4" } } }
+(35 rows)
+
+-- Nested $and / $or, and $nor, all independent: moved.
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$and": [ { "state": "won" }, { "$or": [ { "territory": 1 }, { "territory": 2 } ] } ] } }, { "$count": "rows" } ], "cursor": {} }');
+              document               
+-------------------------------------
+ { "rows" : { "$numberInt" : "7" } }
+(1 row)
+
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$and": [ { "state": "won" }, { "$or": [ { "territory": 1 }, { "territory": 2 } ] } ] } }, { "$count": "rows" } ], "cursor": {} }');
+              document               
+-------------------------------------
+ { "rows" : { "$numberInt" : "7" } }
+(1 row)
+
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$nor": [ { "state": "lost" } ] } }, { "$count": "rows" } ], "cursor": {} }');
+               document               
+--------------------------------------
+ { "rows" : { "$numberInt" : "39" } }
+(1 row)
+
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$nor": [ { "state": "lost" } ] } }, { "$count": "rows" } ], "cursor": {} }');
+               document               
+--------------------------------------
+ { "rows" : { "$numberInt" : "39" } }
+(1 row)
+
+-- $expr on the unwound field: not moved.
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$expr": { "$gte": [ "$items.q", 5 ] } } }, { "$sort": { "_id": 1, "items.p": 1 } } ], "cursor": {} }');
+                                                                               document                                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "3" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "3" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "5" }, "state" : "open", "territory" : { "$numberInt" : "1" }, "items" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "6" }, "state" : "won", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "3" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "6" }, "state" : "won", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "7" }, "state" : "lost", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "11" }, "state" : "open", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "13" }, "state" : "lost", "territory" : { "$numberInt" : "1" }, "items" : { "p" : { "$numberInt" : "2" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "14" }, "state" : "open", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "14" }, "state" : "open", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "15" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "15" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "2" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "22" }, "state" : "lost", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "22" }, "state" : "lost", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "23" }, "state" : "open", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "2" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "23" }, "state" : "open", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "3" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "23" }, "state" : "open", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "25" }, "state" : "lost", "territory" : { "$numberInt" : "1" }, "items" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "31" }, "state" : "lost", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "31" }, "state" : "lost", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "3" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "31" }, "state" : "lost", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "33" }, "state" : "won", "territory" : { "$numberInt" : "1" }, "items" : { "p" : { "$numberInt" : "2" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "34" }, "state" : "lost", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "39" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "39" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "6" } } }
+(25 rows)
+
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$expr": { "$gte": [ "$items.q", 5 ] } } }, { "$sort": { "_id": 1, "items.p": 1 } } ], "cursor": {} }');
+                                                                               document                                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "3" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "3" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "3" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "5" }, "state" : "open", "territory" : { "$numberInt" : "1" }, "items" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "6" }, "state" : "won", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "3" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "6" }, "state" : "won", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "7" }, "state" : "lost", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "11" }, "state" : "open", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "13" }, "state" : "lost", "territory" : { "$numberInt" : "1" }, "items" : { "p" : { "$numberInt" : "2" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "14" }, "state" : "open", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "14" }, "state" : "open", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "15" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "15" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "2" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "22" }, "state" : "lost", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "22" }, "state" : "lost", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "23" }, "state" : "open", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "2" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "23" }, "state" : "open", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "3" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "23" }, "state" : "open", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "25" }, "state" : "lost", "territory" : { "$numberInt" : "1" }, "items" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "31" }, "state" : "lost", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "31" }, "state" : "lost", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "3" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "31" }, "state" : "lost", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "6" } } }
+ { "_id" : { "$numberInt" : "33" }, "state" : "won", "territory" : { "$numberInt" : "1" }, "items" : { "p" : { "$numberInt" : "2" }, "q" : { "$numberInt" : "7" } } }
+ { "_id" : { "$numberInt" : "34" }, "state" : "lost", "territory" : { "$numberInt" : "2" }, "items" : { "p" : { "$numberInt" : "4" }, "q" : { "$numberInt" : "8" } } }
+ { "_id" : { "$numberInt" : "39" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "0" }, "q" : { "$numberInt" : "5" } } }
+ { "_id" : { "$numberInt" : "39" }, "state" : "won", "territory" : { "$numberInt" : "3" }, "items" : { "p" : { "$numberInt" : "1" }, "q" : { "$numberInt" : "6" } } }
+(25 rows)
+
+-- Invalid $and keeps its error.
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$and": { "state": "won" } } } ], "cursor": {} }');
+ERROR:  Expected 'array' type for $and
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$and": { "state": "won" } } } ], "cursor": {} }');
+ERROR:  Expected 'array' type for $and
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$and": [ 1 ] } } ], "cursor": {} }');
+ERROR:  $or/$and/$nor entries need to be full objects
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$and": [ 1 ] } } ], "cursor": {} }');
+ERROR:  $or/$and/$nor entries need to be full objects
+-- With the extended scope the $unwind only expands the documents that pass the filter (includeArrayIndex, and $or).
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT match_before_unwind_rows('{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": "pos" } }, { "$match": { "state": "won" } }, { "$count": "rows" } ], "cursor": {} }') AS index_unwound_rows_off;
+ index_unwound_rows_off 
+------------------------
+                     56
+(1 row)
+
+SELECT match_before_unwind_rows('{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$or": [ { "state": "won" }, { "territory": 3 } ] } }, { "$count": "rows" } ], "cursor": {} }') AS or_unwound_rows_off;
+ or_unwound_rows_off 
+---------------------
+                  56
+(1 row)
+
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT match_before_unwind_rows('{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": "pos" } }, { "$match": { "state": "won" } }, { "$count": "rows" } ], "cursor": {} }') AS index_unwound_rows_on;
+ index_unwound_rows_on 
+-----------------------
+                    19
+(1 row)
+
+SELECT match_before_unwind_rows('{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$or": [ { "state": "won" }, { "territory": 3 } ] } }, { "$count": "rows" } ], "cursor": {} }') AS or_unwound_rows_on;
+ or_unwound_rows_on 
+--------------------
+                 37
+(1 row)
+
+RESET blackboxdb.enable_match_before_unwind_extended;
 DROP FUNCTION match_before_unwind_rows(text);
 RESET blackboxdb.enable_match_before_unwind;

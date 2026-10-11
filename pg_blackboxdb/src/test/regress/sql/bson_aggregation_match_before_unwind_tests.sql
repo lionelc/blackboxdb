@@ -119,5 +119,73 @@ SELECT match_before_unwind_rows('{ "aggregate": "orders", "pipeline": [ { "$unwi
 SET blackboxdb.enable_match_before_unwind TO on;
 SELECT match_before_unwind_rows('{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "state": "won" } }, { "$count": "rows" } ], "cursor": {} }') AS unwound_rows_on;
 
+-- The extended scope (enable_match_before_unwind_extended): each query runs with it off and then on; results identical.
+
+-- includeArrayIndex with an independent $match: moved.
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": "pos" } }, { "$match": { "state": "won" } }, { "$project": { "_id": 1, "pos": 1, "items.p": 1 } }, { "$sort": { "_id": 1, "pos": 1 } } ], "cursor": {} }');
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": "pos" } }, { "$match": { "state": "won" } }, { "$project": { "_id": 1, "pos": 1, "items.p": 1 } }, { "$sort": { "_id": 1, "pos": 1 } } ], "cursor": {} }');
+
+-- includeArrayIndex with a $match on the index field, or a field under it: not moved.
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": "pos" } }, { "$match": { "pos": 0 } }, { "$project": { "_id": 1, "pos": 1, "items.p": 1 } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": "pos" } }, { "$match": { "pos": 0 } }, { "$project": { "_id": 1, "pos": 1, "items.p": 1 } }, { "$sort": { "_id": 1 } } ], "cursor": {} }');
+
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": "pos" } }, { "$match": { "pos.x": { "$exists": false }, "state": "lost" } }, { "$count": "rows" } ], "cursor": {} }');
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": "pos" } }, { "$match": { "pos.x": { "$exists": false }, "state": "lost" } }, { "$count": "rows" } ], "cursor": {} }');
+
+-- A top-level $or of independent clauses: moved.
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$or": [ { "state": "won" }, { "territory": 3 } ] } }, { "$count": "rows" } ], "cursor": {} }');
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$or": [ { "state": "won" }, { "territory": 3 } ] } }, { "$count": "rows" } ], "cursor": {} }');
+
+-- An $or mixing independent and dependent clauses: not moved.
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$or": [ { "state": "won" }, { "items.q": { "$gte": 5 } } ] } }, { "$sort": { "_id": 1, "items.p": 1 } } ], "cursor": {} }');
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$or": [ { "state": "won" }, { "items.q": { "$gte": 5 } } ] } }, { "$sort": { "_id": 1, "items.p": 1 } } ], "cursor": {} }');
+
+-- Nested $and / $or, and $nor, all independent: moved.
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$and": [ { "state": "won" }, { "$or": [ { "territory": 1 }, { "territory": 2 } ] } ] } }, { "$count": "rows" } ], "cursor": {} }');
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$and": [ { "state": "won" }, { "$or": [ { "territory": 1 }, { "territory": 2 } ] } ] } }, { "$count": "rows" } ], "cursor": {} }');
+
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$nor": [ { "state": "lost" } ] } }, { "$count": "rows" } ], "cursor": {} }');
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$nor": [ { "state": "lost" } ] } }, { "$count": "rows" } ], "cursor": {} }');
+
+-- $expr on the unwound field: not moved.
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$expr": { "$gte": [ "$items.q", 5 ] } } }, { "$sort": { "_id": 1, "items.p": 1 } } ], "cursor": {} }');
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$expr": { "$gte": [ "$items.q", 5 ] } } }, { "$sort": { "_id": 1, "items.p": 1 } } ], "cursor": {} }');
+
+-- Invalid $and keeps its error.
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$and": { "state": "won" } } } ], "cursor": {} }');
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$and": { "state": "won" } } } ], "cursor": {} }');
+
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$and": [ 1 ] } } ], "cursor": {} }');
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$and": [ 1 ] } } ], "cursor": {} }');
+
+-- With the extended scope the $unwind only expands the documents that pass the filter (includeArrayIndex, and $or).
+SET blackboxdb.enable_match_before_unwind_extended TO off;
+SELECT match_before_unwind_rows('{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": "pos" } }, { "$match": { "state": "won" } }, { "$count": "rows" } ], "cursor": {} }') AS index_unwound_rows_off;
+SELECT match_before_unwind_rows('{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$or": [ { "state": "won" }, { "territory": 3 } ] } }, { "$count": "rows" } ], "cursor": {} }') AS or_unwound_rows_off;
+SET blackboxdb.enable_match_before_unwind_extended TO on;
+SELECT match_before_unwind_rows('{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": "pos" } }, { "$match": { "state": "won" } }, { "$count": "rows" } ], "cursor": {} }') AS index_unwound_rows_on;
+SELECT match_before_unwind_rows('{ "aggregate": "orders", "pipeline": [ { "$unwind": "$items" }, { "$match": { "$or": [ { "state": "won" }, { "territory": 3 } ] } }, { "$count": "rows" } ], "cursor": {} }') AS or_unwound_rows_on;
+RESET blackboxdb.enable_match_before_unwind_extended;
+
 DROP FUNCTION match_before_unwind_rows(text);
 RESET blackboxdb.enable_match_before_unwind;
