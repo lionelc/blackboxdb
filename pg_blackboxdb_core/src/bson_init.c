@@ -46,8 +46,8 @@ bool EnableBsonSelectivityFromBtreeStats =
 	DEFAULT_ENABLE_BSON_SELECTIVITY_FROM_BTREE_STATS;
 
 /* FeatureFlag */
-/* Added in v116, Pending stabilization, enable in v117 */
-#define DEFAULT_ENABLE_DETOAST_CACHE false
+/* Added in v116, enabled in v116, remove after v118 */
+#define DEFAULT_ENABLE_DETOAST_CACHE true
 bool EnableDetoastCache = DEFAULT_ENABLE_DETOAST_CACHE;
 
 /*
