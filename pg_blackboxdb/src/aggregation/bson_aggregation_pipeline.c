@@ -4844,6 +4844,51 @@ GenerateMultiExpressionRepathExpression(List *repathArgs, bool overrideArrayInPr
 }
 
 
+/*
+ * Returns true if a $match filter references the _id path anywhere: as a
+ * top-level key ("_id" or "_id.<sub>") or inside $and, $or or $nor.
+ */
+static bool
+FilterReferencesIdPath(const bson_value_t *filterValue)
+{
+	if (filterValue->value_type != BSON_TYPE_DOCUMENT)
+	{
+		return false;
+	}
+
+	bson_iter_t filterIter;
+	BsonValueInitIterator(filterValue, &filterIter);
+	while (bson_iter_next(&filterIter))
+	{
+		const char *key = bson_iter_key(&filterIter);
+		if (strcmp(key, "$and") == 0 || strcmp(key, "$or") == 0 ||
+			strcmp(key, "$nor") == 0)
+		{
+			if (!BSON_ITER_HOLDS_ARRAY(&filterIter))
+			{
+				continue;
+			}
+
+			bson_iter_t clauseIter;
+			bson_iter_recurse(&filterIter, &clauseIter);
+			while (bson_iter_next(&clauseIter))
+			{
+				if (FilterReferencesIdPath(bson_iter_value(&clauseIter)))
+				{
+					return true;
+				}
+			}
+		}
+		else if (strcmp(key, "_id") == 0 || strncmp(key, "_id.", 4) == 0)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+
 static List *
 AddShardKeyAndIdFilters(const bson_value_t *existingValue, Query *query,
 						AggregationPipelineBuildContext *context,
@@ -4914,6 +4959,7 @@ AddShardKeyAndIdFilters(const bson_value_t *existingValue, Query *query,
 		Expr *idFilter = CreateIdFilterForQuery(existingQuals, var->varno,
 												&isCollationAware, &isPointRead);
 
+		bool addedZeroShardKeyFilter = false;
 		if (idFilter != NULL &&
 			!(isCollationAware && IsCollationApplicable(context->collationString)))
 		{
@@ -4927,7 +4973,24 @@ AddShardKeyAndIdFilters(const bson_value_t *existingValue, Query *query,
 					var->varno,
 					context->mongoCollection);
 				existingQuals = lappend(existingQuals, zeroShardKeyFilter);
+				addedZeroShardKeyFilter = true;
 			}
+		}
+
+		/*
+		 * The primary key index leads with shard_key_value. A filter on _id that
+		 * produced no point or range filter above (a prefix $regex, a
+		 * collation-aware comparison, ...) can still use that index, but only
+		 * with the shard key condition: add it back if the base table skipped it.
+		 */
+		if (!addedZeroShardKeyFilter &&
+			ShouldSkipShardKeyFilterOnBaseTable(context) &&
+			FilterReferencesIdPath(existingValue))
+		{
+			Expr *zeroShardKeyFilter = CreateNonShardedShardKeyValueFilter(
+				var->varno,
+				context->mongoCollection);
+			existingQuals = lappend(existingQuals, zeroShardKeyFilter);
 		}
 	}
 
