@@ -289,6 +289,10 @@ bool EnableGroupByDynamicStreaming = DEFAULT_ENABLE_GROUP_BY_DYNAMIC_STREAMING;
 #define DEFAULT_ENABLE_SKIP_LIMIT_SWAP true
 bool EnableSkipLimitSwap = DEFAULT_ENABLE_SKIP_LIMIT_SWAP;
 
+/* Added in v116, Pending stabilization, enable in v117 */
+#define DEFAULT_ENABLE_MATCH_BEFORE_UNWIND false
+bool EnableMatchBeforeUnwind = DEFAULT_ENABLE_MATCH_BEFORE_UNWIND;
+
 /* Added in v115, enabled in v115, remove after v117 */
 #define DEFAULT_ENABLE_PG_PRNG_CURSOR_ID true
 bool EnablePGPrngCursorId = DEFAULT_ENABLE_PG_PRNG_CURSOR_ID;
@@ -736,6 +740,16 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"$sort can use a bounded (top-N) sort."),
 		NULL, &EnableSkipLimitSwap,
 		DEFAULT_ENABLE_SKIP_LIMIT_SWAP,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_match_before_unwind", newGucPrefix),
+		gettext_noop(
+			"Whether to move a $match that does not reference the unwound field before "
+			"the $unwind that precedes it, so that it runs once per document instead of "
+			"once per unwound row."),
+		NULL, &EnableMatchBeforeUnwind,
+		DEFAULT_ENABLE_MATCH_BEFORE_UNWIND,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

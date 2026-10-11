@@ -96,6 +96,7 @@ extern bool EnableGroupByCompoundIdIndexPushdown;
 extern bool EnableSortGroupStage;
 extern bool EnableProjectPushUpBeforeUnwindWithGroup;
 extern bool EnableSkipLimitSwap;
+extern bool EnableMatchBeforeUnwind;
 extern bool EnableSortPushToAccumulatorWithPrefix;
 extern bool EnableSampleScanFixOnSharded;
 extern bool EnableDistinctIndexPushdown;
@@ -395,6 +396,8 @@ static void RewriteFillToSetWindowFieldsSpec(const bson_value_t *fillSpec,
 											 bson_value_t *partitionByFields);
 static void TrySwapSkipAndLimitStages(AggregationStage *skipStage,
 									  AggregationStage *limitStage);
+static bool TrySwapUnwindAndIndependentMatchStages(AggregationStage *unwindStage,
+												   AggregationStage *matchStage);
 static List * TryOptimizeAggregationPipelines(List *aggregationStages,
 											  AggregationPipelineBuildContext *context);
 static bool IsPipelineStageFollowedByOtherStage(Stage firstStage, Stage secondStage,
@@ -10189,6 +10192,22 @@ TryOptimizeAggregationPipelines(List *aggregationStages,
 		{
 			case Stage_Unwind:
 			{
+				/* An independent $match after $unwind runs on every unwound row:
+				 * move it before the $unwind so it runs once per document. The
+				 * cell then holds the $match and the $unwind is visited next.
+				 */
+				if (EnableMatchBeforeUnwind &&
+					IsPipelineStageFollowedByOtherStage(Stage_Unwind, Stage_Match,
+														currentIndex, stagesList))
+				{
+					AggregationStage *matchStage =
+						(AggregationStage *) lfirst(list_nth_cell(stagesList, nextIndex));
+					if (TrySwapUnwindAndIndependentMatchStages(stage, matchStage))
+					{
+						continue;
+					}
+				}
+
 				/* second $unwind in the window disqualifies */
 				if (unwindIdx < 0)
 				{
@@ -10853,6 +10872,50 @@ ExtractUnwindInfo(const bson_value_t *unwindStageValue,
 	}
 
 	*outReferencesId = StringViewEquals(outTopLevel, &IdFieldStringView);
+	return true;
+}
+
+
+/*
+ * Moves a $match that does not depend on the unwound field before the $unwind
+ * that immediately precedes it, by exchanging the two stages. Every unwound row
+ * of a document carries the document's other fields unchanged, so such a filter
+ * keeps or drops all rows of a document alike, and it can run once per document.
+ * Only a $match whose top-level keys are all field paths outside the unwound
+ * top-level field is moved; a top-level operator ($and, $or, $expr, ...), an
+ * $unwind with includeArrayIndex or with a path that is not a plain field keep
+ * their order. Returns true if the stages were exchanged.
+ */
+static bool
+TrySwapUnwindAndIndependentMatchStages(AggregationStage *unwindStage,
+									   AggregationStage *matchStage)
+{
+	StringView unwindTopLevel = { 0 };
+	bool unwindReferencesId = false;
+	if (!ExtractUnwindInfo(&unwindStage->stageValue, &unwindTopLevel,
+						   &unwindReferencesId) ||
+		matchStage->stageValue.value_type != BSON_TYPE_DOCUMENT)
+	{
+		return false;
+	}
+
+	bson_iter_t matchIter;
+	BsonValueInitIterator(&matchStage->stageValue, &matchIter);
+	while (bson_iter_next(&matchIter))
+	{
+		StringView key = bson_iter_key_string_view(&matchIter);
+		StringView keyTopLevel = { 0 };
+		if (StringViewStartsWith(&key, '$') ||
+			!ExtractTopLevelFieldPrefix(key, &keyTopLevel) ||
+			StringViewEquals(&keyTopLevel, &unwindTopLevel))
+		{
+			return false;
+		}
+	}
+
+	AggregationStage unwindCopy = *unwindStage;
+	*unwindStage = *matchStage;
+	*matchStage = unwindCopy;
 	return true;
 }
 
