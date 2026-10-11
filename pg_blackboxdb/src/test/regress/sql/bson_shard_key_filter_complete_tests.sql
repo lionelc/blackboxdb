@@ -45,10 +45,13 @@ SET blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO on;
 SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "$and": [ { "_id": { "$regex": "^str_2" } } ] }, "sort": { "_id": 1 } }');
 RESET blackboxdb.forceDisableSeqScan;
 
--- The plans: a prefix $regex on _id keeps the shard key condition in the index scan; a filter that does not
--- reference _id (v, or a field merely starting with _id) drops it.
+-- The plans (no sort on _id, which would add the condition back by itself): a prefix $regex, a $regex inside $and,
+-- a range and a point read keep the shard key condition in the index scan; a filter that does not reference _id
+-- (v, or a field merely starting with _id) drops it.
 SET blackboxdb.enableAddShardKeyOnlyOnPrimaryKeyFilters TO on;
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "_id": { "$regex": "^str_1" } } }');
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "$and": [ { "_id": { "$regex": "^str_2" } } ] } }');
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "_id": { "$gte": "str_15", "$lt": "str_3" } } }');
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "_id": "str_7" } }');
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "v": { "$gt": 25 } } }');
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('skfdb', '{ "find": "items", "filter": { "_idx": 5 } }');
