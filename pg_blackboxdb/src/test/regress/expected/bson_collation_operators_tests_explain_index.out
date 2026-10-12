@@ -1869,8 +1869,8 @@ $cmd$);
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "single_field", "filter": { "a": { "$gte": { "$minKey": 1 } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                   run_explain_and_trim                                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=10 loops=1)
    Sort Key: (blackboxdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
@@ -1880,16 +1880,26 @@ $cmd$);
          indexKey: {"a": 1}
          isMultiKey: false
          indexBounds: ["a": [MinKey, MaxKey]]
-         ->  Index Scan using idx_a_en_s1 on documents_9501 collection (actual rows=10 loops=1)
-               Index Cond: (document @>= '{ "a" : { "$minKey" : 1 }, "collation" : "en-u-ks-level1" }'::bson)
-(11 rows)
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": (MinKey, null]]
+         ->  Bitmap Heap Scan on documents_9501 collection (actual rows=10 loops=1)
+               Recheck Cond: ((document @>= '{ "a" : { "$minKey" : 1 }, "collation" : "en-u-ks-level1" }'::bson) OR (document @= '{ "a" : null, "collation" : "en-u-ks-level1" }'::bson))
+               Heap Blocks: exact=1
+               ->  BitmapOr (actual rows=0 loops=1)
+                     ->  Bitmap Index Scan on idx_a_en_s1 (actual rows=10 loops=1)
+                           Index Cond: (document @>= '{ "a" : { "$minKey" : 1 }, "collation" : "en-u-ks-level1" }'::bson)
+                     ->  Bitmap Index Scan on idx_a_en_s1 (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "a" : null, "collation" : "en-u-ks-level1" }'::bson)
+(21 rows)
 
 -- 9.2: $gte MinKey — mismatched collation — index SHOULD still be used
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "single_field", "filter": { "a": { "$gte": { "$minKey": 1 } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 2 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                   run_explain_and_trim                                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=10 loops=1)
    Sort Key: (blackboxdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level2'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
@@ -1899,16 +1909,26 @@ $cmd$);
          indexKey: {"a": 1}
          isMultiKey: false
          indexBounds: ["a": [MinKey, MaxKey]]
-         ->  Index Scan using idx_a_en_s1 on documents_9501 collection (actual rows=10 loops=1)
-               Index Cond: (document @>= '{ "a" : { "$minKey" : 1 }, "collation" : "de-u-ks-level2" }'::bson)
-(11 rows)
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": (MinKey, null]]
+         ->  Bitmap Heap Scan on documents_9501 collection (actual rows=10 loops=1)
+               Recheck Cond: ((document @>= '{ "a" : { "$minKey" : 1 }, "collation" : "de-u-ks-level2" }'::bson) OR (document @= '{ "a" : null, "collation" : "de-u-ks-level2" }'::bson))
+               Heap Blocks: exact=1
+               ->  BitmapOr (actual rows=0 loops=1)
+                     ->  Bitmap Index Scan on idx_a_en_s1 (actual rows=10 loops=1)
+                           Index Cond: (document @>= '{ "a" : { "$minKey" : 1 }, "collation" : "de-u-ks-level2" }'::bson)
+                     ->  Bitmap Index Scan on idx_a_en_s1 (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "a" : null, "collation" : "de-u-ks-level2" }'::bson)
+(21 rows)
 
 -- 9.3: $gt MinKey — mismatched collation — index SHOULD still be used
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "single_field", "filter": { "a": { "$gt": { "$minKey": 1 } } }, "sort": { "_id": 1 }, "collation": { "locale": "fr", "strength": 3 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                  run_explain_and_trim                                                                                   
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=10 loops=1)
    Sort Key: (blackboxdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level3'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
@@ -1918,16 +1938,26 @@ $cmd$);
          indexKey: {"a": 1}
          isMultiKey: false
          indexBounds: ["a": [MinKey, MaxKey]]
-         ->  Index Scan using idx_a_en_s1 on documents_9501 collection (actual rows=10 loops=1)
-               Index Cond: (document @> '{ "a" : { "$minKey" : 1 }, "collation" : "fr-u-ks-level3" }'::bson)
-(11 rows)
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": (MinKey, null]]
+         ->  Bitmap Heap Scan on documents_9501 collection (actual rows=10 loops=1)
+               Recheck Cond: ((document @> '{ "a" : { "$minKey" : 1 }, "collation" : "fr-u-ks-level3" }'::bson) OR (document @= '{ "a" : null, "collation" : "fr-u-ks-level3" }'::bson))
+               Heap Blocks: exact=1
+               ->  BitmapOr (actual rows=0 loops=1)
+                     ->  Bitmap Index Scan on idx_a_en_s1 (actual rows=10 loops=1)
+                           Index Cond: (document @> '{ "a" : { "$minKey" : 1 }, "collation" : "fr-u-ks-level3" }'::bson)
+                     ->  Bitmap Index Scan on idx_a_en_s1 (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "a" : null, "collation" : "fr-u-ks-level3" }'::bson)
+(21 rows)
 
 -- 9.4: $lt MaxKey — matching collation — index SHOULD be used
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "single_field", "filter": { "a": { "$lt": { "$maxKey": 1 } } }, "sort": { "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                  run_explain_and_trim                                                                                   
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=10 loops=1)
    Sort Key: (blackboxdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
@@ -1937,16 +1967,26 @@ $cmd$);
          indexKey: {"a": 1}
          isMultiKey: false
          indexBounds: ["a": [MinKey, MaxKey]]
-         ->  Index Scan using idx_a_en_s1 on documents_9501 collection (actual rows=10 loops=1)
-               Index Cond: (document @< '{ "a" : { "$maxKey" : 1 }, "collation" : "en-u-ks-level1" }'::bson)
-(11 rows)
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": (MinKey, null]]
+         ->  Bitmap Heap Scan on documents_9501 collection (actual rows=10 loops=1)
+               Recheck Cond: ((document @< '{ "a" : { "$maxKey" : 1 }, "collation" : "en-u-ks-level1" }'::bson) OR (document @= '{ "a" : null, "collation" : "en-u-ks-level1" }'::bson))
+               Heap Blocks: exact=1
+               ->  BitmapOr (actual rows=0 loops=1)
+                     ->  Bitmap Index Scan on idx_a_en_s1 (actual rows=10 loops=1)
+                           Index Cond: (document @< '{ "a" : { "$maxKey" : 1 }, "collation" : "en-u-ks-level1" }'::bson)
+                     ->  Bitmap Index Scan on idx_a_en_s1 (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "a" : null, "collation" : "en-u-ks-level1" }'::bson)
+(21 rows)
 
 -- 9.5: $lt MaxKey — mismatched collation — index SHOULD still be used
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "single_field", "filter": { "a": { "$lt": { "$maxKey": 1 } } }, "sort": { "_id": 1 }, "collation": { "locale": "de", "strength": 2 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                  run_explain_and_trim                                                                                   
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=10 loops=1)
    Sort Key: (blackboxdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level2'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
@@ -1956,16 +1996,26 @@ $cmd$);
          indexKey: {"a": 1}
          isMultiKey: false
          indexBounds: ["a": [MinKey, MaxKey]]
-         ->  Index Scan using idx_a_en_s1 on documents_9501 collection (actual rows=10 loops=1)
-               Index Cond: (document @< '{ "a" : { "$maxKey" : 1 }, "collation" : "de-u-ks-level2" }'::bson)
-(11 rows)
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": (MinKey, null]]
+         ->  Bitmap Heap Scan on documents_9501 collection (actual rows=10 loops=1)
+               Recheck Cond: ((document @< '{ "a" : { "$maxKey" : 1 }, "collation" : "de-u-ks-level2" }'::bson) OR (document @= '{ "a" : null, "collation" : "de-u-ks-level2" }'::bson))
+               Heap Blocks: exact=1
+               ->  BitmapOr (actual rows=0 loops=1)
+                     ->  Bitmap Index Scan on idx_a_en_s1 (actual rows=10 loops=1)
+                           Index Cond: (document @< '{ "a" : { "$maxKey" : 1 }, "collation" : "de-u-ks-level2" }'::bson)
+                     ->  Bitmap Index Scan on idx_a_en_s1 (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "a" : null, "collation" : "de-u-ks-level2" }'::bson)
+(21 rows)
 
 -- 9.6: $lte MaxKey — mismatched collation — index SHOULD still be used
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
     EXPLAIN (COSTS OFF, ANALYZE ON, SUMMARY OFF, TIMING OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_find('coll_operators_index_explain_db', '{ "find": "single_field", "filter": { "a": { "$lte": { "$maxKey": 1 } } }, "sort": { "_id": 1 }, "collation": { "locale": "fr", "strength": 3 } }')
 $cmd$);
-                                                                  run_explain_and_trim                                                                  
---------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                   run_explain_and_trim                                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=10 loops=1)
    Sort Key: (blackboxdb_api_internal.bson_orderby(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level3'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
@@ -1975,9 +2025,19 @@ $cmd$);
          indexKey: {"a": 1}
          isMultiKey: false
          indexBounds: ["a": [MinKey, MaxKey]]
-         ->  Index Scan using idx_a_en_s1 on documents_9501 collection (actual rows=10 loops=1)
-               Index Cond: (document @<= '{ "a" : { "$maxKey" : 1 }, "collation" : "fr-u-ks-level3" }'::bson)
-(11 rows)
+         indexName: idx_a_en_s1
+         indexKey: {"a": 1}
+         isMultiKey: false
+         indexBounds: ["a": (MinKey, null]]
+         ->  Bitmap Heap Scan on documents_9501 collection (actual rows=10 loops=1)
+               Recheck Cond: ((document @<= '{ "a" : { "$maxKey" : 1 }, "collation" : "fr-u-ks-level3" }'::bson) OR (document @= '{ "a" : null, "collation" : "fr-u-ks-level3" }'::bson))
+               Heap Blocks: exact=1
+               ->  BitmapOr (actual rows=0 loops=1)
+                     ->  Bitmap Index Scan on idx_a_en_s1 (actual rows=10 loops=1)
+                           Index Cond: (document @<= '{ "a" : { "$maxKey" : 1 }, "collation" : "fr-u-ks-level3" }'::bson)
+                     ->  Bitmap Index Scan on idx_a_en_s1 (actual rows=1 loops=1)
+                           Index Cond: (document @= '{ "a" : null, "collation" : "fr-u-ks-level3" }'::bson)
+(21 rows)
 
 -- ======================================================================
 -- SECTION 10: $ne — not-equal pushdown (complement of $eq)

@@ -1041,6 +1041,10 @@ SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", 
  { "_id" : { "$numberInt" : "14" }, "h" : { "b" : { "c" : { "$numberInt" : "1" } } } }
 (1 row)
 
+-- These check the index's path > MinKey bounds on sub-terms, so they run with enable_minmaxkey_missing_path_match
+-- off. With it on, $gt: MinKey also matches a document without the path, which a wildcard index has no entry for:
+-- there is no index path, and forceDisableSeqScan reports that.
+SET blackboxdb.enable_minmaxkey_missing_path_match TO off;
 SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "h": { "$gt": { "$minKey": 1 } } }}');
                                        document                                        
 ---------------------------------------------------------------------------------------
@@ -1061,6 +1065,9 @@ SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", 
  { "_id" : { "$numberInt" : "14" }, "h" : { "b" : { "c" : { "$numberInt" : "1" } } } }
 (1 row)
 
+RESET blackboxdb.enable_minmaxkey_missing_path_match;
+SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "h": { "$gt": { "$minKey": 1 } } }}');
+ERROR:  Could not find any valid index to push down for query
 -- but this doesn't apply for inequality operators
 SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "h.b": { "$gte": 1 } }}');
  document 
@@ -1123,6 +1130,7 @@ SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", 
  { "_id" : { "$numberInt" : "14" }, "h" : { "b" : { "c" : { "$numberInt" : "1" } } } }
 (1 row)
 
+SET blackboxdb.enable_minmaxkey_missing_path_match TO off;
 SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "h.b": { "$lte": { "$maxKey": 1 } } }}');
                                        document                                        
 ---------------------------------------------------------------------------------------
@@ -1130,6 +1138,7 @@ SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", 
  { "_id" : { "$numberInt" : "19" }, "h" : { "b" : { "d" : { "$numberInt" : "1" } } } }
 (2 rows)
 
+RESET blackboxdb.enable_minmaxkey_missing_path_match;
 -- testing non-array merge of paths
 SELECT blackboxdb_api.insert_one('compdb', 'compwildcard2', '{ "a": { "b": 1, "c": 5 }}');
 NOTICE:  creating collection

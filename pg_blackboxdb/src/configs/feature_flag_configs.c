@@ -306,8 +306,8 @@ bool EnableMatchBeforeUnwindExtended = DEFAULT_ENABLE_MATCH_BEFORE_UNWIND_EXTEND
 #define DEFAULT_ENABLE_DOCUMENT_STORAGE_MAIN true
 bool EnableDocumentStorageMain = DEFAULT_ENABLE_DOCUMENT_STORAGE_MAIN;
 
-/* Added in v116, disabled by default while pending stabilization */
-#define DEFAULT_ENABLE_MINMAXKEY_MISSING_PATH_MATCH false
+/* Added in v116, enabled in v116, remove after v118 */
+#define DEFAULT_ENABLE_MINMAXKEY_MISSING_PATH_MATCH true
 bool EnableMinMaxKeyMissingPathMatch = DEFAULT_ENABLE_MINMAXKEY_MISSING_PATH_MATCH;
 
 /* Added in v115, enabled in v115, remove after v117 */
