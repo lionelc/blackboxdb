@@ -107,3 +107,39 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('minmaxdb', '{ "f
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('minmaxdb', '{ "find": "c", "filter": { "_id": { "$gte": { "$minKey": 1 }, "$lt": { "$maxKey": 1 } } } }');
 RESET enable_seqscan;
 RESET blackboxdb.enable_minmaxkey_missing_path_match;
+
+-- The same bounds on an array element: an element without k matches { k: { $lte: MaxKey } } in $elemMatch,
+-- in a $pull condition and in arrayFilters, as an element without k matches { k: null }.
+SELECT COUNT(*) FROM (SELECT blackboxdb_api.insert_one('minmaxdb', 'v', d::blackboxdb_core.bson) FROM (VALUES
+  ('{"_id": 1, "elem": [{"j": 1}]}'),
+  ('{"_id": 2, "elem": [{"k": 5}]}'),
+  ('{"_id": 3, "elem": [{"k": null}]}'),
+  ('{"_id": 4, "elem": [{"j": 1}, {"k": {"$maxKey": 1}}]}'),
+  ('{"_id": 5, "elem": [7]}'),
+  ('{"_id": 6, "elem": [{"k": {"$minKey": 1}}]}'),
+  ('{"_id": 7, "elem": [{"k": []}]}')) v(d)) x;
+
+-- the documents after an update on a fresh copy of v (without the scalar element), with the flag off or on
+CREATE FUNCTION pg_temp.after_update(coll text, upd text, flag bool) RETURNS text LANGUAGE plpgsql AS $fn$
+DECLARE result text;
+BEGIN
+  PERFORM set_config('blackboxdb.enable_minmaxkey_missing_path_match', CASE WHEN flag THEN 'on' ELSE 'off' END, true);
+  PERFORM blackboxdb_api.insert_one('minmaxdb', coll, d::blackboxdb_core.bson) FROM (VALUES ('{"_id": 1, "elem": [{"j": 1}]}'), ('{"_id": 2, "elem": [{"k": 5}]}'), ('{"_id": 3, "elem": [{"k": null}]}'), ('{"_id": 4, "elem": [{"j": 1}, {"k": {"$maxKey": 1}}]}'), ('{"_id": 6, "elem": [{"k": {"$minKey": 1}}]}'), ('{"_id": 7, "elem": [{"k": []}]}')) v(d);
+  PERFORM blackboxdb_api.update('minmaxdb', format('{ "update": "%s", "updates": [ %s ] }', coll, upd)::blackboxdb_core.bson);
+  EXECUTE format('SELECT string_agg(t.d::text, '' ; '' ORDER BY substring(t.d::text from ''"\$numberInt" : "(\d+)"'')::int) FROM (SELECT document AS d FROM bson_aggregation_find(''minmaxdb'', %L::blackboxdb_core.bson)) t', '{ "find": "' || coll || '", "projection": { "elem": 1 } }') INTO result;
+  RETURN result;
+END $fn$;
+
+SELECT 'em k lte maxkey' AS filter, pg_temp.ids('v', '{"elem": {"$elemMatch": {"k": {"$lte": {"$maxKey": 1}}}}}', false, false) AS off_collection_scan, pg_temp.ids('v', '{"elem": {"$elemMatch": {"k": {"$lte": {"$maxKey": 1}}}}}', false, true) AS collection_scan;
+SELECT 'em k lt maxkey' AS filter, pg_temp.ids('v', '{"elem": {"$elemMatch": {"k": {"$lt": {"$maxKey": 1}}}}}', false, false) AS off_collection_scan, pg_temp.ids('v', '{"elem": {"$elemMatch": {"k": {"$lt": {"$maxKey": 1}}}}}', false, true) AS collection_scan;
+SELECT 'em k gt minkey' AS filter, pg_temp.ids('v', '{"elem": {"$elemMatch": {"k": {"$gt": {"$minKey": 1}}}}}', false, false) AS off_collection_scan, pg_temp.ids('v', '{"elem": {"$elemMatch": {"k": {"$gt": {"$minKey": 1}}}}}', false, true) AS collection_scan;
+SELECT 'em k gte minkey' AS filter, pg_temp.ids('v', '{"elem": {"$elemMatch": {"k": {"$gte": {"$minKey": 1}}}}}', false, false) AS off_collection_scan, pg_temp.ids('v', '{"elem": {"$elemMatch": {"k": {"$gte": {"$minKey": 1}}}}}', false, true) AS collection_scan;
+SELECT 'em not k lte maxkey' AS filter, pg_temp.ids('v', '{"elem": {"$elemMatch": {"k": {"$not": {"$lte": {"$maxKey": 1}}}}}}', false, false) AS off_collection_scan, pg_temp.ids('v', '{"elem": {"$elemMatch": {"k": {"$not": {"$lte": {"$maxKey": 1}}}}}}', false, true) AS collection_scan;
+SELECT 'ctl em k null' AS filter, pg_temp.ids('v', '{"elem": {"$elemMatch": {"k": null}}}', false, false) AS off_collection_scan, pg_temp.ids('v', '{"elem": {"$elemMatch": {"k": null}}}', false, true) AS collection_scan;
+SELECT 'ctl em k exists' AS filter, pg_temp.ids('v', '{"elem": {"$elemMatch": {"k": {"$exists": true}}}}', false, false) AS off_collection_scan, pg_temp.ids('v', '{"elem": {"$elemMatch": {"k": {"$exists": true}}}}', false, true) AS collection_scan;
+SELECT 'em lte maxkey scalar' AS filter, pg_temp.ids('v', '{"elem": {"$elemMatch": {"$lte": {"$maxKey": 1}}}}', false, false) AS off_collection_scan, pg_temp.ids('v', '{"elem": {"$elemMatch": {"$lte": {"$maxKey": 1}}}}', false, true) AS collection_scan;
+SELECT 'pull k lte maxkey' AS update, pg_temp.after_update('u0_off', '{"q": {}, "u": {"$pull": {"elem": {"k": {"$lte": {"$maxKey": 1}}}}}, "multi": true}', false) AS off_documents, pg_temp.after_update('u0_on', '{"q": {}, "u": {"$pull": {"elem": {"k": {"$lte": {"$maxKey": 1}}}}}, "multi": true}', true) AS documents;
+SELECT 'pull k gt minkey' AS update, pg_temp.after_update('u1_off', '{"q": {}, "u": {"$pull": {"elem": {"k": {"$gt": {"$minKey": 1}}}}}, "multi": true}', false) AS off_documents, pg_temp.after_update('u1_on', '{"q": {}, "u": {"$pull": {"elem": {"k": {"$gt": {"$minKey": 1}}}}}, "multi": true}', true) AS documents;
+SELECT 'ctl pull k null' AS update, pg_temp.after_update('u2_off', '{"q": {}, "u": {"$pull": {"elem": {"k": null}}}, "multi": true}', false) AS off_documents, pg_temp.after_update('u2_on', '{"q": {}, "u": {"$pull": {"elem": {"k": null}}}, "multi": true}', true) AS documents;
+SELECT 'af k lt maxkey' AS update, pg_temp.after_update('u3_off', '{"q": {}, "u": {"$set": {"elem.$[x].m": 1}}, "multi": true, "arrayFilters": [{"x.k": {"$lt": {"$maxKey": 1}}}]}', false) AS off_documents, pg_temp.after_update('u3_on', '{"q": {}, "u": {"$set": {"elem.$[x].m": 1}}, "multi": true, "arrayFilters": [{"x.k": {"$lt": {"$maxKey": 1}}}]}', true) AS documents;
+SELECT 'ctl af k null' AS update, pg_temp.after_update('u4_off', '{"q": {}, "u": {"$set": {"elem.$[x].m": 1}}, "multi": true, "arrayFilters": [{"x.k": null}]}', false) AS off_documents, pg_temp.after_update('u4_on', '{"q": {}, "u": {"$set": {"elem.$[x].m": 1}}, "multi": true, "arrayFilters": [{"x.k": null}]}', true) AS documents;
