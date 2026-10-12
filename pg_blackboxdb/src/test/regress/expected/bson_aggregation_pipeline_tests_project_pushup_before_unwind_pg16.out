@@ -1365,13 +1365,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                Output: bson_dollar_unwind((bson_dollar_unwind(blackboxdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "tags" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)), '$tags'::text)
                ->  ProjectSet
                      Output: bson_dollar_unwind(blackboxdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "tags" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_87003 collection
+                     ->  Seq Scan on blackboxdb_data.documents_87003 collection
                            Output: collection.shard_key_value, collection.object_id, collection.document
-                           Recheck Cond: (collection.shard_key_value = '87003'::bigint)
                            Filter: (collection.document @= '{ "regionId" : "north" }'::bson)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '87003'::bigint)
-(15 rows)
+(12 rows)
 
 -- 3.2 A $match sits between the two $unwind stages. The intermediate match's
 -- top-level field ("tags") must also be carried into the synthetic $project.
@@ -1427,18 +1424,13 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
    ->  Subquery Scan on agg_stage_4
          Output: blackboxdb_api_internal.bson_expression_get(agg_stage_4.document, '{ "" : "$ownerId" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_4.document
          ->  ProjectSet
-               Output: bson_dollar_unwind(agg_stage_2.document, '$tags'::text)
-               ->  Subquery Scan on agg_stage_2
-                     Output: agg_stage_2.document
-                     Filter: (agg_stage_2.document #= '{ "tags" : "red" }'::bsonquery)
-                     ->  ProjectSet
-                           Output: bson_dollar_unwind(blackboxdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "tags" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
-                           ->  Bitmap Heap Scan on blackboxdb_data.documents_87003 collection
-                                 Output: collection.shard_key_value, collection.object_id, collection.document
-                                 Recheck Cond: (collection.shard_key_value = '87003'::bigint)
-                                 ->  Bitmap Index Scan on _id_
-                                       Index Cond: (collection.shard_key_value = '87003'::bigint)
-(17 rows)
+               Output: bson_dollar_unwind((bson_dollar_unwind(blackboxdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "tags" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)), '$tags'::text)
+               ->  ProjectSet
+                     Output: bson_dollar_unwind(blackboxdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "tags" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
+                     ->  Seq Scan on blackboxdb_data.documents_87003 collection
+                           Output: collection.shard_key_value, collection.object_id, collection.document
+                           Filter: (collection.document @= '{ "tags" : "red" }'::bson)
+(12 rows)
 
 -- 3.3 A later $unwind carries includeArrayIndex. The optimization is disabled
 -- whenever any $unwind in the window uses includeArrayIndex, so no synthetic
@@ -1463,12 +1455,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                Output: bson_dollar_unwind((bson_dollar_unwind(collection.document, '$items'::text)), '{ "path" : "$tags", "includeArrayIndex" : "tagIdx" }'::bson)
                ->  ProjectSet
                      Output: bson_dollar_unwind(collection.document, '$items'::text)
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_87003 collection
+                     ->  Seq Scan on blackboxdb_data.documents_87003 collection
                            Output: collection.shard_key_value, collection.object_id, collection.document
-                           Recheck Cond: (collection.shard_key_value = '87003'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '87003'::bigint)
-(14 rows)
+(11 rows)
 
 -- 3.4 The second $unwind targets a nested path under the first $unwind's
 -- field ("$items" then "$items.qty"). Both resolve to the same top-level
@@ -1528,12 +1517,9 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                Output: bson_dollar_unwind((bson_dollar_unwind(blackboxdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)), '$items.qty'::text)
                ->  ProjectSet
                      Output: bson_dollar_unwind(blackboxdb_api_internal.bson_dollar_project(collection.document, '{ "ownerId" : { "$numberInt" : "1" }, "items" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$items'::text)
-                     ->  Bitmap Heap Scan on blackboxdb_data.documents_87003 collection
+                     ->  Seq Scan on blackboxdb_data.documents_87003 collection
                            Output: collection.shard_key_value, collection.object_id, collection.document
-                           Recheck Cond: (collection.shard_key_value = '87003'::bigint)
-                           ->  Bitmap Index Scan on _id_
-                                 Index Cond: (collection.shard_key_value = '87003'::bigint)
-(14 rows)
+(11 rows)
 
 -- ============================================================================
 -- Section 4 — telemetry (applicability counter)
