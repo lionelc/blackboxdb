@@ -1,0 +1,350 @@
+SET search_path TO blackboxdb_api, blackboxdb_core, blackboxdb_api_catalog;
+SET blackboxdb.next_collection_id TO 26930000;
+SET blackboxdb.next_collection_index_id TO 26930000;
+-- A missing path compares like null, and null sorts above MinKey and below MaxKey. So $gt/$gte against MinKey
+-- and $lt/$lte against MaxKey also match a document without the path (a dotted path follows the null rules
+-- through arrays), and their $not forms exclude it. With blackboxdb.enable_minmaxkey_missing_path_match on, every
+-- access path returns that answer: a collection scan, the ordered index (c) and a single-path index (c2).
+-- Document 9 has no elem; 16 has a subdocument without k. $exists and _id keep their meaning.
+SELECT COUNT(*) FROM (SELECT blackboxdb_api.insert_one('minmaxdb', 'c', d::blackboxdb_core.bson) FROM (VALUES
+  ('{"_id": 1, "elem": [7, 8]}'),
+  ('{"_id": 2, "elem": [9, 10]}'),
+  ('{"_id": 3, "elem": 8}'),
+  ('{"_id": 4, "elem": 9}'),
+  ('{"_id": 5, "elem": null}'),
+  ('{"_id": 6, "elem": []}'),
+  ('{"_id": 7, "elem": [null]}'),
+  ('{"_id": 8, "elem": [null, 9]}'),
+  ('{"_id": 9}'),
+  ('{"_id": 10, "elem": {"k": 5}}'),
+  ('{"_id": 11, "elem": [{"k": 7}]}'),
+  ('{"_id": 12, "elem": {"$minKey": 1}}'),
+  ('{"_id": 13, "elem": [{"$maxKey": 1}, 9]}'),
+  ('{"_id": 14, "elem": {"$maxKey": 1}}'),
+  ('{"_id": 15, "elem": [{"$minKey": 1}]}'),
+  ('{"_id": 16, "other": 1, "elem": {"j": 1}}')) v(d)) x;
+NOTICE:  creating collection
+ count 
+-------
+    16
+(1 row)
+
+SELECT COUNT(*) FROM (SELECT blackboxdb_api.insert_one('minmaxdb', 'c2', d::blackboxdb_core.bson) FROM (VALUES
+  ('{"_id": 1, "elem": [7, 8]}'),
+  ('{"_id": 2, "elem": [9, 10]}'),
+  ('{"_id": 3, "elem": 8}'),
+  ('{"_id": 4, "elem": 9}'),
+  ('{"_id": 5, "elem": null}'),
+  ('{"_id": 6, "elem": []}'),
+  ('{"_id": 7, "elem": [null]}'),
+  ('{"_id": 8, "elem": [null, 9]}'),
+  ('{"_id": 9}'),
+  ('{"_id": 10, "elem": {"k": 5}}'),
+  ('{"_id": 11, "elem": [{"k": 7}]}'),
+  ('{"_id": 12, "elem": {"$minKey": 1}}'),
+  ('{"_id": 13, "elem": [{"$maxKey": 1}, 9]}'),
+  ('{"_id": 14, "elem": {"$maxKey": 1}}'),
+  ('{"_id": 15, "elem": [{"$minKey": 1}]}'),
+  ('{"_id": 16, "other": 1, "elem": {"j": 1}}')) v(d)) x;
+NOTICE:  creating collection
+ count 
+-------
+    16
+(1 row)
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('minmaxdb', '{ "createIndexes": "c", "indexes": [ { "key": { "elem": 1 }, "name": "elem_1", "enableOrderedIndex": 1 } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT blackboxdb_api_internal.create_indexes_non_concurrently('minmaxdb', '{ "createIndexes": "c2", "indexes": [ { "key": { "elem": 1 }, "name": "elem_1", "enableOrderedIndex": false } ] }', TRUE);
+                                                                                                   create_indexes_non_concurrently                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "raw" : { "defaultShard" : { "numIndexesBefore" : { "$numberInt" : "1" }, "numIndexesAfter" : { "$numberInt" : "2" }, "createdCollectionAutomatically" : false, "ok" : { "$numberInt" : "1" } } }, "ok" : { "$numberInt" : "1" } }
+(1 row)
+
+-- ids that a find returns, by a collection scan or through the hinted elem index, with the flag off or on
+CREATE FUNCTION pg_temp.ids(coll text, filter text, use_index bool, flag bool) RETURNS text LANGUAGE plpgsql AS $fn$
+DECLARE spec text; result text;
+BEGIN
+  spec := '{ "find": "' || coll || '", "filter": ' || filter || ', "projection": { "_id": 1 }' ||
+          CASE WHEN use_index THEN ', "hint": "elem_1" }' ELSE ' }' END;
+  PERFORM set_config('blackboxdb.enable_minmaxkey_missing_path_match', CASE WHEN flag THEN 'on' ELSE 'off' END, true);
+  PERFORM set_config('enable_seqscan', CASE WHEN use_index THEN 'off' ELSE 'on' END, true);
+  PERFORM set_config('enable_indexscan', CASE WHEN use_index THEN 'on' ELSE 'off' END, true);
+  PERFORM set_config('enable_bitmapscan', CASE WHEN use_index THEN 'on' ELSE 'off' END, true);
+  EXECUTE format('SELECT string_agg(i::text, '','' ORDER BY i) FROM (SELECT substring(t.d::text from ''"\$numberInt" : "(\d+)"'')::int AS i FROM (SELECT document AS d FROM bson_aggregation_find(''minmaxdb'', %L::blackboxdb_core.bson)) t) n', spec) INTO result;
+  RETURN COALESCE(result, '');
+END $fn$;
+SELECT 'lte maxkey' AS filter, pg_temp.ids('c', '{"elem": {"$lte": {"$maxKey": 1}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$lte": {"$maxKey": 1}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$lte": {"$maxKey": 1}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$lte": {"$maxKey": 1}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$lte": {"$maxKey": 1}}}', true, true) AS single_path_index;
+   filter   |         off_collection_scan          |           off_ordered_index            |            collection_scan             |             ordered_index              |           single_path_index            
+------------+--------------------------------------+----------------------------------------+----------------------------------------+----------------------------------------+----------------------------------------
+ lte maxkey | 1,2,3,4,5,6,7,8,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16
+(1 row)
+
+SELECT 'lt maxkey' AS filter, pg_temp.ids('c', '{"elem": {"$lt": {"$maxKey": 1}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$lt": {"$maxKey": 1}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$lt": {"$maxKey": 1}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$lt": {"$maxKey": 1}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$lt": {"$maxKey": 1}}}', true, true) AS single_path_index;
+  filter   |        off_collection_scan        |         off_ordered_index         |           collection_scan           |            ordered_index            |          single_path_index          
+-----------+-----------------------------------+-----------------------------------+-------------------------------------+-------------------------------------+-------------------------------------
+ lt maxkey | 1,2,3,4,5,6,7,8,10,11,12,13,15,16 | 1,2,3,4,5,6,7,8,10,11,12,13,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,15,16
+(1 row)
+
+SELECT 'gte minkey' AS filter, pg_temp.ids('c', '{"elem": {"$gte": {"$minKey": 1}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$gte": {"$minKey": 1}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$gte": {"$minKey": 1}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$gte": {"$minKey": 1}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$gte": {"$minKey": 1}}}', true, true) AS single_path_index;
+   filter   |         off_collection_scan          |          off_ordered_index           |            collection_scan             |             ordered_index              |           single_path_index            
+------------+--------------------------------------+--------------------------------------+----------------------------------------+----------------------------------------+----------------------------------------
+ gte minkey | 1,2,3,4,5,6,7,8,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16
+(1 row)
+
+SELECT 'gt minkey' AS filter, pg_temp.ids('c', '{"elem": {"$gt": {"$minKey": 1}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$gt": {"$minKey": 1}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$gt": {"$minKey": 1}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$gt": {"$minKey": 1}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$gt": {"$minKey": 1}}}', true, true) AS single_path_index;
+  filter   |        off_collection_scan        |         off_ordered_index         |           collection_scan           |            ordered_index            |          single_path_index          
+-----------+-----------------------------------+-----------------------------------+-------------------------------------+-------------------------------------+-------------------------------------
+ gt minkey | 1,2,3,4,5,6,7,8,10,11,13,14,15,16 | 1,2,3,4,5,6,7,8,10,11,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,13,14,15,16
+(1 row)
+
+SELECT 'lte minkey' AS filter, pg_temp.ids('c', '{"elem": {"$lte": {"$minKey": 1}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$lte": {"$minKey": 1}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$lte": {"$minKey": 1}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$lte": {"$minKey": 1}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$lte": {"$minKey": 1}}}', true, true) AS single_path_index;
+   filter   | off_collection_scan | off_ordered_index | collection_scan | ordered_index | single_path_index 
+------------+---------------------+-------------------+-----------------+---------------+-------------------
+ lte minkey | 12,15               | 12,15             | 12,15           | 12,15         | 12,15
+(1 row)
+
+SELECT 'gte maxkey' AS filter, pg_temp.ids('c', '{"elem": {"$gte": {"$maxKey": 1}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$gte": {"$maxKey": 1}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$gte": {"$maxKey": 1}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$gte": {"$maxKey": 1}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$gte": {"$maxKey": 1}}}', true, true) AS single_path_index;
+   filter   | off_collection_scan | off_ordered_index | collection_scan | ordered_index | single_path_index 
+------------+---------------------+-------------------+-----------------+---------------+-------------------
+ gte maxkey | 13,14               | 13,14             | 13,14           | 13,14         | 13,14
+(1 row)
+
+SELECT 'eq maxkey' AS filter, pg_temp.ids('c', '{"elem": {"$eq": {"$maxKey": 1}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$eq": {"$maxKey": 1}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$eq": {"$maxKey": 1}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$eq": {"$maxKey": 1}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$eq": {"$maxKey": 1}}}', true, true) AS single_path_index;
+  filter   | off_collection_scan | off_ordered_index | collection_scan | ordered_index | single_path_index 
+-----------+---------------------+-------------------+-----------------+---------------+-------------------
+ eq maxkey | 13,14               | 13,14             | 13,14           | 13,14         | 13,14
+(1 row)
+
+SELECT 'eq minkey' AS filter, pg_temp.ids('c', '{"elem": {"$eq": {"$minKey": 1}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$eq": {"$minKey": 1}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$eq": {"$minKey": 1}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$eq": {"$minKey": 1}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$eq": {"$minKey": 1}}}', true, true) AS single_path_index;
+  filter   | off_collection_scan | off_ordered_index | collection_scan | ordered_index | single_path_index 
+-----------+---------------------+-------------------+-----------------+---------------+-------------------
+ eq minkey | 12,15               | 12,15             | 12,15           | 12,15         | 12,15
+(1 row)
+
+SELECT 'ne maxkey' AS filter, pg_temp.ids('c', '{"elem": {"$ne": {"$maxKey": 1}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$ne": {"$maxKey": 1}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$ne": {"$maxKey": 1}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$ne": {"$maxKey": 1}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$ne": {"$maxKey": 1}}}', true, true) AS single_path_index;
+  filter   |       off_collection_scan        |        off_ordered_index         |         collection_scan          |          ordered_index           |        single_path_index         
+-----------+----------------------------------+----------------------------------+----------------------------------+----------------------------------+----------------------------------
+ ne maxkey | 1,2,3,4,5,6,7,8,9,10,11,12,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,15,16
+(1 row)
+
+SELECT 'in [maxkey]' AS filter, pg_temp.ids('c', '{"elem": {"$in": [{"$maxKey": 1}]}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$in": [{"$maxKey": 1}]}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$in": [{"$maxKey": 1}]}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$in": [{"$maxKey": 1}]}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$in": [{"$maxKey": 1}]}}', true, true) AS single_path_index;
+   filter    | off_collection_scan | off_ordered_index | collection_scan | ordered_index | single_path_index 
+-------------+---------------------+-------------------+-----------------+---------------+-------------------
+ in [maxkey] | 13,14               | 13,14             | 13,14           | 13,14         | 13,14
+(1 row)
+
+SELECT 'nin [minkey]' AS filter, pg_temp.ids('c', '{"elem": {"$nin": [{"$minKey": 1}]}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$nin": [{"$minKey": 1}]}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$nin": [{"$minKey": 1}]}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$nin": [{"$minKey": 1}]}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$nin": [{"$minKey": 1}]}}', true, true) AS single_path_index;
+    filter    |       off_collection_scan        |        off_ordered_index         |         collection_scan          |          ordered_index           |        single_path_index         
+--------------+----------------------------------+----------------------------------+----------------------------------+----------------------------------+----------------------------------
+ nin [minkey] | 1,2,3,4,5,6,7,8,9,10,11,13,14,16 | 1,2,3,4,5,6,7,8,9,10,11,13,14,16 | 1,2,3,4,5,6,7,8,9,10,11,13,14,16 | 1,2,3,4,5,6,7,8,9,10,11,13,14,16 | 1,2,3,4,5,6,7,8,9,10,11,13,14,16
+(1 row)
+
+SELECT 'not lte maxkey' AS filter, pg_temp.ids('c', '{"elem": {"$not": {"$lte": {"$maxKey": 1}}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$not": {"$lte": {"$maxKey": 1}}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$not": {"$lte": {"$maxKey": 1}}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$not": {"$lte": {"$maxKey": 1}}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$not": {"$lte": {"$maxKey": 1}}}}', true, true) AS single_path_index;
+     filter     | off_collection_scan | off_ordered_index | collection_scan | ordered_index | single_path_index 
+----------------+---------------------+-------------------+-----------------+---------------+-------------------
+ not lte maxkey | 9                   | 9                 |                 |               | 
+(1 row)
+
+SELECT 'not lt maxkey' AS filter, pg_temp.ids('c', '{"elem": {"$not": {"$lt": {"$maxKey": 1}}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$not": {"$lt": {"$maxKey": 1}}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$not": {"$lt": {"$maxKey": 1}}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$not": {"$lt": {"$maxKey": 1}}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$not": {"$lt": {"$maxKey": 1}}}}', true, true) AS single_path_index;
+    filter     | off_collection_scan | off_ordered_index | collection_scan | ordered_index | single_path_index 
+---------------+---------------------+-------------------+-----------------+---------------+-------------------
+ not lt maxkey | 9,14                | 9,14              | 14              | 14            | 14
+(1 row)
+
+SELECT 'not gte minkey' AS filter, pg_temp.ids('c', '{"elem": {"$not": {"$gte": {"$minKey": 1}}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$not": {"$gte": {"$minKey": 1}}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$not": {"$gte": {"$minKey": 1}}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$not": {"$gte": {"$minKey": 1}}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$not": {"$gte": {"$minKey": 1}}}}', true, true) AS single_path_index;
+     filter     | off_collection_scan | off_ordered_index | collection_scan | ordered_index | single_path_index 
+----------------+---------------------+-------------------+-----------------+---------------+-------------------
+ not gte minkey | 9                   | 9                 |                 |               | 
+(1 row)
+
+SELECT 'not gt minkey' AS filter, pg_temp.ids('c', '{"elem": {"$not": {"$gt": {"$minKey": 1}}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$not": {"$gt": {"$minKey": 1}}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$not": {"$gt": {"$minKey": 1}}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$not": {"$gt": {"$minKey": 1}}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$not": {"$gt": {"$minKey": 1}}}}', true, true) AS single_path_index;
+    filter     | off_collection_scan | off_ordered_index | collection_scan | ordered_index | single_path_index 
+---------------+---------------------+-------------------+-----------------+---------------+-------------------
+ not gt minkey | 9,12                | 9,12              | 12              | 12            | 12
+(1 row)
+
+SELECT 'gt minkey lt maxkey' AS filter, pg_temp.ids('c', '{"elem": {"$gt": {"$minKey": 1}, "$lt": {"$maxKey": 1}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$gt": {"$minKey": 1}, "$lt": {"$maxKey": 1}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$gt": {"$minKey": 1}, "$lt": {"$maxKey": 1}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$gt": {"$minKey": 1}, "$lt": {"$maxKey": 1}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$gt": {"$minKey": 1}, "$lt": {"$maxKey": 1}}}', true, true) AS single_path_index;
+       filter        |      off_collection_scan       |       off_ordered_index        |         collection_scan          |          ordered_index           |        single_path_index         
+---------------------+--------------------------------+--------------------------------+----------------------------------+----------------------------------+----------------------------------
+ gt minkey lt maxkey | 1,2,3,4,5,6,7,8,10,11,13,15,16 | 1,2,3,4,5,6,7,8,10,11,13,15,16 | 1,2,3,4,5,6,7,8,9,10,11,13,15,16 | 1,2,3,4,5,6,7,8,9,10,11,13,15,16 | 1,2,3,4,5,6,7,8,9,10,11,13,15,16
+(1 row)
+
+SELECT 'gte minkey lte maxkey' AS filter, pg_temp.ids('c', '{"elem": {"$gte": {"$minKey": 1}, "$lte": {"$maxKey": 1}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$gte": {"$minKey": 1}, "$lte": {"$maxKey": 1}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$gte": {"$minKey": 1}, "$lte": {"$maxKey": 1}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$gte": {"$minKey": 1}, "$lte": {"$maxKey": 1}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$gte": {"$minKey": 1}, "$lte": {"$maxKey": 1}}}', true, true) AS single_path_index;
+        filter         |         off_collection_scan          |          off_ordered_index           |            collection_scan             |             ordered_index              |           single_path_index            
+-----------------------+--------------------------------------+--------------------------------------+----------------------------------------+----------------------------------------+----------------------------------------
+ gte minkey lte maxkey | 1,2,3,4,5,6,7,8,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16
+(1 row)
+
+SELECT 'nested lte maxkey' AS filter, pg_temp.ids('c', '{"elem.k": {"$lte": {"$maxKey": 1}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem.k": {"$lte": {"$maxKey": 1}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem.k": {"$lte": {"$maxKey": 1}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem.k": {"$lte": {"$maxKey": 1}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem.k": {"$lte": {"$maxKey": 1}}}', true, true) AS single_path_index;
+      filter       | off_collection_scan | off_ordered_index |    collection_scan     |     ordered_index      |   single_path_index    
+-------------------+---------------------+-------------------+------------------------+------------------------+------------------------
+ nested lte maxkey | 10,11               | 10,11             | 3,4,5,9,10,11,12,14,16 | 3,4,5,9,10,11,12,14,16 | 3,4,5,9,10,11,12,14,16
+(1 row)
+
+SELECT 'nested gte minkey' AS filter, pg_temp.ids('c', '{"elem.k": {"$gte": {"$minKey": 1}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem.k": {"$gte": {"$minKey": 1}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem.k": {"$gte": {"$minKey": 1}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem.k": {"$gte": {"$minKey": 1}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem.k": {"$gte": {"$minKey": 1}}}', true, true) AS single_path_index;
+      filter       | off_collection_scan | off_ordered_index |    collection_scan     |     ordered_index      |   single_path_index    
+-------------------+---------------------+-------------------+------------------------+------------------------+------------------------
+ nested gte minkey | 10,11               | 10,11             | 3,4,5,9,10,11,12,14,16 | 3,4,5,9,10,11,12,14,16 | 3,4,5,9,10,11,12,14,16
+(1 row)
+
+SELECT 'nested lt maxkey' AS filter, pg_temp.ids('c', '{"elem.k": {"$lt": {"$maxKey": 1}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem.k": {"$lt": {"$maxKey": 1}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem.k": {"$lt": {"$maxKey": 1}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem.k": {"$lt": {"$maxKey": 1}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem.k": {"$lt": {"$maxKey": 1}}}', true, true) AS single_path_index;
+      filter      | off_collection_scan | off_ordered_index |    collection_scan     |     ordered_index      |   single_path_index    
+------------------+---------------------+-------------------+------------------------+------------------------+------------------------
+ nested lt maxkey | 10,11               | 10,11             | 3,4,5,9,10,11,12,14,16 | 3,4,5,9,10,11,12,14,16 | 3,4,5,9,10,11,12,14,16
+(1 row)
+
+SELECT 'expr lte maxkey' AS filter, pg_temp.ids('c', '{"$expr": {"$lte": ["$elem", {"$maxKey": 1}]}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"$expr": {"$lte": ["$elem", {"$maxKey": 1}]}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"$expr": {"$lte": ["$elem", {"$maxKey": 1}]}}', false, true) AS collection_scan, pg_temp.ids('c', '{"$expr": {"$lte": ["$elem", {"$maxKey": 1}]}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"$expr": {"$lte": ["$elem", {"$maxKey": 1}]}}', true, true) AS single_path_index;
+     filter      |          off_collection_scan           |           off_ordered_index            |            collection_scan             |             ordered_index              |           single_path_index            
+-----------------+----------------------------------------+----------------------------------------+----------------------------------------+----------------------------------------+----------------------------------------
+ expr lte maxkey | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16
+(1 row)
+
+SELECT 'ctl eq null' AS filter, pg_temp.ids('c', '{"elem": null}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": null}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": null}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": null}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": null}', true, true) AS single_path_index;
+   filter    | off_collection_scan | off_ordered_index | collection_scan | ordered_index | single_path_index 
+-------------+---------------------+-------------------+-----------------+---------------+-------------------
+ ctl eq null | 5,7,8,9             | 5,7,8,9           | 5,7,8,9         | 5,7,8,9       | 5,7,8,9
+(1 row)
+
+SELECT 'ctl lte null' AS filter, pg_temp.ids('c', '{"elem": {"$lte": null}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$lte": null}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$lte": null}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$lte": null}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$lte": null}}', true, true) AS single_path_index;
+    filter    | off_collection_scan | off_ordered_index | collection_scan | ordered_index | single_path_index 
+--------------+---------------------+-------------------+-----------------+---------------+-------------------
+ ctl lte null | 5,7,8,9             | 5,7,8,9           | 5,7,8,9         | 5,7,8,9       | 5,7,8,9
+(1 row)
+
+SELECT 'ctl gte null' AS filter, pg_temp.ids('c', '{"elem": {"$gte": null}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$gte": null}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$gte": null}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$gte": null}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$gte": null}}', true, true) AS single_path_index;
+    filter    | off_collection_scan | off_ordered_index | collection_scan | ordered_index | single_path_index 
+--------------+---------------------+-------------------+-----------------+---------------+-------------------
+ ctl gte null | 5,7,8,9             | 5,7,8,9           | 5,7,8,9         | 5,7,8,9       | 5,7,8,9
+(1 row)
+
+SELECT 'ctl nested eq null' AS filter, pg_temp.ids('c', '{"elem.k": null}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem.k": null}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem.k": null}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem.k": null}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem.k": null}', true, true) AS single_path_index;
+       filter       | off_collection_scan | off_ordered_index | collection_scan  |  ordered_index   | single_path_index 
+--------------------+---------------------+-------------------+------------------+------------------+-------------------
+ ctl nested eq null | 3,4,5,9,12,14,16    | 3,4,5,9,12,14,16  | 3,4,5,9,12,14,16 | 3,4,5,9,12,14,16 | 3,4,5,9,12,14,16
+(1 row)
+
+SELECT 'ctl nested lte null' AS filter, pg_temp.ids('c', '{"elem.k": {"$lte": null}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem.k": {"$lte": null}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem.k": {"$lte": null}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem.k": {"$lte": null}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem.k": {"$lte": null}}', true, true) AS single_path_index;
+       filter        | off_collection_scan | off_ordered_index | collection_scan  |  ordered_index   | single_path_index 
+---------------------+---------------------+-------------------+------------------+------------------+-------------------
+ ctl nested lte null | 3,4,5,9,12,14,16    | 3,4,5,9,12,14,16  | 3,4,5,9,12,14,16 | 3,4,5,9,12,14,16 | 3,4,5,9,12,14,16
+(1 row)
+
+SELECT 'ctl not lte null' AS filter, pg_temp.ids('c', '{"elem": {"$not": {"$lte": null}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$not": {"$lte": null}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$not": {"$lte": null}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$not": {"$lte": null}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$not": {"$lte": null}}}', true, true) AS single_path_index;
+      filter      |      off_collection_scan       |       off_ordered_index        |        collection_scan         |         ordered_index          |       single_path_index        
+------------------+--------------------------------+--------------------------------+--------------------------------+--------------------------------+--------------------------------
+ ctl not lte null | 1,2,3,4,6,10,11,12,13,14,15,16 | 1,2,3,4,6,10,11,12,13,14,15,16 | 1,2,3,4,6,10,11,12,13,14,15,16 | 1,2,3,4,6,10,11,12,13,14,15,16 | 1,2,3,4,6,10,11,12,13,14,15,16
+(1 row)
+
+SELECT 'nested gt minkey' AS filter, pg_temp.ids('c', '{"elem.k": {"$gt": {"$minKey": 1}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem.k": {"$gt": {"$minKey": 1}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem.k": {"$gt": {"$minKey": 1}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem.k": {"$gt": {"$minKey": 1}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem.k": {"$gt": {"$minKey": 1}}}', true, true) AS single_path_index;
+      filter      | off_collection_scan | off_ordered_index |    collection_scan     |     ordered_index      |   single_path_index    
+------------------+---------------------+-------------------+------------------------+------------------------+------------------------
+ nested gt minkey | 10,11               | 10,11             | 3,4,5,9,10,11,12,14,16 | 3,4,5,9,10,11,12,14,16 | 3,4,5,9,10,11,12,14,16
+(1 row)
+
+SELECT 'nested not lte maxkey' AS filter, pg_temp.ids('c', '{"elem.k": {"$not": {"$lte": {"$maxKey": 1}}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem.k": {"$not": {"$lte": {"$maxKey": 1}}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem.k": {"$not": {"$lte": {"$maxKey": 1}}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem.k": {"$not": {"$lte": {"$maxKey": 1}}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem.k": {"$not": {"$lte": {"$maxKey": 1}}}}', true, true) AS single_path_index;
+        filter         |       off_collection_scan        |        off_ordered_index         | collection_scan |  ordered_index  | single_path_index 
+-----------------------+----------------------------------+----------------------------------+-----------------+-----------------+-------------------
+ nested not lte maxkey | 1,2,3,4,5,6,7,8,9,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,12,13,14,15,16 | 1,2,6,7,8,13,15 | 1,2,6,7,8,13,15 | 1,2,6,7,8,13,15
+(1 row)
+
+SELECT 'nor lt maxkey' AS filter, pg_temp.ids('c', '{"$nor": [{"elem": {"$lt": {"$maxKey": 1}}}]}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"$nor": [{"elem": {"$lt": {"$maxKey": 1}}}]}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"$nor": [{"elem": {"$lt": {"$maxKey": 1}}}]}', false, true) AS collection_scan, pg_temp.ids('c', '{"$nor": [{"elem": {"$lt": {"$maxKey": 1}}}]}', true, true) AS ordered_index, pg_temp.ids('c2', '{"$nor": [{"elem": {"$lt": {"$maxKey": 1}}}]}', true, true) AS single_path_index;
+    filter     | off_collection_scan | off_ordered_index | collection_scan | ordered_index | single_path_index 
+---------------+---------------------+-------------------+-----------------+---------------+-------------------
+ nor lt maxkey | 9,14                | 9,14              | 14              | 14            | 14
+(1 row)
+
+SELECT 'gte minkey lt 9' AS filter, pg_temp.ids('c', '{"elem": {"$gte": {"$minKey": 1}, "$lt": 9}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$gte": {"$minKey": 1}, "$lt": 9}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$gte": {"$minKey": 1}, "$lt": 9}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$gte": {"$minKey": 1}, "$lt": 9}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$gte": {"$minKey": 1}, "$lt": 9}}', true, true) AS single_path_index;
+     filter      | off_collection_scan | off_ordered_index | collection_scan | ordered_index | single_path_index 
+-----------------+---------------------+-------------------+-----------------+---------------+-------------------
+ gte minkey lt 9 | 1,3                 | 1,3               | 1,3             | 1,3           | 1,3
+(1 row)
+
+SELECT 'id gt minkey' AS filter, pg_temp.ids('c', '{"_id": {"$gt": {"$minKey": 1}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"_id": {"$gt": {"$minKey": 1}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"_id": {"$gt": {"$minKey": 1}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"_id": {"$gt": {"$minKey": 1}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"_id": {"$gt": {"$minKey": 1}}}', true, true) AS single_path_index;
+    filter    |          off_collection_scan           |           off_ordered_index            |            collection_scan             |             ordered_index              |           single_path_index            
+--------------+----------------------------------------+----------------------------------------+----------------------------------------+----------------------------------------+----------------------------------------
+ id gt minkey | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16
+(1 row)
+
+SELECT 'id gte minkey lt maxkey' AS filter, pg_temp.ids('c', '{"_id": {"$gte": {"$minKey": 1}, "$lt": {"$maxKey": 1}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"_id": {"$gte": {"$minKey": 1}, "$lt": {"$maxKey": 1}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"_id": {"$gte": {"$minKey": 1}, "$lt": {"$maxKey": 1}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"_id": {"$gte": {"$minKey": 1}, "$lt": {"$maxKey": 1}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"_id": {"$gte": {"$minKey": 1}, "$lt": {"$maxKey": 1}}}', true, true) AS single_path_index;
+         filter          |          off_collection_scan           |           off_ordered_index            |            collection_scan             |             ordered_index              |           single_path_index            
+-------------------------+----------------------------------------+----------------------------------------+----------------------------------------+----------------------------------------+----------------------------------------
+ id gte minkey lt maxkey | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16
+(1 row)
+
+SELECT 'ctl exists true' AS filter, pg_temp.ids('c', '{"elem": {"$exists": true}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$exists": true}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$exists": true}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$exists": true}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$exists": true}}', true, true) AS single_path_index;
+     filter      |         off_collection_scan          |          off_ordered_index           |           collection_scan            |            ordered_index             |          single_path_index           
+-----------------+--------------------------------------+--------------------------------------+--------------------------------------+--------------------------------------+--------------------------------------
+ ctl exists true | 1,2,3,4,5,6,7,8,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,10,11,12,13,14,15,16 | 1,2,3,4,5,6,7,8,10,11,12,13,14,15,16
+(1 row)
+
+SELECT 'ctl exists false' AS filter, pg_temp.ids('c', '{"elem": {"$exists": false}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$exists": false}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$exists": false}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$exists": false}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$exists": false}}', true, true) AS single_path_index;
+      filter      | off_collection_scan | off_ordered_index | collection_scan | ordered_index | single_path_index 
+------------------+---------------------+-------------------+-----------------+---------------+-------------------
+ ctl exists false | 9                   | 9                 | 9               | 9             | 9
+(1 row)
+
+SELECT 'ctl not exists true' AS filter, pg_temp.ids('c', '{"elem": {"$not": {"$exists": true}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$not": {"$exists": true}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$not": {"$exists": true}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$not": {"$exists": true}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$not": {"$exists": true}}}', true, true) AS single_path_index;
+       filter        | off_collection_scan | off_ordered_index | collection_scan | ordered_index | single_path_index 
+---------------------+---------------------+-------------------+-----------------+---------------+-------------------
+ ctl not exists true | 9                   | 9                 | 9               | 9             | 9
+(1 row)
+
+SELECT 'ctl nested exists true' AS filter, pg_temp.ids('c', '{"elem.k": {"$exists": true}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem.k": {"$exists": true}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem.k": {"$exists": true}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem.k": {"$exists": true}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem.k": {"$exists": true}}', true, true) AS single_path_index;
+         filter         | off_collection_scan | off_ordered_index | collection_scan | ordered_index | single_path_index 
+------------------------+---------------------+-------------------+-----------------+---------------+-------------------
+ ctl nested exists true | 10,11               | 10,11             | 10,11           | 10,11         | 10,11
+(1 row)
+
+SELECT 'ctl elemmatch lte maxkey' AS filter, pg_temp.ids('c', '{"elem": {"$elemMatch": {"$lte": {"$maxKey": 1}}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$elemMatch": {"$lte": {"$maxKey": 1}}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$elemMatch": {"$lte": {"$maxKey": 1}}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$elemMatch": {"$lte": {"$maxKey": 1}}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$elemMatch": {"$lte": {"$maxKey": 1}}}}', true, true) AS single_path_index;
+          filter          | off_collection_scan | off_ordered_index | collection_scan  |  ordered_index   | single_path_index 
+--------------------------+---------------------+-------------------+------------------+------------------+-------------------
+ ctl elemmatch lte maxkey | 1,2,7,8,11,13,15    | 1,2,7,8,11,13,15  | 1,2,7,8,11,13,15 | 1,2,7,8,11,13,15 | 1,2,7,8,11,13,15
+(1 row)
+
+SELECT 'ctl elemmatch k lte maxkey' AS filter, pg_temp.ids('c', '{"elem": {"$elemMatch": {"k": {"$lte": {"$maxKey": 1}}}}}', false, false) AS off_collection_scan, pg_temp.ids('c', '{"elem": {"$elemMatch": {"k": {"$lte": {"$maxKey": 1}}}}}', true, false) AS off_ordered_index, pg_temp.ids('c', '{"elem": {"$elemMatch": {"k": {"$lte": {"$maxKey": 1}}}}}', false, true) AS collection_scan, pg_temp.ids('c', '{"elem": {"$elemMatch": {"k": {"$lte": {"$maxKey": 1}}}}}', true, true) AS ordered_index, pg_temp.ids('c2', '{"elem": {"$elemMatch": {"k": {"$lte": {"$maxKey": 1}}}}}', true, true) AS single_path_index;
+           filter           | off_collection_scan | off_ordered_index | collection_scan | ordered_index | single_path_index 
+----------------------------+---------------------+-------------------+-----------------+---------------+-------------------
+ ctl elemmatch k lte maxkey | 11                  | 11                | 11              | 11            | 11
+(1 row)
+
+-- The bound keeps its index scan: the null equality is a second index condition on the same index
+SET blackboxdb.enable_minmaxkey_missing_path_match TO on;
+SET enable_seqscan TO off;
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('minmaxdb', '{ "find": "c", "filter": { "elem": { "$lt": { "$maxKey": 1 } } } }');
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on documents_26930001 collection
+   Recheck Cond: ((document @< '{ "elem" : { "$maxKey" : 1 } }'::bson) OR (document @= '{ "elem" : null }'::bson))
+   ->  BitmapOr
+         ->  Bitmap Index Scan on elem_1
+               Index Cond: (document @< '{ "elem" : { "$maxKey" : 1 } }'::bson)
+         ->  Bitmap Index Scan on elem_1
+               Index Cond: (document @= '{ "elem" : null }'::bson)
+(7 rows)
+
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('minmaxdb', '{ "find": "c2", "filter": { "elem": { "$gt": { "$minKey": 1 } } } }');
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on documents_26930002 collection
+   Recheck Cond: ((document @> '{ "elem" : { "$minKey" : 1 } }'::bson) OR (document @= '{ "elem" : null }'::bson))
+   ->  BitmapOr
+         ->  Bitmap Index Scan on elem_1
+               Index Cond: (document @> '{ "elem" : { "$minKey" : 1 } }'::bson)
+         ->  Bitmap Index Scan on elem_1
+               Index Cond: (document @= '{ "elem" : null }'::bson)
+(7 rows)
+
+-- _id is never missing, so its bounds stay a plain comparison
+EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_find('minmaxdb', '{ "find": "c", "filter": { "_id": { "$gte": { "$minKey": 1 }, "$lt": { "$maxKey": 1 } } } }');
+                                                                                                                                  QUERY PLAN                                                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using _id_ on documents_26930001 collection
+   Index Cond: ((shard_key_value = '26930001'::bigint) AND (object_id >= '{ "" : { "$minKey" : 1 } }'::bson) AND (object_id <= '{ "" : { "$maxKey" : 1 } }'::bson) AND (object_id < '{ "" : { "$maxKey" : 1 } }'::bson) AND (object_id >= '{ "" : { "$minKey" : 1 } }'::bson))
+(2 rows)
+
+RESET enable_seqscan;
+RESET blackboxdb.enable_minmaxkey_missing_path_match;
