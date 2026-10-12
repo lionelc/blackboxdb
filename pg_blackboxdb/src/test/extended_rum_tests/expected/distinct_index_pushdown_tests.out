@@ -100,10 +100,9 @@ $cmd$);
                Sort Key: (bson_distinct_unwind(collection.document, 'a'::text))
                ->  ProjectSet
                      Output: bson_distinct_unwind(collection.document, 'a'::text)
-                     ->  Index Scan using _id_ on blackboxdb_data.documents_19900 collection
+                     ->  Seq Scan on blackboxdb_data.documents_19900 collection
                            Output: collection.shard_key_value, collection.object_id, collection.document
-                           Index Cond: (collection.shard_key_value = '19900'::bigint)
-(12 rows)
+(11 rows)
 
 ROLLBACK;
 -- ============================================================
@@ -183,10 +182,9 @@ $cmd$);
                Sort Key: (bson_distinct_unwind(collection.document, 'b'::text))
                ->  ProjectSet
                      Output: bson_distinct_unwind(collection.document, 'b'::text)
-                     ->  Index Scan using _id_ on blackboxdb_data.documents_19900 collection
+                     ->  Seq Scan on blackboxdb_data.documents_19900 collection
                            Output: collection.shard_key_value, collection.object_id, collection.document
-                           Index Cond: (collection.shard_key_value = '19900'::bigint)
-(12 rows)
+(11 rows)
 
 ROLLBACK;
 -- ============================================================
@@ -247,10 +245,9 @@ $cmd$);
                Sort Key: (bson_distinct_unwind(collection.document, 'arr'::text))
                ->  ProjectSet
                      Output: bson_distinct_unwind(collection.document, 'arr'::text)
-                     ->  Index Scan using _id_ on blackboxdb_data.documents_19901 collection
+                     ->  Seq Scan on blackboxdb_data.documents_19901 collection
                            Output: collection.shard_key_value, collection.object_id, collection.document
-                           Index Cond: (collection.shard_key_value = '19901'::bigint)
-(12 rows)
+(11 rows)
 
 ROLLBACK;
 -- ============================================================
@@ -286,10 +283,9 @@ $cmd$);
                Sort Key: (bson_distinct_unwind(collection.document, 'a'::text))
                ->  ProjectSet
                      Output: bson_distinct_unwind(collection.document, 'a'::text)
-                     ->  Index Scan using _id_ on blackboxdb_data.documents_19900 collection
+                     ->  Seq Scan on blackboxdb_data.documents_19900 collection
                            Output: collection.shard_key_value, collection.object_id, collection.document
-                           Index Cond: (collection.shard_key_value = '19900'::bigint)
-(12 rows)
+(11 rows)
 
 ROLLBACK;
 -- Remove the array doc and vacuum to clear multikey flag
@@ -1149,10 +1145,9 @@ $cmd$);
                Sort Key: (bson_distinct_unwind(collection.document, 'arr'::text))
                ->  ProjectSet
                      Output: bson_distinct_unwind(collection.document, 'arr'::text)
-                     ->  Index Scan using _id_ on blackboxdb_data.documents_19904 collection
+                     ->  Seq Scan on blackboxdb_data.documents_19904 collection
                            Output: collection.shard_key_value, collection.object_id, collection.document
-                           Index Cond: (collection.shard_key_value = '19904'::bigint)
-(12 rows)
+(11 rows)
 
 ROLLBACK;
 -- ============================================================
@@ -1256,8 +1251,8 @@ SET LOCAL blackboxdb.enableDistinctIndexPushdown TO off;
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_ios", "key": "status" }')
 $cmd$, p_ignore_heap_fetches => true);
-                                                 run_explain_and_trim                                                  
------------------------------------------------------------------------------------------------------------------------
+                                           run_explain_and_trim                                           
+----------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_distinct_agg((bson_distinct_unwind(collection.document, 'status'::text)))
    ->  Unique (actual rows=5 loops=1)
@@ -1268,10 +1263,9 @@ $cmd$, p_ignore_heap_fetches => true);
                Sort Method: quicksort  Memory: xxxkB
                ->  ProjectSet (actual rows=500 loops=1)
                      Output: bson_distinct_unwind(collection.document, 'status'::text)
-                     ->  Index Scan using _id_ on blackboxdb_data.documents_19905 collection (actual rows=500 loops=1)
+                     ->  Seq Scan on blackboxdb_data.documents_19905 collection (actual rows=500 loops=1)
                            Output: collection.shard_key_value, collection.object_id, collection.document
-                           Index Cond: (collection.shard_key_value = '19905'::bigint)
-(13 rows)
+(12 rows)
 
 ROLLBACK;
 -- ============================================================
@@ -1378,20 +1372,16 @@ SET LOCAL blackboxdb.enableExtendedExplainPlans TO on;
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a" }')
 $cmd$, p_ignore_heap_fetches => true);
-                                            run_explain_and_trim                                             
--------------------------------------------------------------------------------------------------------------
+                                   run_explain_and_trim                                   
+------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Unique (actual rows=10 loops=1)
          ->  Sort (actual rows=200 loops=1)
                Sort Key: (bson_distinct_unwind(collection.document, 'a'::text))
                Sort Method: quicksort  Memory: xxxkB
                ->  ProjectSet (actual rows=200 loops=1)
-                     ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=200 loops=1)
-                           namespaceName: db.dist_push
-                           indexName: _id_
-                           ->  Index Scan using _id_ on documents_19900 collection (actual rows=200 loops=1)
-                                 Index Cond: (shard_key_value = '19900'::bigint)
-(11 rows)
+                     ->  Seq Scan on documents_19900 collection (actual rows=200 loops=1)
+(7 rows)
 
 ROLLBACK;
 -- ============================================================
@@ -1515,20 +1505,16 @@ SET LOCAL blackboxdb.enableExtendedExplainPlans TO on;
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, ANALYZE ON, TIMING OFF, SUMMARY OFF, BUFFERS OFF) SELECT document FROM bson_aggregation_distinct('db', '{ "distinct": "dist_push", "key": "a" }')
 $cmd$, p_ignore_heap_fetches => true);
-                                            run_explain_and_trim                                             
--------------------------------------------------------------------------------------------------------------
+                                   run_explain_and_trim                                   
+------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    ->  Unique (actual rows=10 loops=1)
          ->  Sort (actual rows=200 loops=1)
                Sort Key: (bson_distinct_unwind(collection.document, 'a'::text))
                Sort Method: quicksort  Memory: xxxkB
                ->  ProjectSet (actual rows=200 loops=1)
-                     ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=200 loops=1)
-                           namespaceName: db.dist_push
-                           indexName: _id_
-                           ->  Index Scan using _id_ on documents_19900 collection (actual rows=200 loops=1)
-                                 Index Cond: (shard_key_value = '19900'::bigint)
-(11 rows)
+                     ->  Seq Scan on documents_19900 collection (actual rows=200 loops=1)
+(7 rows)
 
 ROLLBACK;
 -- ============================================================
@@ -1739,11 +1725,10 @@ $cmd$);
                Sort Key: (bson_distinct_unwind(collection.document, 'a'::text))
                ->  ProjectSet
                      Output: bson_distinct_unwind(collection.document, 'a'::text)
-                     ->  Index Scan using _id_ on blackboxdb_data.documents_19900 collection
+                     ->  Seq Scan on blackboxdb_data.documents_19900 collection
                            Output: collection.shard_key_value, collection.object_id, collection.document
-                           Index Cond: (collection.shard_key_value = '19900'::bigint)
                            Filter: (collection.document @>= '{ "b" : "C" }'::bson)
-(13 rows)
+(12 rows)
 
 ROLLBACK;
 -- ============================================================

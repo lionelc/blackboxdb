@@ -5916,14 +5916,10 @@ $cmd$);
  Sort (actual rows=7 loops=1)
    Sort Key: (blackboxdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level1'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=7 loops=1)
-         namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
-         indexName: _id_
-         ->  Index Scan using _id_ on documents_8121 collection (actual rows=7 loops=1)
-               Index Cond: (shard_key_value = '8121'::bigint)
-               Filter: (document @#? '{ "a" : { "$ne" : "apple" }, "collation" : "en-u-ks-level1" }'::bson)
-               Rows Removed by Filter: 3
-(10 rows)
+   ->  Seq Scan on documents_8121 collection (actual rows=7 loops=1)
+         Filter: (document @#? '{ "a" : { "$ne" : "apple" }, "collation" : "en-u-ks-level1" }'::bson)
+         Rows Removed by Filter: 3
+(6 rows)
 
 -- 28i: $elemMatch with mismatched collation + sort
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
@@ -5934,14 +5930,10 @@ $cmd$);
  Sort (actual rows=3 loops=1)
    Sort Key: (blackboxdb_api_internal.bson_orderby(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'de-u-ks-level1'::text)) USING <<< NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=3 loops=1)
-         namespaceName: ord_coll_ordered_db.ord_elemmatch_coll
-         indexName: _id_
-         ->  Index Scan using _id_ on documents_8121 collection (actual rows=3 loops=1)
-               Index Cond: (shard_key_value = '8121'::bigint)
-               Filter: (document @#? '{ "a" : { "$eq" : "apple" }, "collation" : "de-u-ks-level1" }'::bson)
-               Rows Removed by Filter: 7
-(10 rows)
+   ->  Seq Scan on documents_8121 collection (actual rows=3 loops=1)
+         Filter: (document @#? '{ "a" : { "$eq" : "apple" }, "collation" : "de-u-ks-level1" }'::bson)
+         Rows Removed by Filter: 7
+(6 rows)
 
 -- 28j: $elemMatch with non-string value + sort
 SELECT document FROM bson_aggregation_find('ord_coll_ordered_db', '{ "find": "ord_elemmatch_coll", "filter": { "a": { "$elemMatch": { "$eq": 42 } } }, "sort": { "a": 1, "_id": 1 }, "collation": { "locale": "en", "strength": 1 } }');
@@ -6377,12 +6369,8 @@ $cmd$);
  Sort (actual rows=6 loops=1)
    Sort Key: (blackboxdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'fr-u-ks-level3-kn-true'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=6 loops=1)
-         namespaceName: ord_coll_ordered_db.ord_orderby_numeric
-         indexName: _id_
-         ->  Index Scan using _id_ on documents_8122 collection (actual rows=6 loops=1)
-               Index Cond: (shard_key_value = '8122'::bigint)
-(8 rows)
+   ->  Seq Scan on documents_8122 collection (actual rows=6 loops=1)
+(4 rows)
 
 -- 29e: numericOrdering mismatch retains a separate Sort
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
@@ -6393,12 +6381,8 @@ $cmd$);
  Sort (actual rows=6 loops=1)
    Sort Key: (blackboxdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson, 'en-u-ks-level3'::text)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=6 loops=1)
-         namespaceName: ord_coll_ordered_db.ord_orderby_numeric
-         indexName: _id_
-         ->  Index Scan using _id_ on documents_8122 collection (actual rows=6 loops=1)
-               Index Cond: (shard_key_value = '8122'::bigint)
-(8 rows)
+   ->  Seq Scan on documents_8122 collection (actual rows=6 loops=1)
+(4 rows)
 
 -- 29f: uncollated query against numericOrdering index retains a separate Sort
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
@@ -6409,12 +6393,8 @@ $cmd$);
  Sort (actual rows=6 loops=1)
    Sort Key: (blackboxdb_api_internal.bson_orderby_index(document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=6 loops=1)
-         namespaceName: ord_coll_ordered_db.ord_orderby_numeric
-         indexName: _id_
-         ->  Index Scan using _id_ on documents_8122 collection (actual rows=6 loops=1)
-               Index Cond: (shard_key_value = '8122'::bigint)
-(8 rows)
+   ->  Seq Scan on documents_8122 collection (actual rows=6 loops=1)
+(4 rows)
 
 -- 29y: aggregation pipeline $sort + $skip + $limit with matching numericOrdering collation
 SELECT document FROM bson_aggregation_pipeline('ord_coll_ordered_db', '{ "aggregate": "ord_orderby_numeric", "pipeline": [ { "$sort": { "a": 1 } }, { "$skip": 2 }, { "$limit": 3 } ], "cursor": {}, "collation": { "locale": "en", "numericOrdering": true } }');
@@ -6431,8 +6411,8 @@ $cmd$);
                                                      run_explain_and_trim                                                      
 -------------------------------------------------------------------------------------------------------------------------------
  Limit (actual rows=3 loops=1)
-   ->  Subquery Scan on agg_stage_2 (actual rows=3 loops=1)
-         ->  Limit (actual rows=3 loops=1)
+   ->  Subquery Scan on agg_stage_2 (actual rows=5 loops=1)
+         ->  Limit (actual rows=5 loops=1)
                ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=5 loops=1)
                      namespaceName: ord_coll_ordered_db.ord_orderby_numeric
                      indexName: idx_orderby_numeric_en_num

@@ -679,8 +679,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                      Sort Key: (bson_orderby(collection.document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(collection.document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
                      ->  Index Scan using _id_ on blackboxdb_data.documents_9300 collection
                            Output: collection.document, bson_orderby(collection.document, '{ "a" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "b" : { "$numberInt" : "1" } }'::bson)
-                           Index Cond: (collection.shard_key_value = '9300'::bigint)
-(14 rows)
+(13 rows)
 
 SET LOCAL blackboxdb.enableSortPushToAccumulatorWithPrefix TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
@@ -698,8 +697,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          Sort Key: (bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
          ->  Index Scan using _id_ on blackboxdb_data.documents_9300 collection
                Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson)
-               Index Cond: (collection.shard_key_value = '9300'::bigint)
-(9 rows)
+(8 rows)
 
 -- ----------------------------------------------------------------
 -- 2.2 Single-field group: sort{a,b}, group{a}, $first — hint idx_a
@@ -818,8 +816,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                      Sort Key: (bson_orderby(collection.document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(collection.document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(collection.document, '{ "c" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
                      ->  Index Scan using _id_ on blackboxdb_data.documents_9300 collection
                            Output: collection.document, bson_orderby(collection.document, '{ "a" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "b" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "c" : { "$numberInt" : "1" } }'::bson)
-                           Index Cond: (collection.shard_key_value = '9300'::bigint)
-(14 rows)
+(13 rows)
 
 SET LOCAL blackboxdb.enableSortPushToAccumulatorWithPrefix TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
@@ -837,8 +834,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          Sort Key: (bson_expression_get(collection.document, '{ "" : { "a" : "$a", "b" : "$b" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "c" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
          ->  Index Scan using _id_ on blackboxdb_data.documents_9300 collection
                Output: bson_expression_get(document, '{ "" : { "a" : "$a", "b" : "$b" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "c" : { "$numberInt" : "1" } }'::bson)
-               Index Cond: (collection.shard_key_value = '9300'::bigint)
-(9 rows)
+(8 rows)
 
 -- ----------------------------------------------------------------
 -- 2.5 Multi-field group: sort{a,b,c}, group{a,b}, $first — hint idx_a_b
@@ -961,8 +957,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                      Sort Key: (bson_orderby(collection.document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
                      ->  Index Scan using _id_ on blackboxdb_data.documents_9300 collection
                            Output: collection.document, bson_orderby(collection.document, '{ "a" : { "$numberInt" : "1" } }'::bson)
-                           Index Cond: (collection.shard_key_value = '9300'::bigint)
-(14 rows)
+(13 rows)
 
 SET LOCAL blackboxdb.enableSortPushToAccumulatorWithPrefix TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
@@ -980,8 +975,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          Sort Key: (bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
          ->  Index Scan using _id_ on blackboxdb_data.documents_9300 collection
                Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
-               Index Cond: (collection.shard_key_value = '9300'::bigint)
-(9 rows)
+(8 rows)
 
 -- ----------------------------------------------------------------
 -- 2.8 Sort and group match exactly: sort{a}, group{a}, $first — hint idx_a
@@ -1050,8 +1044,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                      Sort Key: (bson_orderby(collection.document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(collection.document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
                      ->  Index Scan using _id_ on blackboxdb_data.documents_9300 collection
                            Output: collection.document, bson_orderby(collection.document, '{ "a" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "b" : { "$numberInt" : "1" } }'::bson)
-                           Index Cond: (collection.shard_key_value = '9300'::bigint)
-(14 rows)
+(13 rows)
 
 SET LOCAL blackboxdb.enableSortPushToAccumulatorWithPrefix TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
@@ -1069,8 +1062,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          Sort Key: (bson_expression_get(collection.document, '{ "" : { "a" : "$a", "b" : "$b" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
          ->  Index Scan using _id_ on blackboxdb_data.documents_9300 collection
                Output: bson_expression_get(document, '{ "" : { "a" : "$a", "b" : "$b" } }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document
-               Index Cond: (collection.shard_key_value = '9300'::bigint)
-(9 rows)
+(8 rows)
 
 -- ----------------------------------------------------------------
 -- 2.10 Sort and group match exactly: sort{a,b}, group{a,b}, $first — hint idx_a
@@ -1196,8 +1188,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                      Sort Key: (bson_orderby(collection.document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(collection.document, '{ "b.y" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
                      ->  Index Scan using _id_ on blackboxdb_data.documents_9301 collection
                            Output: collection.document, bson_orderby(collection.document, '{ "a" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "b.y" : { "$numberInt" : "1" } }'::bson)
-                           Index Cond: (collection.shard_key_value = '9301'::bigint)
-(14 rows)
+(13 rows)
 
 SET LOCAL blackboxdb.enableSortPushToAccumulatorWithPrefix TO on;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db',
@@ -1215,8 +1206,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
          Sort Key: (bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "b.y" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
          ->  Index Scan using _id_ on blackboxdb_data.documents_9301 collection
                Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "b.y" : { "$numberInt" : "1" } }'::bson)
-               Index Cond: (collection.shard_key_value = '9301'::bigint)
-(9 rows)
+(8 rows)
 
 -- ----------------------------------------------------------------
 -- 2.13 Single-field group: sort{a,b}, group{a}, $first — forces HashAgg.
@@ -1247,8 +1237,7 @@ $cmd$);
                Sort Key: (bson_orderby(collection.document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(collection.document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
                ->  Index Scan using _id_ on blackboxdb_data.documents_9300 collection
                      Output: collection.document, bson_orderby(collection.document, '{ "a" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "b" : { "$numberInt" : "1" } }'::bson)
-                     Index Cond: (collection.shard_key_value = '9300'::bigint)
-(11 rows)
+(10 rows)
 
 SET LOCAL blackboxdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
@@ -1268,8 +1257,7 @@ $cmd$);
          Sort Key: (bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
          ->  Index Scan using _id_ on blackboxdb_data.documents_9300 collection
                Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "b" : { "$numberInt" : "1" } }'::bson)
-               Index Cond: (collection.shard_key_value = '9300'::bigint)
-(9 rows)
+(8 rows)
 
 RESET enable_hashagg;
 RESET enable_sort;
@@ -1307,8 +1295,7 @@ $cmd$);
                Sort Key: (bson_orderby(collection.document, '{ "a" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(collection.document, '{ "b" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(collection.document, '{ "c" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
                ->  Index Scan using _id_ on blackboxdb_data.documents_9300 collection
                      Output: collection.document, bson_orderby(collection.document, '{ "a" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "b" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "c" : { "$numberInt" : "1" } }'::bson)
-                     Index Cond: (collection.shard_key_value = '9300'::bigint)
-(11 rows)
+(10 rows)
 
 SET LOCAL blackboxdb.enableSortPushToAccumulatorWithPrefix TO on;
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
@@ -1328,8 +1315,7 @@ $cmd$);
          Sort Key: (bson_expression_get(collection.document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_expression_get(collection.document, '{ "" : "$b" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), (bson_orderby(collection.document, '{ "c" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
          ->  Index Scan using _id_ on blackboxdb_data.documents_9300 collection
                Output: bson_expression_get(document, '{ "" : "$a" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), bson_expression_get(document, '{ "" : "$b" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), document, bson_orderby(document, '{ "c" : { "$numberInt" : "1" } }'::bson)
-               Index Cond: (collection.shard_key_value = '9300'::bigint)
-(9 rows)
+(8 rows)
 
 RESET enable_hashagg;
 RESET enable_sort;
@@ -1508,8 +1494,7 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                      Sort Key: collection.ctid NULLS FIRST
                      ->  Index Scan using _id_ on blackboxdb_data.documents_9300 collection
                            Output: collection.document, collection.ctid
-                           Index Cond: (collection.shard_key_value = '9300'::bigint)
-(14 rows)
+(13 rows)
 
 -- ----------------------------------------------------------------
 -- 3.4 Dotted scalar group-by: sort{a.x, b}, group{"$a.x"}, $first

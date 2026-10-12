@@ -777,14 +777,14 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('
 $cmd$);
                                                                                                        run_explain_and_trim                                                                                                        
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Subquery Scan on agg_stage_2
-   Output: bson_dollar_project(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" }, "code" : "$legs.code", "dist" : "$legs.dist" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   Filter: (agg_stage_2.document #= '{ "items.code" : "A" }'::bsonquery)
+ Subquery Scan on agg_stage_3
+   Output: bson_dollar_project(agg_stage_3.document, '{ "_id" : { "$numberInt" : "1" }, "code" : "$legs.code", "dist" : "$legs.dist" }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
    ->  ProjectSet
          Output: bson_dollar_unwind(collection.document, '$legs'::text)
          ->  Index Scan using _id_ on blackboxdb_data.documents_90101 collection
                Output: collection.shard_key_value, collection.object_id, collection.document
                Index Cond: ((collection.shard_key_value = '90101'::bigint) AND (collection.object_id <= '{ "" : { "$numberInt" : "3" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
+               Filter: (collection.document @= '{ "items.code" : "A" }'::bson)
 (8 rows)
 
 -- ===========================================================================
@@ -1587,8 +1587,7 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('
                                  indexName: _id_
                                  ->  Index Scan using _id_ on blackboxdb_data.documents_90101 collection
                                        Output: collection.shard_key_value, collection.object_id, collection.document
-                                       Index Cond: (collection.shard_key_value = '90101'::bigint)
-(21 rows)
+(20 rows)
 
 -- Test K3: With a trailing $match after $replaceRoot + $project
 -- Ensures rows are not lost when match follows replaceRoot
@@ -1647,8 +1646,7 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_pipeline('
                                        indexName: _id_
                                        ->  Index Scan using _id_ on blackboxdb_data.documents_90101 collection
                                              Output: collection.shard_key_value, collection.object_id, collection.document
-                                             Index Cond: (collection.shard_key_value = '90101'::bigint)
-(24 rows)
+(23 rows)
 
 -- ===========================================================================
 -- Cleanup

@@ -39,12 +39,9 @@ EXPLAIN (VERBOSE ON, COSTS OFF) SELECT document FROM bson_aggregation_find('dync
 $cmd$);
                                                                              run_explain_and_trim                                                                             
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on blackboxdb_data.documents_9201 collection
+ Seq Scan on blackboxdb_data.documents_9201 collection
    Output: bson_dollar_project_find(document, '{ "_id" : { "$numberInt" : "1" } }'::bson, '{ }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson)
-   Recheck Cond: (collection.shard_key_value = '9201'::bigint)
-   ->  Bitmap Index Scan on _id_
-         Index Cond: (collection.shard_key_value = '9201'::bigint)
-(5 rows)
+(2 rows)
 
 -- ===========================================================================
 -- Test 2: EXPLAIN with _id range filter
@@ -97,7 +94,7 @@ $cmd$);
    indexName: _id_
    ->  Index Scan using _id_ on blackboxdb_data.documents_9201 collection
          Output: shard_key_value, object_id, document
-         Index Cond: ((collection.shard_key_value = '9201'::bigint) AND (collection.object_id >= '{ "" : { "$numberInt" : "3" } }'::bson))
+         Index Cond: (ROW(collection.shard_key_value, collection.object_id) >= ROW('9201'::bigint, '{ "" : { "$numberInt" : "3" } }'::bson))
 (7 rows)
 
 -- ===========================================================================
@@ -234,8 +231,7 @@ $cmd$);
    indexName: _id_
    ->  Index Scan using _id_ on blackboxdb_data.documents_9201 collection
          Output: shard_key_value, object_id, document
-         Index Cond: (collection.shard_key_value = '9201'::bigint)
-(7 rows)
+(6 rows)
 
 SET blackboxdb.enableCursorsOnAggregationQueryRewrite TO off;
 -- ===========================================================================
@@ -344,7 +340,7 @@ $cmd$);
    indexName: _id_
    ->  Index Scan using _id_ on blackboxdb_data.documents_9201 collection
          Output: shard_key_value, object_id, document
-         Index Cond: ((collection.shard_key_value = '9201'::bigint) AND (collection.object_id >= '{ "" : { "$numberInt" : "6" } }'::bson))
+         Index Cond: (ROW(collection.shard_key_value, collection.object_id) >= ROW('9201'::bigint, '{ "" : { "$numberInt" : "6" } }'::bson))
          Filter: (collection.document @= '{ "sk" : { "$numberInt" : "1" } }'::bson)
 (8 rows)
 

@@ -646,9 +646,9 @@ $Q$, p_ignore_heap_fetches := true);
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Limit (actual rows=1 loops=1)
    Output: agg_stage_3.document
-   ->  Subquery Scan on agg_stage_3 (actual rows=1 loops=1)
+   ->  Subquery Scan on agg_stage_3 (actual rows=2 loops=1)
          Output: agg_stage_3.document
-         ->  Limit (actual rows=1 loops=1)
+         ->  Limit (actual rows=2 loops=1)
                Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
                ->  Sort (actual rows=2 loops=1)
                      Output: agg_stage_1.document, (bson_orderby(agg_stage_1.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
