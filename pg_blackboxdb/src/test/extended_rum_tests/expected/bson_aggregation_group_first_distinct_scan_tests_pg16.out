@@ -1417,22 +1417,22 @@ $Q$, p_ignore_heap_fetches := true);
                                                                                                                                                                                                                                                             run_explain_and_trim                                                                                                                                                                                                                                                            
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort (actual rows=2 loops=1)
-   Output: agg_stage_2.document, (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
-   Sort Key: (bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
+   Output: agg_stage_3.document, (bson_orderby(agg_stage_3.document, '{ "_id" : { "$numberInt" : "1" } }'::bson))
+   Sort Key: (bson_orderby(agg_stage_3.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
    Sort Method: quicksort  Memory: xxxkB
-   ->  Subquery Scan on agg_stage_2 (actual rows=2 loops=1)
-         Output: agg_stage_2.document, bson_orderby(agg_stage_2.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
+   ->  Subquery Scan on agg_stage_3 (actual rows=2 loops=1)
+         Output: agg_stage_3.document, bson_orderby(agg_stage_3.document, '{ "_id" : { "$numberInt" : "1" } }'::bson)
          ->  GroupAggregate (actual rows=2 loops=1)
-               Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(agg_stage_1.document, '{ "" : "$vals" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
-               Group Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Output: bson_repath_and_build('_id'::text, (bson_expression_get(agg_stage_2.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), 'f'::text, bsonfirstonsorted(bson_expression_get(agg_stage_2.document, '{ "" : "$vals" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))), (bson_expression_get(agg_stage_2.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+               Group Key: (bson_expression_get(agg_stage_2.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
                ->  Sort (actual rows=4 loops=1)
-                     Output: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_1.document
-                     Sort Key: (bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
+                     Output: (bson_expression_get(agg_stage_2.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson)), agg_stage_2.document
+                     Sort Key: (bson_expression_get(agg_stage_2.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson))
                      Sort Method: quicksort  Memory: xxxkB
-                     ->  Subquery Scan on agg_stage_1 (actual rows=4 loops=1)
-                           Output: bson_expression_get(agg_stage_1.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_1.document
+                     ->  Subquery Scan on agg_stage_2 (actual rows=4 loops=1)
+                           Output: bson_expression_get(agg_stage_2.document, '{ "" : "$x" }'::bson, true, '{ "now" : NOW_SYS_VARIABLE }'::bson), agg_stage_2.document
                            ->  ProjectSet (actual rows=4 loops=1)
-                                 Output: bson_dollar_unwind(collection.document, '$vals'::text)
+                                 Output: bson_dollar_unwind(bson_dollar_project(collection.document, '{ "x" : { "$numberInt" : "1" }, "vals" : { "$numberInt" : "1" }, "_id" : { "$numberInt" : "0" } }'::bson, '{ "now" : NOW_SYS_VARIABLE }'::bson), '$vals'::text)
                                  ->  Index Scan using idx_x on blackboxdb_data.documents_21002 collection (actual rows=3 loops=1)
                                        Output: collection.shard_key_value, collection.object_id, collection.document
                                        Index Cond: (collection.document @<> '{ "x" : { "fullScan" : true } }'::bson)

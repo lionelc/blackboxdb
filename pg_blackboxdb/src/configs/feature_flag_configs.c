@@ -388,8 +388,8 @@ bool FailOnNonEmptyGroupCountArg = DEFAULT_FAIL_ON_NON_EMPTY_GROUP_COUNT_ARG;
 #define DEFAULT_ENABLE_SORT_GROUP_STAGE true
 bool EnableSortGroupStage = DEFAULT_ENABLE_SORT_GROUP_STAGE;
 
-/* Added in v115, Pending stabilization, enable in v117.*/
-#define DEFAULT_ENABLE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP false
+/* Added in v115, enabled in v116, remove after v118 */
+#define DEFAULT_ENABLE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP true
 bool EnableProjectPushUpBeforeUnwindWithGroup =
 	DEFAULT_ENABLE_PROJECT_PUSHUP_BEFORE_UNWIND_WITH_GROUP;
 
