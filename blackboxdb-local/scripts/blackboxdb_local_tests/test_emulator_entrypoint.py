@@ -533,6 +533,163 @@ json.dump(data, sys.stdout)
             )
 
 
+    # TOAST compression: the entrypoint writes default_toast_compression into a fragment
+    # outside the data directory and includes it from postgresql.conf once.
+    def _enable_pg_start(self, configure="'--prefix=/usr' '--with-lz4'"):
+        self.oss_args = self.root / "oss_args.txt"
+        self._write_exec(
+            self.gateway_scripts / "start_oss_server.sh",
+            f"""#!/bin/sh
+printf '%s\\n' "$@" > '{self.oss_args}'
+data=""
+extra=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -d) data="$2"; shift;;
+    -f) extra="$2"; shift;;
+  esac
+  shift
+done
+mkdir -p "$data"
+if [ -n "$extra" ]; then echo "include '$extra'" >> "$data/postgresql.conf"; fi
+touch "$data/pglog.log" "$data/postmaster.pid"
+echo oss-server-stub-started
+""",
+        )
+        pg_config = self.bin_dir / "pg_config_stub"
+        if configure is None:
+            self._write_exec(pg_config, "#!/bin/sh\nexit 1\n")
+        else:
+            self._write_exec(
+                pg_config,
+                f"#!/bin/sh\n[ \"$1\" = --configure ] && echo \"{configure}\" && exit 0\nexit 1\n",
+            )
+        self.toast_conf = self.gateway_home / "blackboxdb_toast_compression.conf"
+        return {"START_POSTGRESQL": "true", "PG_CONFIG": str(pg_config)}
+
+    def _oss_args(self):
+        return self.oss_args.read_text(encoding="utf-8").splitlines()
+
+    def _include_lines(self):
+        conf = self.data_dir / "postgresql.conf"
+        if not conf.exists():
+            return []
+        return [l for l in conf.read_text(encoding="utf-8").splitlines() if l.startswith("include ")]
+
+    def test_toast_compression_defaults_to_lz4_and_is_included_once(self):
+        env = self._enable_pg_start()
+        for run in (1, 2):
+            result = self._run_entrypoint("--password", "mypassword", extra_env=env)
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertEqual(
+                self.toast_conf.read_text(encoding="utf-8"),
+                "default_toast_compression = 'lz4'\n",
+            )
+            args = self._oss_args()
+            if run == 1:
+                self.assertIn("-f", args)
+                self.assertEqual(args[args.index("-f") + 1], str(self.toast_conf))
+            else:
+                self.assertNotIn("-f", args)
+        self.assertEqual(self._include_lines(), [f"include '{self.toast_conf}'"])
+
+    def test_toast_compression_env_var_selects_pglz(self):
+        env = self._enable_pg_start()
+        env["BLACKBOXDB_TOAST_COMPRESSION"] = "pglz"
+        result = self._run_entrypoint("--password", "mypassword", extra_env=env)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertEqual(
+            self.toast_conf.read_text(encoding="utf-8"),
+            "default_toast_compression = 'pglz'\n",
+        )
+
+    def test_toast_compression_flag_default_leaves_server_setting(self):
+        env = self._enable_pg_start()
+        env["BLACKBOXDB_TOAST_COMPRESSION"] = "pglz"
+        result = self._run_entrypoint(
+            "--password", "mypassword", "--toast-compression", "default", extra_env=env
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertNotIn(
+            "default_toast_compression =", self.toast_conf.read_text(encoding="utf-8")
+        )
+
+    def test_invalid_toast_compression_value_fails_fast(self):
+        result = self._run_entrypoint(
+            "--password",
+            "mypassword",
+            extra_env={"BLACKBOXDB_TOAST_COMPRESSION": "zstd"},
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "Invalid TOAST compression value 'zstd' (from --toast-compression or "
+            "BLACKBOXDB_TOAST_COMPRESSION), must be one of: lz4, pglz, default",
+            result.stdout + result.stderr,
+        )
+
+    def test_build_without_lz4_falls_back_by_default_and_rejects_explicit_lz4(self):
+        env = self._enable_pg_start(configure="'--prefix=/usr' '--with-zstd'")
+        result = self._run_entrypoint("--password", "mypassword", extra_env=env)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("has no lz4 support", result.stderr)
+        self.assertNotIn(
+            "default_toast_compression =", self.toast_conf.read_text(encoding="utf-8")
+        )
+
+        self.oss_args.unlink()
+        env["BLACKBOXDB_TOAST_COMPRESSION"] = "lz4"
+        result = self._run_entrypoint("--password", "mypassword", extra_env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("lz4 was requested, but this PostgreSQL build has no lz4 support", result.stderr)
+        self.assertFalse(self.oss_args.exists())
+
+    def test_lz4_probe_falls_back_to_postgres_linkage(self):
+        env = self._enable_pg_start(configure=None)
+        self._write_exec(self.bin_dir / "postgres", "#!/bin/sh\nexit 0\n")
+        self._write_exec(
+            self.bin_dir / "ldd",
+            "#!/bin/sh\necho '\tliblz4.so.1 => /lib/liblz4.so.1 (0x0)'\n",
+        )
+        result = self._run_entrypoint("--password", "mypassword", extra_env=env)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertEqual(
+            self.toast_conf.read_text(encoding="utf-8"),
+            "default_toast_compression = 'lz4'\n",
+        )
+
+        self._write_exec(self.bin_dir / "ldd", "#!/bin/sh\necho '\tlibc.so.6 => /lib/libc.so.6 (0x0)'\n")
+        result = self._run_entrypoint("--password", "mypassword", extra_env=env)
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("has no lz4 support", result.stderr)
+        self.assertNotIn(
+            "default_toast_compression =", self.toast_conf.read_text(encoding="utf-8")
+        )
+
+    def test_toast_compression_is_ignored_without_postgres_start(self):
+        result = self._run_entrypoint(
+            "--password",
+            "mypassword",
+            extra_env={"BLACKBOXDB_TOAST_COMPRESSION": "lz4"},
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("is ignored because this container does not start PostgreSQL", result.stderr)
+        self.assertFalse((self.gateway_home / "blackboxdb_toast_compression.conf").exists())
+
+    def test_toast_compression_conf_must_be_absolute_and_outside_data(self):
+        env = self._enable_pg_start()
+        for bad in ("relative.conf", str(self.data_dir / "toast.conf")):
+            env["TOAST_COMPRESSION_CONF"] = bad
+            result = self._run_entrypoint("--password", "mypassword", extra_env=env)
+            self.assertNotEqual(result.returncode, 0, msg=bad)
+            self.assertIn("TOAST_COMPRESSION_CONF must", result.stderr)
+            self.assertFalse(self.oss_args.exists())
+
+    def test_help_describes_toast_compression(self):
+        result = self._run_entrypoint("--help")
+        self.assertIn("--toast-compression [lz4|pglz|default]", result.stdout)
+        self.assertIn("BLACKBOXDB_TOAST_COMPRESSION", result.stdout)
+
+
 class InitDataAttemptMarkerTests(unittest.TestCase):
     """Exercises the real init_blackboxdb_data.sh --attempt-marker contract (#612).
 
