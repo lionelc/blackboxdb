@@ -5125,10 +5125,12 @@ GetNegationOperatorForQueryOperator(const MongoQueryOperator *queryOperator,
  * A missing path compares like null, and null sorts above MinKey and below MaxKey,
  * so $gt or $gte against MinKey and $lt or $lte against MaxKey also match a
  * document without the path (a dotted path follows the null rules through
- * arrays). The comparison operators can't take that on, because the planner uses
- * path >= MinKey as its $exists: true condition. Instead these four bounds get a
- * null equality alongside, which matches a missing path the same way on every
- * access path. _id is never missing, so it keeps the plain comparison.
+ * arrays), and an array element without the field ($elemMatch, $pull conditions,
+ * arrayFilters). The comparison operators can't take that on, because the
+ * planner uses path >= MinKey as its $exists: true condition. Instead these four
+ * bounds get a null equality alongside, which matches a missing path the same way
+ * on every access path. A document's _id is never missing, so a top-level _id
+ * keeps the plain comparison.
  */
 static Expr *
 AddMissingPathMatchForMinMaxKeyBound(Expr *comparisonExpr,
@@ -5137,8 +5139,8 @@ AddMissingPathMatchForMinMaxKeyBound(Expr *comparisonExpr,
 									 const bson_value_t *value, const char *path)
 {
 	if (!EnableMinMaxKeyMissingPathMatch ||
-		context->inputType != MongoQueryOperatorInputType_Bson ||
-		strcmp(path, "_id") == 0)
+		(context->inputType == MongoQueryOperatorInputType_Bson &&
+		 strcmp(path, "_id") == 0))
 	{
 		return comparisonExpr;
 	}
