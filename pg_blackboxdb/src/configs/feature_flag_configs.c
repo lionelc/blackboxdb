@@ -222,6 +222,11 @@ bool EnableOrderByIndexTerm = DEFAULT_ENABLE_ORDER_BY_INDEX_TERM;
 bool EnableGroupByCompoundIdIndexPushdown =
 	DEFAULT_ENABLE_GROUP_BY_COMPOUND_ID_INDEX_PUSHDOWN;
 
+/* Added in v116, Pending stabilization, enable in v117 */
+#define DEFAULT_ENABLE_FULL_SCAN_COST_AND_SELECTIVITY false
+bool EnableFullScanCostAndSelectivity =
+	DEFAULT_ENABLE_FULL_SCAN_COST_AND_SELECTIVITY;
+
 /* Added in v112, enabled in v112, remove after v116 */
 #define DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK true
 bool EnablePartialMatchHasRecheck = DEFAULT_ENABLE_PARTIAL_MATCH_HAS_RECHECK;
@@ -868,6 +873,14 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		gettext_noop(
 			"Whether to enable the new ordered index opclass for default index creates"),
 		NULL, &DefaultUseCompositeOpClass, DEFAULT_USE_NEW_COMPOSITE_INDEX_OPCLASS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_full_scan_cost_and_selectivity", newGucPrefix),
+		gettext_noop(
+			"Whether full-scan planner support reports all rows selected with negligible execution cost."),
+		NULL, &EnableFullScanCostAndSelectivity,
+		DEFAULT_ENABLE_FULL_SCAN_COST_AND_SELECTIVITY,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

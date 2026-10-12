@@ -238,6 +238,7 @@ extern bool EnableDynamicCursors;
 extern bool EnableDistinctIndexPushdown;
 extern bool EnableCollationWithNonUniqueOrderedIndexes;
 extern bool EnablePerPathMultiKeySortPushdown;
+extern bool EnableFullScanCostAndSelectivity;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -488,7 +489,15 @@ dollar_support(PG_FUNCTION_ARGS)
 	else if (IsA(supportRequest, SupportRequestSelectivity))
 	{
 		SupportRequestSelectivity *req = (SupportRequestSelectivity *) supportRequest;
-		if (EnablePlannerCostSelectivity(req->root, req->args))
+		if (req->funcid == BsonFullScanFunctionOid())
+		{
+			if (EnableFullScanCostAndSelectivity)
+			{
+				req->selectivity = 1.0;
+				responsePointer = (Pointer) req;
+			}
+		}
+		else if (EnablePlannerCostSelectivity(req->root, req->args))
 		{
 			const MongoIndexOperatorInfo *indexOperator =
 				GetMongoIndexOperatorInfoByPostgresFuncId(req->funcid);
@@ -534,6 +543,13 @@ dollar_support(PG_FUNCTION_ARGS)
 				req->startup = 0;
 				responsePointer = (Pointer) req;
 			}
+		}
+		else if (EnableFullScanCostAndSelectivity &&
+				 req->funcid == BsonFullScanFunctionOid())
+		{
+			req->per_tuple = 1e-9;
+			req->startup = 0;
+			responsePointer = (Pointer) req;
 		}
 	}
 
