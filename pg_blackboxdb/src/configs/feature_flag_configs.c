@@ -222,8 +222,8 @@ bool EnableOrderByIndexTerm = DEFAULT_ENABLE_ORDER_BY_INDEX_TERM;
 bool EnableGroupByCompoundIdIndexPushdown =
 	DEFAULT_ENABLE_GROUP_BY_COMPOUND_ID_INDEX_PUSHDOWN;
 
-/* Added in v116, Pending stabilization, enable in v117 */
-#define DEFAULT_ENABLE_FULL_SCAN_COST_AND_SELECTIVITY false
+/* Added in v116, enabled in v116, remove after v118 */
+#define DEFAULT_ENABLE_FULL_SCAN_COST_AND_SELECTIVITY true
 bool EnableFullScanCostAndSelectivity =
 	DEFAULT_ENABLE_FULL_SCAN_COST_AND_SELECTIVITY;
 

@@ -52,3 +52,4 @@ test: bson_detoast_cache_tests
 test: bson_aggregation_match_before_unwind_tests
 test: bson_shard_key_filter_complete_tests
 test: bson_document_storage_main_tests
+test: bson_full_scan_selectivity_tests
