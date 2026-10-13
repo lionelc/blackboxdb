@@ -306,6 +306,10 @@ bool EnableMatchBeforeUnwindExtended = DEFAULT_ENABLE_MATCH_BEFORE_UNWIND_EXTEND
 #define DEFAULT_ENABLE_DOCUMENT_STORAGE_MAIN true
 bool EnableDocumentStorageMain = DEFAULT_ENABLE_DOCUMENT_STORAGE_MAIN;
 
+/* Added in v116, disabled by default while pending stabilization */
+#define DEFAULT_ENABLE_VALUE_NULL_MISSING_FIELD_MATCH false
+bool EnableValueNullMissingFieldMatch = DEFAULT_ENABLE_VALUE_NULL_MISSING_FIELD_MATCH;
+
 /* Added in v115, enabled in v115, remove after v117 */
 #define DEFAULT_ENABLE_PG_PRNG_CURSOR_ID true
 bool EnablePGPrngCursorId = DEFAULT_ENABLE_PG_PRNG_CURSOR_ID;
@@ -783,6 +787,16 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"moving to TOAST."),
 		NULL, &EnableDocumentStorageMain,
 		DEFAULT_ENABLE_DOCUMENT_STORAGE_MAIN,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_value_null_missing_field_match", newGucPrefix),
+		gettext_noop(
+			"Whether $lte and $gte against null, when evaluated on a single value "
+			"($elemMatch, $pull conditions, arrayFilters), also match a value without "
+			"the field, as $eq: null does."),
+		NULL, &EnableValueNullMissingFieldMatch,
+		DEFAULT_ENABLE_VALUE_NULL_MISSING_FIELD_MATCH,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

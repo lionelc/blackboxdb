@@ -286,6 +286,7 @@ typedef struct
 typedef bool (*IsQueryFilterNullFunc)(const TraverseValidateState *state);
 extern bool EnableCollation;
 extern bool EnableExistentialNullArrayMatch;
+extern bool EnableValueNullMissingFieldMatch;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -1431,7 +1432,9 @@ bson_value_dollar_gte(PG_FUNCTION_ARGS)
 	pgbsonelement *element = (pgbsonelement *) PG_GETARG_POINTER(0);
 	pgbson *query = (pgbson *) PG_GETARG_PGBSON(1);
 
-	IsQueryFilterNullFunc isNullFilterEquality = NULL;
+	/* As for a document and for $eq, $gte: null also matches a missing field */
+	IsQueryFilterNullFunc isNullFilterEquality =
+		EnableValueNullMissingFieldMatch ? IsQueryFilterNullForValue : NULL;
 	PG_RETURN_BOOL(CompareBsonValueAgainstQuery(element, query,
 												CompareGreaterEqualMatch,
 												isNullFilterEquality));
@@ -1574,7 +1577,9 @@ bson_value_dollar_lte(PG_FUNCTION_ARGS)
 	pgbsonelement *element = (pgbsonelement *) PG_GETARG_POINTER(0);
 	pgbson *query = (pgbson *) PG_GETARG_PGBSON(1);
 
-	IsQueryFilterNullFunc isNullFilterEquality = NULL;
+	/* As for a document and for $eq, $lte: null also matches a missing field */
+	IsQueryFilterNullFunc isNullFilterEquality =
+		EnableValueNullMissingFieldMatch ? IsQueryFilterNullForValue : NULL;
 	PG_RETURN_BOOL(CompareBsonValueAgainstQuery(element, query, CompareLessEqualMatch,
 												isNullFilterEquality));
 }
