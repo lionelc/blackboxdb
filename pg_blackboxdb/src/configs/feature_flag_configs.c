@@ -314,6 +314,11 @@ bool EnableValueNullMissingFieldMatch = DEFAULT_ENABLE_VALUE_NULL_MISSING_FIELD_
 #define DEFAULT_ENABLE_MINMAXKEY_MISSING_PATH_MATCH true
 bool EnableMinMaxKeyMissingPathMatch = DEFAULT_ENABLE_MINMAXKEY_MISSING_PATH_MATCH;
 
+/* Added in v116, disabled by default while pending stabilization */
+#define DEFAULT_ENABLE_ELEMMATCH_EXISTS_FALSE_NULL_BOUNDS false
+bool EnableElemMatchExistsFalseNullBounds =
+	DEFAULT_ENABLE_ELEMMATCH_EXISTS_FALSE_NULL_BOUNDS;
+
 /* Added in v115, enabled in v115, remove after v117 */
 #define DEFAULT_ENABLE_PG_PRNG_CURSOR_ID true
 bool EnablePGPrngCursorId = DEFAULT_ENABLE_PG_PRNG_CURSOR_ID;
@@ -810,6 +815,16 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"match documents where the path is missing, as a null comparison does."),
 		NULL, &EnableMinMaxKeyMissingPathMatch,
 		DEFAULT_ENABLE_MINMAXKEY_MISSING_PATH_MATCH,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_elemmatch_exists_false_null_bounds", newGucPrefix),
+		gettext_noop(
+			"Whether $exists: false inside $elemMatch scans an ordered index with the "
+			"bounds of a null equality, so that an element without the field is found "
+			"even when a sibling element has it."),
+		NULL, &EnableElemMatchExistsFalseNullBounds,
+		DEFAULT_ENABLE_ELEMMATCH_EXISTS_FALSE_NULL_BOUNDS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

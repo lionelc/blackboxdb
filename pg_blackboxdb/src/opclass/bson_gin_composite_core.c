@@ -48,6 +48,7 @@
 extern bool EnableRegexPrefixIndexBounds;
 extern bool EnableCompositeReducedCorrelatedPrefixTrim;
 extern bool EnablePerPathMultiKeySortPushdown;
+extern bool EnableElemMatchExistsFalseNullBounds;
 
 /* --------------------------------------------------------- */
 /* Data-types */
@@ -3060,6 +3061,23 @@ AddMultiBoundaryForDollarRange(int32_t indexAttribute,
 				{
 					ereport(ERROR, (errcode(ERRCODE_BLACKBOXDB_BADVALUE), errmsg(
 										"Missing 'op' key in $elemMatch index operator")));
+				}
+
+				/*
+				 * Inside $elemMatch, $exists: false holds for an element without the
+				 * path even when a sibling element has it. The index records that
+				 * element as a partially undefined term, which the $exists: false term
+				 * check (made for a whole document, where the sibling means the path
+				 * exists) rejects. Scan as for { path: null } instead: its bounds keep
+				 * both kinds of undefined term, and the $elemMatch qual, which is
+				 * always rechecked (the pushdown is lossy), decides.
+				 */
+				if (EnableElemMatchExistsFalseNullBounds &&
+					queryStrategy == BSON_INDEX_STRATEGY_DOLLAR_EXISTS &&
+					BsonValueAsInt32(&innerElemMatchElement.bsonValue) != 1)
+				{
+					queryStrategy = BSON_INDEX_STRATEGY_DOLLAR_EQUAL;
+					innerElemMatchElement.bsonValue.value_type = BSON_TYPE_NULL;
 				}
 
 				ScanDirection scanDirIgnore = NoMovementScanDirection;
