@@ -142,6 +142,7 @@ typedef struct MatchNamespaceFiltersContext
 
 extern bool EnableObjectIdFuncExprConversion;
 extern bool EnablePartialFilterEvalOnPlanner;
+extern bool EnableMinMaxKeyMissingPathMatch;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -235,6 +236,11 @@ static void EnsureValidTypeCodeForDollarType(int64_t typeCode);
 static Expr * WithIndexSupportExpression(Expr *docExpr, Expr *geoOperatorExpr,
 										 const char *path, bool isSpherical);
 static Expr * TryOptimizeNotInnerExpr(Expr *innerExpr, BsonQueryOperatorContext *context);
+static Expr * AddMissingPathMatchForMinMaxKeyBound(Expr *comparisonExpr,
+												   BsonQueryOperatorContext *context,
+												   const MongoQueryOperator *operator,
+												   const bson_value_t *value,
+												   const char *path);
 static pgbson * FindNamespaceFiltersInMatchSpecCore(bson_iter_t *specIter,
 													MatchNamespaceFiltersContext *context);
 static bool AddNamespaceFilterToList(const bson_value_t *value, List **list);
@@ -2904,8 +2910,12 @@ CreateOpExprFromOperatorDocIteratorCore(bson_iter_t *operatorDocIterator,
 			/* Check if the operator value to be validated is for $in/$nin */
 			bool isInMatchExpression = false;
 			ValidateIfIteratorValueUndefined(operatorDocIterator, isInMatchExpression);
-			return CreateFuncExprForSimpleQueryOperator(operatorDocIterator,
-														context, operator,
+			Expr *comparisonExpr = CreateFuncExprForSimpleQueryOperator(
+				operatorDocIterator, context, operator, path);
+			return AddMissingPathMatchForMinMaxKeyBound(comparisonExpr, context,
+														operator,
+														bson_iter_value(
+															operatorDocIterator),
 														path);
 		}
 
@@ -5108,6 +5118,58 @@ GetNegationOperatorForQueryOperator(const MongoQueryOperator *queryOperator,
 			return NULL;
 		}
 	}
+}
+
+
+/*
+ * A missing path compares like null, and null sorts above MinKey and below MaxKey,
+ * so $gt or $gte against MinKey and $lt or $lte against MaxKey also match a
+ * document without the path (a dotted path follows the null rules through
+ * arrays), and an array element without the field ($elemMatch, $pull conditions,
+ * arrayFilters). The comparison operators can't take that on, because the
+ * planner uses path >= MinKey as its $exists: true condition. Instead these four
+ * bounds get a null equality alongside, which matches a missing path the same way
+ * on every access path. A document's _id is never missing, so a top-level _id
+ * keeps the plain comparison.
+ */
+static Expr *
+AddMissingPathMatchForMinMaxKeyBound(Expr *comparisonExpr,
+									 BsonQueryOperatorContext *context,
+									 const MongoQueryOperator *operator,
+									 const bson_value_t *value, const char *path)
+{
+	if (!EnableMinMaxKeyMissingPathMatch ||
+		(context->inputType == MongoQueryOperatorInputType_Bson &&
+		 strcmp(path, "_id") == 0))
+	{
+		return comparisonExpr;
+	}
+
+	bool isBoundBelowNull = (operator->operatorType == QUERY_OPERATOR_GT ||
+							 operator->operatorType == QUERY_OPERATOR_GTE) &&
+							value->value_type == BSON_TYPE_MINKEY;
+	bool isBoundAboveNull = (operator->operatorType == QUERY_OPERATOR_LT ||
+							 operator->operatorType == QUERY_OPERATOR_LTE) &&
+							value->value_type == BSON_TYPE_MAXKEY;
+	if (!isBoundBelowNull && !isBoundAboveNull)
+	{
+		return comparisonExpr;
+	}
+
+	const MongoQueryOperator *equalityOperator =
+		GetMongoQueryOperatorByQueryOperatorType(QUERY_OPERATOR_EQ,
+												 context->inputType);
+	bson_value_t nullValue = { 0 };
+	nullValue.value_type = BSON_TYPE_NULL;
+	Expr *nullEqualityExpr = CreateFuncExprForQueryOperator(context, path,
+															equalityOperator,
+															&nullValue);
+
+	BoolExpr *orExpr = makeNode(BoolExpr);
+	orExpr->boolop = OR_EXPR;
+	orExpr->args = list_make2(comparisonExpr, nullEqualityExpr);
+	orExpr->location = -1;
+	return (Expr *) orExpr;
 }
 
 

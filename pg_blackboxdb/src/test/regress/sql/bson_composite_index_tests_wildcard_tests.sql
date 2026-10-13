@@ -274,9 +274,15 @@ SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", 
 SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "h.b": { "$exists": true } }}');
 SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "h.b.c": { "$exists": true } }}');
 
+-- These check the index's path > MinKey bounds on sub-terms, so they run with enable_minmaxkey_missing_path_match
+-- off. With it on, $gt: MinKey also matches a document without the path, which a wildcard index has no entry for:
+-- there is no index path, and forceDisableSeqScan reports that.
+SET blackboxdb.enable_minmaxkey_missing_path_match TO off;
 SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "h": { "$gt": { "$minKey": 1 } } }}');
 SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "h.b": { "$gt": { "$minKey": 1 } } }}');
 SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "h.b.c": { "$gt": { "$minKey": 1 } } }}');
+RESET blackboxdb.enable_minmaxkey_missing_path_match;
+SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "h": { "$gt": { "$minKey": 1 } } }}');
 
 -- but this doesn't apply for inequality operators
 SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "h.b": { "$gte": 1 } }}');
@@ -292,7 +298,9 @@ SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", 
 SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "h.b": { "$exists": true } }}');
 SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "h.b.c": { "$exists": true } }}');
 
+SET blackboxdb.enable_minmaxkey_missing_path_match TO off;
 SELECT document FROM bson_aggregation_find('compdb', '{ "find": "compwildcard", "filter": { "h.b": { "$lte": { "$maxKey": 1 } } }}');
+RESET blackboxdb.enable_minmaxkey_missing_path_match;
 
 -- testing non-array merge of paths
 SELECT blackboxdb_api.insert_one('compdb', 'compwildcard2', '{ "a": { "b": 1, "c": 5 }}');

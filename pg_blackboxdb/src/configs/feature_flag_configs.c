@@ -310,6 +310,10 @@ bool EnableDocumentStorageMain = DEFAULT_ENABLE_DOCUMENT_STORAGE_MAIN;
 #define DEFAULT_ENABLE_VALUE_NULL_MISSING_FIELD_MATCH true
 bool EnableValueNullMissingFieldMatch = DEFAULT_ENABLE_VALUE_NULL_MISSING_FIELD_MATCH;
 
+/* Added in v116, enabled in v116, remove after v118 */
+#define DEFAULT_ENABLE_MINMAXKEY_MISSING_PATH_MATCH true
+bool EnableMinMaxKeyMissingPathMatch = DEFAULT_ENABLE_MINMAXKEY_MISSING_PATH_MATCH;
+
 /* Added in v115, enabled in v115, remove after v117 */
 #define DEFAULT_ENABLE_PG_PRNG_CURSOR_ID true
 bool EnablePGPrngCursorId = DEFAULT_ENABLE_PG_PRNG_CURSOR_ID;
@@ -797,6 +801,15 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"the field, as $eq: null does."),
 		NULL, &EnableValueNullMissingFieldMatch,
 		DEFAULT_ENABLE_VALUE_NULL_MISSING_FIELD_MATCH,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_minmaxkey_missing_path_match", newGucPrefix),
+		gettext_noop(
+			"Whether $gt and $gte against MinKey and $lt and $lte against MaxKey also "
+			"match documents where the path is missing, as a null comparison does."),
+		NULL, &EnableMinMaxKeyMissingPathMatch,
+		DEFAULT_ENABLE_MINMAXKEY_MISSING_PATH_MATCH,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
