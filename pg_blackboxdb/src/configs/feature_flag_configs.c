@@ -314,8 +314,8 @@ bool EnableValueNullMissingFieldMatch = DEFAULT_ENABLE_VALUE_NULL_MISSING_FIELD_
 #define DEFAULT_ENABLE_MINMAXKEY_MISSING_PATH_MATCH true
 bool EnableMinMaxKeyMissingPathMatch = DEFAULT_ENABLE_MINMAXKEY_MISSING_PATH_MATCH;
 
-/* Added in v116, disabled by default while pending stabilization */
-#define DEFAULT_ENABLE_ELEMMATCH_EXISTS_FALSE_NULL_BOUNDS false
+/* Added in v116, enabled in v116, remove after v118 */
+#define DEFAULT_ENABLE_ELEMMATCH_EXISTS_FALSE_NULL_BOUNDS true
 bool EnableElemMatchExistsFalseNullBounds =
 	DEFAULT_ENABLE_ELEMMATCH_EXISTS_FALSE_NULL_BOUNDS;
 
