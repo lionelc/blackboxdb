@@ -42,7 +42,7 @@ use crate::{
         QueryCatalog,
     },
     telemetry::TracingConfig,
-    time::{self, EpochClock},
+    time,
 };
 
 fn pg_configuration(
@@ -279,7 +279,7 @@ impl ConnectionPool {
         &self,
     ) -> std::result::Result<PoolConnection, deadpool_postgres::PoolError> {
         self.last_used_nanos
-            .store(EpochClock::almost_now_timestamp(), Ordering::Relaxed);
+            .store(time::instant_to_u64(Instant::now()), Ordering::Relaxed);
 
         self.pool.get().await.inspect_err(|error| {
             self.metrics.record_timeout_if_pool_timeout(error);
@@ -307,7 +307,7 @@ impl ConnectionPool {
         &self,
     ) -> std::result::Result<PoolConnection, deadpool_postgres::PoolError> {
         self.last_used_nanos
-            .store(EpochClock::almost_now_timestamp(), Ordering::Relaxed);
+            .store(time::instant_to_u64(Instant::now()), Ordering::Relaxed);
 
         self.timeout_pool.get().await.inspect_err(|error| {
             self.metrics.record_timeout_if_pool_timeout(error);
