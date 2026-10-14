@@ -105,7 +105,6 @@ extern bool EnableDistinctIndexPushdown;
 extern bool EnableDistinctExistsFilterPushdown;
 extern bool EnableSubqueryPushdownForMatch;
 extern bool EnableDollarSampleReservoirScan;
-extern bool EnableUnwindIndexFieldPathCheck;
 
 /* GUC to config tdigest compression */
 extern int TdigestCompressionAccuracy;
@@ -5176,78 +5175,6 @@ ThrowUnwindParseError(int errCode, const char *errMessage, const char *errArg)
 
 
 /*
- * Checks the includeArrayIndex name of an $unwind as MongoDB checks a field path:
- * it may not end with '.', and no dot-separated field name may be empty, start
- * with '$' (other than $id, $ref, $db and $sortKey) or contain a NUL character.
- * For the first violation, calls onError (when given) with MongoDB's error code
- * and returns false.
- */
-static bool
-IsValidUnwindIndexFieldPath(const StringView *indexName,
-							UnwindParseErrorHandler onError)
-{
-	if (indexName->string[indexName->length - 1] == '.')
-	{
-		if (onError != NULL)
-		{
-			onError(ERRCODE_BLACKBOXDB_LOCATION40353,
-					"FieldPath must not end with a '.'.", NULL);
-		}
-		return false;
-	}
-
-	uint32_t start = 0;
-	for (uint32_t i = 0; i <= indexName->length; i++)
-	{
-		if (i < indexName->length && indexName->string[i] != '.')
-		{
-			continue;
-		}
-
-		StringView fieldName = {
-			.string = indexName->string + start,
-			.length = i - start
-		};
-		start = i + 1;
-
-		int errorCode = 0;
-		const char *errorMessage = NULL;
-		if (fieldName.length == 0)
-		{
-			errorCode = ERRCODE_BLACKBOXDB_LOCATION15998;
-			errorMessage = "FieldPath field names may not be empty strings.";
-		}
-		else if (fieldName.string[0] == '$' &&
-				 !StringViewEqualsCString(&fieldName, "$id") &&
-				 !StringViewEqualsCString(&fieldName, "$ref") &&
-				 !StringViewEqualsCString(&fieldName, "$db") &&
-				 !StringViewEqualsCString(&fieldName, "$sortKey"))
-		{
-			errorCode = ERRCODE_BLACKBOXDB_LOCATION16410;
-			errorMessage = "FieldPath field names may not start with '$'. "
-						   "Consider using $getField or $setField.";
-		}
-		else if (memchr(fieldName.string, '\0', fieldName.length) != NULL)
-		{
-			errorCode = ERRCODE_BLACKBOXDB_LOCATION16411;
-			errorMessage = "FieldPath field names may not contain '\\0'.";
-		}
-
-		if (errorCode != 0)
-		{
-			if (onError != NULL)
-			{
-				onError(errorCode, errorMessage, NULL);
-			}
-			return false;
-		}
-	}
-
-	return true;
-}
-
-
-/*
  * Parses & validates a $unwind stage spec. On failure invokes onError (when
  * non-NULL) with the mongo-compatible errcode/message and returns false; lets
  * predicate-style callers reject a spec without raising. Passing NULL skips
@@ -5321,12 +5248,6 @@ TryParseUnwindStage(const bson_value_t *unwindStageValue, UnwindArgs *args,
 									CreateStringFromStringView(
 										&includeArrayIndexView));
 						}
-						return false;
-					}
-
-					if (EnableUnwindIndexFieldPathCheck &&
-						!IsValidUnwindIndexFieldPath(&includeArrayIndexView, onError))
-					{
 						return false;
 					}
 

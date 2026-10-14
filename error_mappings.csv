@@ -335,7 +335,6 @@ ErrorMapping,ErrorName
 40323,Location40323
 40324,UnrecognizedCommand
 40352,Location40352
-40353,Location40353
 40386,DollarArrayToObjectRequiresArray
 40390,DollarObjectToArrayRequiresObject
 40391,DollarArrayToObjectAllMustBeObjects

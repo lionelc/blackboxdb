@@ -332,10 +332,6 @@ bool EnableRandProjectionFence = DEFAULT_ENABLE_RAND_PROJECTION_FENCE;
 bool EnableDateTruncExactBins = DEFAULT_ENABLE_DATETRUNC_EXACT_BINS;
 
 /* Added in v116, enabled in v116, remove after v118 */
-#define DEFAULT_ENABLE_UNWIND_INDEX_FIELD_PATH_CHECK true
-bool EnableUnwindIndexFieldPathCheck = DEFAULT_ENABLE_UNWIND_INDEX_FIELD_PATH_CHECK;
-
-/* Added in v116, enabled in v116, remove after v118 */
 #define DEFAULT_ENABLE_LET_RAND_ONCE true
 bool EnableLetRandOnce = DEFAULT_ENABLE_LET_RAND_ONCE;
 
@@ -876,16 +872,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"months and years and rounds a negative difference toward zero."),
 		NULL, &EnableDateTruncExactBins,
 		DEFAULT_ENABLE_DATETRUNC_EXACT_BINS,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enable_unwind_index_field_path_check", newGucPrefix),
-		gettext_noop(
-			"Whether the includeArrayIndex name of an $unwind is checked as a field path, "
-			"as MongoDB does: no trailing '.', and no empty field name, field name "
-			"starting with '$' (other than $id, $ref, $db and $sortKey) or NUL character."),
-		NULL, &EnableUnwindIndexFieldPathCheck,
-		DEFAULT_ENABLE_UNWIND_INDEX_FIELD_PATH_CHECK,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
