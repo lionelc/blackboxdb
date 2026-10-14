@@ -319,8 +319,8 @@ bool EnableMinMaxKeyMissingPathMatch = DEFAULT_ENABLE_MINMAXKEY_MISSING_PATH_MAT
 bool EnableElemMatchExistsFalseNullBounds =
 	DEFAULT_ENABLE_ELEMMATCH_EXISTS_FALSE_NULL_BOUNDS;
 
-/* Added in v116, remove after v118 */
-#define DEFAULT_ENABLE_DATETRUNC_EXACT_BINS false
+/* Added in v116, enabled in v116, remove after v118 */
+#define DEFAULT_ENABLE_DATETRUNC_EXACT_BINS true
 bool EnableDateTruncExactBins = DEFAULT_ENABLE_DATETRUNC_EXACT_BINS;
 
 /* Added in v115, enabled in v115, remove after v117 */
