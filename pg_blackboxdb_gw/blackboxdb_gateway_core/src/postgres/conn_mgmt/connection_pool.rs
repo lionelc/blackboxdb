@@ -42,7 +42,7 @@ use crate::{
         QueryCatalog,
     },
     telemetry::TracingConfig,
-    time::{self, EpochClock},
+    time,
 };
 
 fn pg_configuration(
@@ -279,7 +279,7 @@ impl ConnectionPool {
         &self,
     ) -> std::result::Result<PoolConnection, deadpool_postgres::PoolError> {
         self.last_used_nanos
-            .store(EpochClock::almost_now_timestamp(), Ordering::Relaxed);
+            .store(time::instant_to_u64(Instant::now()), Ordering::Relaxed);
 
         self.pool.get().await.inspect_err(|error| {
             self.metrics.record_timeout_if_pool_timeout(error);
@@ -307,7 +307,7 @@ impl ConnectionPool {
         &self,
     ) -> std::result::Result<PoolConnection, deadpool_postgres::PoolError> {
         self.last_used_nanos
-            .store(EpochClock::almost_now_timestamp(), Ordering::Relaxed);
+            .store(time::instant_to_u64(Instant::now()), Ordering::Relaxed);
 
         self.timeout_pool.get().await.inspect_err(|error| {
             self.metrics.record_timeout_if_pool_timeout(error);
@@ -511,6 +511,42 @@ mod tests {
             id.contains('7'),
             "identifier should contain max connections"
         );
+    }
+
+    #[tokio::test]
+    async fn test_acquire_connection_moves_last_used_to_its_time() {
+        let setup_config = test_setup_configuration();
+        let pool =
+            test_connection_pool(&setup_config, &setup_config.postgres_system_user.clone(), 2)
+                .await;
+
+        // Each acquisition records its time before connecting, so this holds with or
+        // without a server.
+        let _ = pool.acquire_connection().await;
+        let first = pool.last_used();
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        let _ = pool.acquire_connection().await;
+        let second = pool.last_used();
+
+        assert!(second.duration_since(first) >= Duration::from_secs(1));
+        assert!(second.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn test_acquire_timeout_connection_moves_last_used_to_its_time() {
+        let setup_config = test_setup_configuration();
+        let pool =
+            test_connection_pool(&setup_config, &setup_config.postgres_system_user.clone(), 2)
+                .await;
+
+        let _ = pool.acquire_timeout_connection().await;
+        let first = pool.last_used();
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        let _ = pool.acquire_timeout_connection().await;
+        let second = pool.last_used();
+
+        assert!(second.duration_since(first) >= Duration::from_secs(1));
+        assert!(second.elapsed() < Duration::from_secs(5));
     }
 
     #[tokio::test]
