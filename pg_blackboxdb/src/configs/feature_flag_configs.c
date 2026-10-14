@@ -323,6 +323,10 @@ bool EnableVolatileCursorMaterialize = DEFAULT_ENABLE_VOLATILE_CURSOR_MATERIALIZ
 bool EnableElemMatchExistsFalseNullBounds =
 	DEFAULT_ENABLE_ELEMMATCH_EXISTS_FALSE_NULL_BOUNDS;
 
+/* Added in v116, remove after v118 */
+#define DEFAULT_ENABLE_RAND_PROJECTION_FENCE false
+bool EnableRandProjectionFence = DEFAULT_ENABLE_RAND_PROJECTION_FENCE;
+
 /* Added in v116, enabled in v116, remove after v118 */
 #define DEFAULT_ENABLE_DATETRUNC_EXACT_BINS true
 bool EnableDateTruncExactBins = DEFAULT_ENABLE_DATETRUNC_EXACT_BINS;
@@ -851,6 +855,16 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"does not run the query again and later batches come from the same evaluation."),
 		NULL, &EnableVolatileCursorMaterialize,
 		DEFAULT_ENABLE_VOLATILE_CURSOR_MATERIALIZE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_rand_projection_fence", newGucPrefix),
+		gettext_noop(
+			"Whether a projection stage ($project, $addFields, $set, $replaceRoot) whose "
+			"specification contains $rand is kept in a subquery the planner cannot pull up, "
+			"so that later stages read one value per document, as in MongoDB."),
+		NULL, &EnableRandProjectionFence,
+		DEFAULT_ENABLE_RAND_PROJECTION_FENCE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
