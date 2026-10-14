@@ -319,6 +319,10 @@ bool EnableMinMaxKeyMissingPathMatch = DEFAULT_ENABLE_MINMAXKEY_MISSING_PATH_MAT
 bool EnableElemMatchExistsFalseNullBounds =
 	DEFAULT_ENABLE_ELEMMATCH_EXISTS_FALSE_NULL_BOUNDS;
 
+/* Added in v116, remove after v118 */
+#define DEFAULT_ENABLE_DATETRUNC_EXACT_BINS false
+bool EnableDateTruncExactBins = DEFAULT_ENABLE_DATETRUNC_EXACT_BINS;
+
 /* Added in v115, enabled in v115, remove after v117 */
 #define DEFAULT_ENABLE_PG_PRNG_CURSOR_ID true
 bool EnablePGPrngCursorId = DEFAULT_ENABLE_PG_PRNG_CURSOR_ID;
@@ -825,6 +829,17 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"even when a sibling element has it."),
 		NULL, &EnableElemMatchExistsFalseNullBounds,
 		DEFAULT_ENABLE_ELEMMATCH_EXISTS_FALSE_NULL_BOUNDS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_datetrunc_exact_bins", newGucPrefix),
+		gettext_noop(
+			"Whether $dateTrunc with unit day, week, month, quarter or year counts its "
+			"bins from the reference date with exact calendar arithmetic, rather than "
+			"from age(), which approximates months and years and rounds a negative "
+			"difference toward zero."),
+		NULL, &EnableDateTruncExactBins,
+		DEFAULT_ENABLE_DATETRUNC_EXACT_BINS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
