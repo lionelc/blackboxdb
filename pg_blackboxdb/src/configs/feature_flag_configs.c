@@ -331,10 +331,6 @@ bool EnableRandProjectionFence = DEFAULT_ENABLE_RAND_PROJECTION_FENCE;
 #define DEFAULT_ENABLE_DATETRUNC_EXACT_BINS true
 bool EnableDateTruncExactBins = DEFAULT_ENABLE_DATETRUNC_EXACT_BINS;
 
-/* Added in v116, enabled in v116, remove after v118 */
-#define DEFAULT_ENABLE_LET_RAND_ONCE true
-bool EnableLetRandOnce = DEFAULT_ENABLE_LET_RAND_ONCE;
-
 /* Added in v115, enabled in v115, remove after v117 */
 #define DEFAULT_ENABLE_PG_PRNG_CURSOR_ID true
 bool EnablePGPrngCursorId = DEFAULT_ENABLE_PG_PRNG_CURSOR_ID;
@@ -872,16 +868,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"months and years and rounds a negative difference toward zero."),
 		NULL, &EnableDateTruncExactBins,
 		DEFAULT_ENABLE_DATETRUNC_EXACT_BINS,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enable_let_rand_once", newGucPrefix),
-		gettext_noop(
-			"Whether a $let variable whose expression contains $rand is evaluated once per "
-			"evaluation of the $let, as MongoDB evaluates a $let's variables, rather than "
-			"at each reference."),
-		NULL, &EnableLetRandOnce,
-		DEFAULT_ENABLE_LET_RAND_ONCE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
