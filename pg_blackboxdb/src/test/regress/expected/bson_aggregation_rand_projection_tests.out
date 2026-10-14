@@ -1,0 +1,198 @@
+SET search_path TO blackboxdb_api, blackboxdb_core, blackboxdb_api_catalog;
+SET blackboxdb.next_collection_id TO 27300000;
+SET blackboxdb.next_collection_index_id TO 27300000;
+-- The projection stages wrap the document in immutable functions, so the planner copies a projection into every
+-- later expression that reads it, and a $rand in the projection was drawn once per copy: a field set from $rand had
+-- different values in a $match filter and in the output, in a $sort key and in the output, in a $group key and in
+-- its accumulators, and in a window's sort key and its arguments. With blackboxdb.enable_rand_projection_fence on,
+-- the projection is kept below an OFFSET 0 subquery and evaluated once per document, as in MongoDB. Each check
+-- prints a count or a flag computed on the returned documents; setseed makes the draws repeatable.
+SELECT COUNT(*) FROM (SELECT blackboxdb_api.insert_one('randonce', 'c', FORMAT('{ "_id": %s }', i)::bson) FROM generate_series(1, 100) i) t;
+NOTICE:  creating collection
+ count 
+-------
+   100
+(1 row)
+
+SET blackboxdb.enable_rand_projection_fence TO off;
+-- a $match on the $rand field: no r of 0.5 or more comes out
+SELECT setseed(0.5);
+ setseed 
+---------
+ 
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('randonce', '{ "aggregate": "c", "pipeline": [ { "$set": { "r": { "$rand": {} } } }, { "$match": { "r": { "$lt": 0.5 } } }, { "$group": { "_id": null, "returned": { "$sum": 1 }, "r_not_below_half": { "$sum": { "$cond": [ { "$gte": [ "$r", 0.5 ] }, 1, 0 ] } } } }, { "$project": { "_id": 0 } } ], "cursor": {} }');
+                                        document                                        
+----------------------------------------------------------------------------------------
+ { "returned" : { "$numberInt" : "52" }, "r_not_below_half" : { "$numberInt" : "31" } }
+(1 row)
+
+-- a $group on the $rand field: each group's min and max equal its key
+SELECT setseed(0.5);
+ setseed 
+---------
+ 
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('randonce', '{ "aggregate": "c", "pipeline": [ { "$set": { "r": { "$floor": { "$multiply": [ { "$rand": {} }, 4 ] } } } }, { "$group": { "_id": "$r", "mn": { "$min": "$r" }, "mx": { "$max": "$r" } } }, { "$group": { "_id": null, "groups": { "$sum": 1 }, "groups_disagreeing": { "$sum": { "$cond": [ { "$and": [ { "$eq": [ "$mn", "$_id" ] }, { "$eq": [ "$mx", "$_id" ] } ] }, 0, 1 ] } } } }, { "$project": { "_id": 0 } } ], "cursor": {} }');
+                                       document                                       
+--------------------------------------------------------------------------------------
+ { "groups" : { "$numberInt" : "4" }, "groups_disagreeing" : { "$numberInt" : "4" } }
+(1 row)
+
+-- a $sort on the $rand field: the values come out in order
+SELECT setseed(0.5);
+ setseed 
+---------
+ 
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('randonce', '{ "aggregate": "c", "pipeline": [ { "$set": { "r": { "$rand": {} } } }, { "$sort": { "r": 1 } }, { "$group": { "_id": null, "rs": { "$push": "$r" } } }, { "$project": { "_id": 0, "sorted": { "$eq": [ "$rs", { "$sortArray": { "input": "$rs", "sortBy": 1 } } ] } } } ], "cursor": {} }');
+       document       
+----------------------
+ { "sorted" : false }
+(1 row)
+
+-- a window sorted on the $rand field: no row comes after a larger r (no document when none does)
+SELECT setseed(0.5);
+ setseed 
+---------
+ 
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('randonce', '{ "aggregate": "c", "pipeline": [ { "$set": { "r": { "$rand": {} } } }, { "$setWindowFields": { "sortBy": { "r": 1 }, "output": { "prev": { "$shift": { "output": "$r", "by": -1 } } } } }, { "$match": { "$expr": { "$lt": [ "$r", "$prev" ] } } }, { "$count": "rows_after_a_larger_r" } ], "cursor": {} }');
+                       document                        
+-------------------------------------------------------
+ { "rows_after_a_larger_r" : { "$numberInt" : "47" } }
+(1 row)
+
+-- an exclusion $project merged with a following $set of $rand: no r of 0.5 or more comes out of the $match
+SELECT setseed(0.5);
+ setseed 
+---------
+ 
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('randonce', '{ "aggregate": "c", "pipeline": [ { "$project": { "g": 0 } }, { "$set": { "r": { "$rand": {} } } }, { "$match": { "r": { "$lt": 0.5 } } }, { "$group": { "_id": null, "returned": { "$sum": 1 }, "r_not_below_half": { "$sum": { "$cond": [ { "$gte": [ "$r", 0.5 ] }, 1, 0 ] } } } }, { "$project": { "_id": 0 } } ], "cursor": {} }');
+                                        document                                        
+----------------------------------------------------------------------------------------
+ { "returned" : { "$numberInt" : "52" }, "r_not_below_half" : { "$numberInt" : "31" } }
+(1 row)
+
+-- a $set of $rand after $skip: the skip is kept (10 of 100 documents)
+SELECT setseed(0.5);
+ setseed 
+---------
+ 
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('randonce', '{ "aggregate": "c", "pipeline": [ { "$skip": 90 }, { "$set": { "r": { "$rand": {} } } }, { "$count": "n" } ], "cursor": {} }');
+             document              
+-----------------------------------
+ { "n" : { "$numberInt" : "10" } }
+(1 row)
+
+-- control: one later reference to the $rand field reads a value in [0, 1) (no document when every value does)
+SELECT setseed(0.5);
+ setseed 
+---------
+ 
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('randonce', '{ "aggregate": "c", "pipeline": [ { "$set": { "r": { "$rand": {} } } }, { "$project": { "in_range": { "$and": [ { "$gte": [ "$r", 0 ] }, { "$lt": [ "$r", 1 ] } ] } } }, { "$match": { "in_range": false } }, { "$count": "rows_out_of_range" } ], "cursor": {} }');
+ document 
+----------
+(0 rows)
+
+SET blackboxdb.enable_rand_projection_fence TO on;
+-- a $match on the $rand field: no r of 0.5 or more comes out
+SELECT setseed(0.5);
+ setseed 
+---------
+ 
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('randonce', '{ "aggregate": "c", "pipeline": [ { "$set": { "r": { "$rand": {} } } }, { "$match": { "r": { "$lt": 0.5 } } }, { "$group": { "_id": null, "returned": { "$sum": 1 }, "r_not_below_half": { "$sum": { "$cond": [ { "$gte": [ "$r", 0.5 ] }, 1, 0 ] } } } }, { "$project": { "_id": 0 } } ], "cursor": {} }');
+                                       document                                        
+---------------------------------------------------------------------------------------
+ { "returned" : { "$numberInt" : "49" }, "r_not_below_half" : { "$numberInt" : "0" } }
+(1 row)
+
+-- a $group on the $rand field: each group's min and max equal its key
+SELECT setseed(0.5);
+ setseed 
+---------
+ 
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('randonce', '{ "aggregate": "c", "pipeline": [ { "$set": { "r": { "$floor": { "$multiply": [ { "$rand": {} }, 4 ] } } } }, { "$group": { "_id": "$r", "mn": { "$min": "$r" }, "mx": { "$max": "$r" } } }, { "$group": { "_id": null, "groups": { "$sum": 1 }, "groups_disagreeing": { "$sum": { "$cond": [ { "$and": [ { "$eq": [ "$mn", "$_id" ] }, { "$eq": [ "$mx", "$_id" ] } ] }, 0, 1 ] } } } }, { "$project": { "_id": 0 } } ], "cursor": {} }');
+                                       document                                       
+--------------------------------------------------------------------------------------
+ { "groups" : { "$numberInt" : "4" }, "groups_disagreeing" : { "$numberInt" : "0" } }
+(1 row)
+
+-- a $sort on the $rand field: the values come out in order
+SELECT setseed(0.5);
+ setseed 
+---------
+ 
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('randonce', '{ "aggregate": "c", "pipeline": [ { "$set": { "r": { "$rand": {} } } }, { "$sort": { "r": 1 } }, { "$group": { "_id": null, "rs": { "$push": "$r" } } }, { "$project": { "_id": 0, "sorted": { "$eq": [ "$rs", { "$sortArray": { "input": "$rs", "sortBy": 1 } } ] } } } ], "cursor": {} }');
+      document       
+---------------------
+ { "sorted" : true }
+(1 row)
+
+-- a window sorted on the $rand field: no row comes after a larger r (no document when none does)
+SELECT setseed(0.5);
+ setseed 
+---------
+ 
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('randonce', '{ "aggregate": "c", "pipeline": [ { "$set": { "r": { "$rand": {} } } }, { "$setWindowFields": { "sortBy": { "r": 1 }, "output": { "prev": { "$shift": { "output": "$r", "by": -1 } } } } }, { "$match": { "$expr": { "$lt": [ "$r", "$prev" ] } } }, { "$count": "rows_after_a_larger_r" } ], "cursor": {} }');
+ document 
+----------
+(0 rows)
+
+-- an exclusion $project merged with a following $set of $rand: no r of 0.5 or more comes out of the $match
+SELECT setseed(0.5);
+ setseed 
+---------
+ 
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('randonce', '{ "aggregate": "c", "pipeline": [ { "$project": { "g": 0 } }, { "$set": { "r": { "$rand": {} } } }, { "$match": { "r": { "$lt": 0.5 } } }, { "$group": { "_id": null, "returned": { "$sum": 1 }, "r_not_below_half": { "$sum": { "$cond": [ { "$gte": [ "$r", 0.5 ] }, 1, 0 ] } } } }, { "$project": { "_id": 0 } } ], "cursor": {} }');
+                                       document                                        
+---------------------------------------------------------------------------------------
+ { "returned" : { "$numberInt" : "49" }, "r_not_below_half" : { "$numberInt" : "0" } }
+(1 row)
+
+-- a $set of $rand after $skip: the skip is kept (10 of 100 documents)
+SELECT setseed(0.5);
+ setseed 
+---------
+ 
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('randonce', '{ "aggregate": "c", "pipeline": [ { "$skip": 90 }, { "$set": { "r": { "$rand": {} } } }, { "$count": "n" } ], "cursor": {} }');
+             document              
+-----------------------------------
+ { "n" : { "$numberInt" : "10" } }
+(1 row)
+
+-- control: one later reference to the $rand field reads a value in [0, 1) (no document when every value does)
+SELECT setseed(0.5);
+ setseed 
+---------
+ 
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('randonce', '{ "aggregate": "c", "pipeline": [ { "$set": { "r": { "$rand": {} } } }, { "$project": { "in_range": { "$and": [ { "$gte": [ "$r", 0 ] }, { "$lt": [ "$r", 1 ] } ] } } }, { "$match": { "in_range": false } }, { "$count": "rows_out_of_range" } ], "cursor": {} }');
+ document 
+----------
+(0 rows)
+
+RESET blackboxdb.enable_rand_projection_fence;
