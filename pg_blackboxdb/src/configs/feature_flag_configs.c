@@ -314,6 +314,10 @@ bool EnableValueNullMissingFieldMatch = DEFAULT_ENABLE_VALUE_NULL_MISSING_FIELD_
 #define DEFAULT_ENABLE_MINMAXKEY_MISSING_PATH_MATCH true
 bool EnableMinMaxKeyMissingPathMatch = DEFAULT_ENABLE_MINMAXKEY_MISSING_PATH_MATCH;
 
+/* Added in v116, remove after v118 */
+#define DEFAULT_ENABLE_VOLATILE_CURSOR_MATERIALIZE false
+bool EnableVolatileCursorMaterialize = DEFAULT_ENABLE_VOLATILE_CURSOR_MATERIALIZE;
+
 /* Added in v116, enabled in v116, remove after v118 */
 #define DEFAULT_ENABLE_ELEMMATCH_EXISTS_FALSE_NULL_BOUNDS true
 bool EnableElemMatchExistsFalseNullBounds =
@@ -837,6 +841,16 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"even when a sibling element has it."),
 		NULL, &EnableElemMatchExistsFalseNullBounds,
 		DEFAULT_ENABLE_ELEMMATCH_EXISTS_FALSE_NULL_BOUNDS,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_volatile_cursor_materialize", newGucPrefix),
+		gettext_noop(
+			"Whether a persisted cursor whose query draws random values ($rand, $sampleRate) "
+			"keeps the rows it has produced in a Material node, so that holding the cursor "
+			"does not run the query again and later batches come from the same evaluation."),
+		NULL, &EnableVolatileCursorMaterialize,
+		DEFAULT_ENABLE_VOLATILE_CURSOR_MATERIALIZE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

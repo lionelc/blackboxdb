@@ -22,6 +22,8 @@
 #include <tcop/tcopprot.h>
 #include <executor/tstoreReceiver.h>
 #include <nodes/makefuncs.h>
+#include <nodes/nodeFuncs.h>
+#include <optimizer/planmain.h>
 #include <utils/lsyscache.h>
 #include <utils/ruleutils.h>
 #include <metadata/metadata_cache.h>
@@ -54,6 +56,7 @@ extern bool UseFileBasedPersistedCursors;
 extern bool EnableDebugQueryText;
 extern bool EnableDelayedHoldPortal;
 extern bool EnableDynamicCursorFastStartupScan;
+extern bool EnableVolatileCursorMaterialize;
 
 
 /*
@@ -119,6 +122,12 @@ typedef struct QueryCursorPlanResult
 
 	/* The parameter list to pass to the plan */
 	ParamListInfo paramList;
+
+	/*
+	 * Whether the query draws random values (computed only under
+	 * blackboxdb.enable_volatile_cursor_materialize).
+	 */
+	bool drawsRandomValues;
 } QueryCursorPlanResult;
 
 /*
@@ -498,6 +507,126 @@ DrainStreamingQuery(HTAB *cursorMap, Query *query, int batchSize,
 }
 
 
+/*
+ * Whether a bson value has a "$rand" key in any of its documents, at any depth.
+ */
+static bool
+BsonValueContainsDollarRand(const bson_value_t *value)
+{
+	if (value->value_type != BSON_TYPE_DOCUMENT &&
+		value->value_type != BSON_TYPE_ARRAY)
+	{
+		return false;
+	}
+
+	check_stack_depth();
+
+	bson_iter_t iter;
+	BsonValueInitIterator(value, &iter);
+	while (bson_iter_next(&iter))
+	{
+		if (value->value_type == BSON_TYPE_DOCUMENT &&
+			strcmp(bson_iter_key(&iter), "$rand") == 0)
+		{
+			return true;
+		}
+
+		if (BsonValueContainsDollarRand(bson_iter_value(&iter)))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+
+/*
+ * Walker for QueryDrawsRandomValues: a call of random() (as $sampleRate builds
+ * it) or a bson constant with a $rand, which is evaluated inside immutable
+ * functions where PostgreSQL does not see it.
+ */
+static bool
+DrawsRandomValuesWalker(Node *node, void *context)
+{
+	if (node == NULL)
+	{
+		return false;
+	}
+
+	if (IsA(node, FuncExpr) &&
+		((FuncExpr *) node)->funcid == PostgresDrandomFunctionId())
+	{
+		return true;
+	}
+
+	if (IsA(node, Const))
+	{
+		Const *constValue = (Const *) node;
+		if (constValue->constisnull ||
+			(constValue->consttype != BsonTypeId() &&
+			 constValue->consttype != BsonQueryTypeId()))
+		{
+			return false;
+		}
+
+		bson_value_t value = ConvertPgbsonToBsonValue(
+			DatumGetPgBson(constValue->constvalue));
+		return BsonValueContainsDollarRand(&value);
+	}
+
+	if (IsA(node, Query))
+	{
+		return query_tree_walker((Query *) node, DrawsRandomValuesWalker, context, 0);
+	}
+
+	return expression_tree_walker(node, DrawsRandomValuesWalker, context);
+}
+
+
+/*
+ * Whether a query draws random values, so that running it again returns other
+ * rows.
+ */
+static bool
+QueryDrawsRandomValues(Query *query)
+{
+	return EnableVolatileCursorMaterialize &&
+		   DrawsRandomValuesWalker((Node *) query, NULL);
+}
+
+
+/*
+ * A held scrollable portal is persisted by running its plan again from the
+ * start and skipping the rows already fetched (PersistHoldablePortal). For a
+ * query that draws random values the second run returns other rows, so the
+ * batches after the first would mix two draws. A Material node on top keeps
+ * the rows already produced: the rewind replays them and then continues the
+ * same execution. The plan is final, so the node's output references its
+ * subplan's columns, as setrefs.c makes them for a Material node.
+ */
+static Plan *
+MaterializeFinalPlan(Plan *subplan)
+{
+	Plan *materialPlan = materialize_finished_plan(subplan);
+
+	List *targetList = NIL;
+	ListCell *cell;
+	foreach(cell, subplan->targetlist)
+	{
+		TargetEntry *entry = (TargetEntry *) lfirst(cell);
+		Var *outerVar = makeVarFromTargetEntry(OUTER_VAR, entry);
+		targetList = lappend(targetList, makeTargetEntry((Expr *) outerVar,
+														 entry->resno,
+														 entry->resname,
+														 entry->resjunk));
+	}
+
+	materialPlan->targetlist = targetList;
+	return materialPlan;
+}
+
+
 QueryCursorPlanResult *
 PlanDynamicQueryAndDetermineCursorType(Query *query, bool *isDynamicStreamable)
 {
@@ -518,6 +647,9 @@ PlanDynamicQueryAndDetermineCursorType(Query *query, bool *isDynamicStreamable)
 		sourceText = pg_get_querydef(query, pretty);
 	}
 
+	/* The planner may modify the query tree, so look at it first */
+	bool drawsRandomValues = QueryDrawsRandomValues(query);
+
 	/* Plan the query */
 	ParamListInfo paramList = NULL;
 	PlannedStmt *queryPlan = pg_plan_query(query, NULL, cursorOptions, paramList);
@@ -530,6 +662,7 @@ PlanDynamicQueryAndDetermineCursorType(Query *query, bool *isDynamicStreamable)
 	result->queryString = sourceText;
 	result->cursorOptions = cursorOptions;
 	result->paramList = paramList;
+	result->drawsRandomValues = drawsRandomValues;
 	return result;
 }
 
@@ -669,6 +802,9 @@ PlanForcedPersistentQuery(Query *query, bool isHoldCursor)
 		sourceText = pg_get_querydef(query, pretty);
 	}
 
+	/* The planner may modify the query tree, so look at it first */
+	bool drawsRandomValues = QueryDrawsRandomValues(query);
+
 	/* Plan the query */
 	ParamListInfo paramList = NULL;
 	PlannedStmt *queryPlan = pg_plan_query(query, NULL, cursorOptions, paramList);
@@ -684,6 +820,7 @@ PlanForcedPersistentQuery(Query *query, bool isHoldCursor)
 	result->queryString = sourceText;
 	result->cursorOptions = cursorOptions;
 	result->paramList = paramList;
+	result->drawsRandomValues = drawsRandomValues;
 	return result;
 }
 
@@ -768,6 +905,12 @@ CreateAndDrainPersistedQuery(const char *cursorName, QueryCursorPlanResult *resu
 
 	/* Save the context before doing SPI */
 	MemoryContext currentContext = CurrentMemoryContext;
+
+	/* A query that draws random values must not be run again when the portal is held */
+	if (result->drawsRandomValues && !IsA(result->queryPlan->planTree, Material))
+	{
+		result->queryPlan->planTree = MaterializeFinalPlan(result->queryPlan->planTree);
+	}
 
 	/* Add Scroll if it's explicitly supported (nodeAgg sometimes doesn't support it).
 	 * this is similar to spi's SPI_cursor_open_internal
