@@ -1215,4 +1215,6 @@ typedef int BlackboxdbErrorEreportCode;
 
 #define ERRCODE_BLACKBOXDB_LOCATION15975 MAKE_SQLSTATE('M', '0', '0', 'F', 'G')
 
+#define ERRCODE_BLACKBOXDB_LOCATION40353 MAKE_SQLSTATE('M', '0', '0', 'F', 'H')
+
 #endif
