@@ -514,6 +514,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_acquire_connection_moves_last_used_to_its_time() {
+        let setup_config = test_setup_configuration();
+        let pool =
+            test_connection_pool(&setup_config, &setup_config.postgres_system_user.clone(), 2)
+                .await;
+
+        // Each acquisition records its time before connecting, so this holds with or
+        // without a server.
+        let _ = pool.acquire_connection().await;
+        let first = pool.last_used();
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        let _ = pool.acquire_connection().await;
+        let second = pool.last_used();
+
+        assert!(second.duration_since(first) >= Duration::from_secs(1));
+        assert!(second.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn test_acquire_timeout_connection_moves_last_used_to_its_time() {
+        let setup_config = test_setup_configuration();
+        let pool =
+            test_connection_pool(&setup_config, &setup_config.postgres_system_user.clone(), 2)
+                .await;
+
+        let _ = pool.acquire_timeout_connection().await;
+        let first = pool.last_used();
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        let _ = pool.acquire_timeout_connection().await;
+        let second = pool.last_used();
+
+        assert!(second.duration_since(first) >= Duration::from_secs(1));
+        assert!(second.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
     async fn test_last_used_with_fresh_pool_returns_recent_instant() {
         let before = Instant::now();
         let setup_config = test_setup_configuration();
