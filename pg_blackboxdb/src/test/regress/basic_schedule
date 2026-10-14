@@ -60,3 +60,4 @@ test: bson_dollar_datetrunc_exact_bins_tests
 test: bson_aggregation_unwind_index_name_tests
 test: bson_aggregation_count_empty_input_tests
 test: bson_aggregation_volatile_cursor_tests
+test: bson_aggregation_let_rand_tests

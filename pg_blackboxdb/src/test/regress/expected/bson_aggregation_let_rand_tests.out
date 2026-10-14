@@ -1,0 +1,126 @@
+SET search_path TO blackboxdb_api, blackboxdb_core, blackboxdb_api_catalog;
+SET blackboxdb.next_collection_id TO 27400000;
+SET blackboxdb.next_collection_index_id TO 27400000;
+-- A $let keeps each variable as a parsed expression and evaluates it at every $$name reference, so a variable
+-- bound to $rand had a different value at each reference; MongoDB evaluates a $let's variables once. With
+-- blackboxdb.enable_let_rand_once on, the variables that draw $rand are evaluated once per evaluation of the $let,
+-- in the context where they are defined. Each check counts the documents where an invariant fails (no document
+-- when none does); a variable that refers to a sibling stays undefined, as in MongoDB.
+SELECT COUNT(*) FROM (SELECT blackboxdb_api.insert_one('letrand', 'c', FORMAT('{ "_id": %s }', i)::bson) FROM generate_series(1, 50) i) t;
+NOTICE:  creating collection
+ count 
+-------
+    50
+(1 row)
+
+SET blackboxdb.enable_let_rand_once TO off;
+-- one variable drawing $rand: $$x equals $$x in every document (no document when it holds)
+SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"x": {"$rand": {}}}, "in": {"$eq": ["$$x", "$$x"]}}}}}, {"$match": {"v": false}}, {"$count": "n"}], "cursor": {}}');
+             document              
+-----------------------------------
+ { "n" : { "$numberInt" : "50" } }
+(1 row)
+
+-- a $rand variable next to another variable (no document when it holds)
+SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"x": {"$rand": {}}, "y": 1}, "in": {"$eq": ["$$x", "$$x"]}}}}}, {"$match": {"v": false}}, {"$count": "n"}], "cursor": {}}');
+             document              
+-----------------------------------
+ { "n" : { "$numberInt" : "50" } }
+(1 row)
+
+-- two variables drawing $rand (no document when it holds)
+SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"x": {"$rand": {}}, "y": {"$rand": {}}}, "in": {"$and": [{"$eq": ["$$x", "$$x"]}, {"$eq": ["$$y", "$$y"]}]}}}}}, {"$match": {"v": false}}, {"$count": "n"}], "cursor": {}}');
+             document              
+-----------------------------------
+ { "n" : { "$numberInt" : "50" } }
+(1 row)
+
+-- a nested $let reading the outer $rand variable (no document when it holds)
+SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"x": {"$rand": {}}}, "in": {"$let": {"vars": {"y": "$$x"}, "in": {"$eq": ["$$x", "$$y"]}}}}}}}, {"$match": {"v": false}}, {"$count": "n"}], "cursor": {}}');
+             document              
+-----------------------------------
+ { "n" : { "$numberInt" : "50" } }
+(1 row)
+
+-- $rand inside the variable's expression (no document when it holds)
+SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"x": {"$multiply": [{"$rand": {}}, 10]}}, "in": {"$eq": ["$$x", "$$x"]}}}}}, {"$match": {"v": false}}, {"$count": "n"}], "cursor": {}}');
+             document              
+-----------------------------------
+ { "n" : { "$numberInt" : "50" } }
+(1 row)
+
+-- a $rand variable that reads a variable of an enclosing $let (no document when it holds)
+SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"o": 5}, "in": {"$let": {"vars": {"x": {"$add": ["$$o", {"$rand": {}}]}}, "in": {"$eq": ["$$x", "$$x"]}}}}}}}, {"$match": {"v": false}}, {"$count": "n"}], "cursor": {}}');
+             document              
+-----------------------------------
+ { "n" : { "$numberInt" : "50" } }
+(1 row)
+
+-- control: a variable without $rand (no document when it holds)
+SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"x": "$_id"}, "in": {"$eq": ["$$x", "$$x"]}}}}}, {"$match": {"v": false}}, {"$count": "n"}], "cursor": {}}');
+ document 
+----------
+(0 rows)
+
+-- a constant in: no variable is evaluated (1 in every document) (no document when it holds)
+SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"x": {"$rand": {}}}, "in": 1}}}}, {"$match": {"v": {"$ne": 1}}}, {"$count": "n"}], "cursor": {}}');
+ document 
+----------
+(0 rows)
+
+-- a $rand variable that refers to a sibling variable: an error (undefined variable), as in MongoDB (no document when it holds)
+SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"a": 1, "x": {"$add": ["$$a", {"$rand": {}}]}}, "in": "$$x"}}}}, {"$match": {"v": {"$exists": true}}}, {"$count": "n"}], "cursor": {}}');
+ERROR:  Attempting to use an undefined variable: a
+SET blackboxdb.enable_let_rand_once TO on;
+-- one variable drawing $rand: $$x equals $$x in every document (no document when it holds)
+SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"x": {"$rand": {}}}, "in": {"$eq": ["$$x", "$$x"]}}}}}, {"$match": {"v": false}}, {"$count": "n"}], "cursor": {}}');
+ document 
+----------
+(0 rows)
+
+-- a $rand variable next to another variable (no document when it holds)
+SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"x": {"$rand": {}}, "y": 1}, "in": {"$eq": ["$$x", "$$x"]}}}}}, {"$match": {"v": false}}, {"$count": "n"}], "cursor": {}}');
+ document 
+----------
+(0 rows)
+
+-- two variables drawing $rand (no document when it holds)
+SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"x": {"$rand": {}}, "y": {"$rand": {}}}, "in": {"$and": [{"$eq": ["$$x", "$$x"]}, {"$eq": ["$$y", "$$y"]}]}}}}}, {"$match": {"v": false}}, {"$count": "n"}], "cursor": {}}');
+ document 
+----------
+(0 rows)
+
+-- a nested $let reading the outer $rand variable (no document when it holds)
+SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"x": {"$rand": {}}}, "in": {"$let": {"vars": {"y": "$$x"}, "in": {"$eq": ["$$x", "$$y"]}}}}}}}, {"$match": {"v": false}}, {"$count": "n"}], "cursor": {}}');
+ document 
+----------
+(0 rows)
+
+-- $rand inside the variable's expression (no document when it holds)
+SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"x": {"$multiply": [{"$rand": {}}, 10]}}, "in": {"$eq": ["$$x", "$$x"]}}}}}, {"$match": {"v": false}}, {"$count": "n"}], "cursor": {}}');
+ document 
+----------
+(0 rows)
+
+-- a $rand variable that reads a variable of an enclosing $let (no document when it holds)
+SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"o": 5}, "in": {"$let": {"vars": {"x": {"$add": ["$$o", {"$rand": {}}]}}, "in": {"$eq": ["$$x", "$$x"]}}}}}}}, {"$match": {"v": false}}, {"$count": "n"}], "cursor": {}}');
+ document 
+----------
+(0 rows)
+
+-- control: a variable without $rand (no document when it holds)
+SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"x": "$_id"}, "in": {"$eq": ["$$x", "$$x"]}}}}}, {"$match": {"v": false}}, {"$count": "n"}], "cursor": {}}');
+ document 
+----------
+(0 rows)
+
+-- a constant in: no variable is evaluated (1 in every document) (no document when it holds)
+SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"x": {"$rand": {}}}, "in": 1}}}}, {"$match": {"v": {"$ne": 1}}}, {"$count": "n"}], "cursor": {}}');
+ document 
+----------
+(0 rows)
+
+-- a $rand variable that refers to a sibling variable: an error (undefined variable), as in MongoDB (no document when it holds)
+SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"a": 1, "x": {"$add": ["$$a", {"$rand": {}}]}}, "in": "$$x"}}}}, {"$match": {"v": {"$exists": true}}}, {"$count": "n"}], "cursor": {}}');
+ERROR:  Attempting to use an undefined variable: a
+RESET blackboxdb.enable_let_rand_once;
