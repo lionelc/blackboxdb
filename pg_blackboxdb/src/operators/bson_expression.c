@@ -74,6 +74,7 @@ typedef struct BsonExpressionPartitionByFieldsGetState
 } BsonExpressionPartitionByFieldsGetState;
 
 extern bool EnableCollation;
+extern bool EnableLetRandOnce;
 
 /* --------------------------------------------------------- */
 /* Forward declaration */
@@ -2757,6 +2758,66 @@ ParseDollarLiteral(const bson_value_t *inputDocument, AggregationExpressionData 
 
 
 /*
+ * Whether a bson value has a "$rand" key in any of its documents, at any depth.
+ */
+static bool
+BsonValueContainsDollarRand(const bson_value_t *value)
+{
+	if (value->value_type != BSON_TYPE_DOCUMENT &&
+		value->value_type != BSON_TYPE_ARRAY)
+	{
+		return false;
+	}
+
+	check_stack_depth();
+
+	bson_iter_t iter;
+	BsonValueInitIterator(value, &iter);
+	while (bson_iter_next(&iter))
+	{
+		if (value->value_type == BSON_TYPE_DOCUMENT &&
+			strcmp(bson_iter_key(&iter), "$rand") == 0)
+		{
+			return true;
+		}
+
+		if (BsonValueContainsDollarRand(bson_iter_value(&iter)))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+
+/*
+ * Finds a variable defined directly in the given context (not in its parents).
+ */
+static const VariableData *
+FindVariableInContext(const ExpressionVariableContext *variableContext,
+					  const StringView *name)
+{
+	if (variableContext->hasSingleVariable)
+	{
+		return StringViewEquals(name, &variableContext->context.variable.name) ?
+			   &variableContext->context.variable : NULL;
+	}
+
+	if (variableContext->context.table == NULL)
+	{
+		return NULL;
+	}
+
+	VariableData entryToFind;
+	entryToFind.name = *name;
+	bool found = false;
+	return (const VariableData *) hash_search(variableContext->context.table,
+											  &entryToFind, HASH_FIND, &found);
+}
+
+
+/*
  * Evaluates the output of a $let expression.
  * $let is expressed as: { $let: { vars: {var1: <expression>, var2: <expression> }, in: <expression> }}
  */
@@ -2836,15 +2897,34 @@ ParseDollarLet(const bson_value_t *argument, AggregationExpressionData *data,
 	/* do not destroy the variables table after runtime evaluation on a document */
 	inputVariableContext->preserveVariableTable = true;
 
-	data->operator.arguments = list_make2(inData, inputVariableContext);
+	/* the variables that draw $rand are evaluated once per evaluation of the $let */
+	List *randVariableNames = NIL;
+	if (EnableLetRandOnce)
+	{
+		bson_iter_t varsIter;
+		BsonValueInitIterator(&vars, &varsIter);
+		while (bson_iter_next(&varsIter))
+		{
+			if (BsonValueContainsDollarRand(bson_iter_value(&varsIter)))
+			{
+				StringView *name = palloc(sizeof(StringView));
+				*name = bson_iter_key_string_view(&varsIter);
+				randVariableNames = lappend(randVariableNames, name);
+			}
+		}
+	}
+
+	data->operator.arguments = list_make3(inData, inputVariableContext,
+										  randVariableNames);
 	data->operator.argumentsKind = AggregationExpressionArgumentsKind_List;
 }
 
 
 /* Handles a pre parsed $let aggregation operator.
- * The arguments is a list(2) where:
+ * The arguments is a list(3) where:
  *    list[0] is the in argument to evaluate with the given variables.
  *    list[1] is the parsed variable context for in.
+ *    list[2] is the list of names of the variables that draw $rand (NIL if none).
  *
  * We evaluate in with the given variable context and return the result of that evaluation. */
 void
@@ -2855,6 +2935,7 @@ HandlePreParsedDollarLet(pgbson *doc, void *arguments,
 
 	AggregationExpressionData *inExpression = list_nth(argList, 0);
 	const ExpressionVariableContext *inputVariableContext = list_nth(argList, 1);
+	List *randVariableNames = (List *) list_nth(argList, 2);
 
 	/* let is a special aggregator operator which needs to insert a variable context,
 	 * but it is not ideal to expose a shared API to modify the variable context for the expression result, as it could lead to wrong usage.
@@ -2866,6 +2947,36 @@ HandlePreParsedDollarLet(pgbson *doc, void *arguments,
 
 	*childContext = *inputVariableContext;
 	childContext->parent = &expressionResult->expressionResultPrivate.variableContext;
+
+	/*
+	 * A variable is evaluated where it is referenced, but MongoDB evaluates a
+	 * $let's variables once: a variable that draws $rand is evaluated once here,
+	 * in the context where it is defined, and bound as a constant in a context
+	 * between 'in' and the $let's other variables.
+	 */
+	ExpressionVariableContext letVariables;
+	if (randVariableNames != NIL)
+	{
+		letVariables = *childContext;
+		memset(childContext, 0, sizeof(ExpressionVariableContext));
+		childContext->parent = &letVariables;
+
+		ListCell *cell;
+		foreach(cell, randVariableNames)
+		{
+			const StringView *name = lfirst(cell);
+			const VariableData *variable = FindVariableInContext(&letVariables, name);
+			if (variable == NULL)
+			{
+				continue;
+			}
+
+			VariableData constant = { .name = *name, .isConstant = true };
+			GetVariableValueFromData(variable, doc, expressionResult,
+									 letVariables.parent, &constant.bsonValue);
+			VariableContextSetVariableData(childContext, &constant);
+		}
+	}
 
 	bool isNullOnEmpty = false;
 	EvaluateAggregationExpressionData(inExpression, doc, &childExpressionResult,

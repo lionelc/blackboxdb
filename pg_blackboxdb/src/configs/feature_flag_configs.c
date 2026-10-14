@@ -335,6 +335,10 @@ bool EnableUnwindIndexFieldPathCheck = DEFAULT_ENABLE_UNWIND_INDEX_FIELD_PATH_CH
 #define DEFAULT_ENABLE_COUNT_STAGE_EMPTY_INPUT true
 bool EnableCountStageEmptyInput = DEFAULT_ENABLE_COUNT_STAGE_EMPTY_INPUT;
 
+/* Added in v116, remove after v118 */
+#define DEFAULT_ENABLE_LET_RAND_ONCE false
+bool EnableLetRandOnce = DEFAULT_ENABLE_LET_RAND_ONCE;
+
 /* Added in v115, enabled in v115, remove after v117 */
 #define DEFAULT_ENABLE_PG_PRNG_CURSOR_ID true
 bool EnablePGPrngCursorId = DEFAULT_ENABLE_PG_PRNG_CURSOR_ID;
@@ -881,6 +885,16 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"does, instead of a document with a count of 0. The count command is not affected."),
 		NULL, &EnableCountStageEmptyInput,
 		DEFAULT_ENABLE_COUNT_STAGE_EMPTY_INPUT,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_let_rand_once", newGucPrefix),
+		gettext_noop(
+			"Whether a $let variable whose expression contains $rand is evaluated once per "
+			"evaluation of the $let, as MongoDB evaluates a $let's variables, rather than "
+			"at each reference."),
+		NULL, &EnableLetRandOnce,
+		DEFAULT_ENABLE_LET_RAND_ONCE,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
