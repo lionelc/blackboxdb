@@ -323,8 +323,8 @@ bool EnableVolatileCursorMaterialize = DEFAULT_ENABLE_VOLATILE_CURSOR_MATERIALIZ
 bool EnableElemMatchExistsFalseNullBounds =
 	DEFAULT_ENABLE_ELEMMATCH_EXISTS_FALSE_NULL_BOUNDS;
 
-/* Added in v116, remove after v118 */
-#define DEFAULT_ENABLE_RAND_PROJECTION_FENCE false
+/* Added in v116, enabled in v116, remove after v118 */
+#define DEFAULT_ENABLE_RAND_PROJECTION_FENCE true
 bool EnableRandProjectionFence = DEFAULT_ENABLE_RAND_PROJECTION_FENCE;
 
 /* Added in v116, enabled in v116, remove after v118 */
