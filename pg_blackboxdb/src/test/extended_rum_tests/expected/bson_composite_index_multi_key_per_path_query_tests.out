@@ -1001,7 +1001,6 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 ------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=3 loops=1)
          namespaceName: mkpq_db.mkpq_ios
          indexName: country_city_1
@@ -1014,7 +1013,7 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          ->  Index Only Scan using country_city_1 on blackboxdb_data.documents_13108 collection (actual rows=3 loops=1)
                Index Cond: (collection.document @= '{ "country" : "USA" }'::bson)
                Heap Fetches: xxx
-(15 rows)
+(14 rows)
 
 -- Covered $group {$sum: 1} over the leading scalar path: also an Index Only Scan.
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('mkpq_db', '{ "aggregate" : "mkpq_ios", "pipeline" : [{ "$match" : { "country": { "$gte": "Brazil" } } }, { "$group" : { "_id" : "1", "n" : { "$sum" : 1 } } }]}') $$, p_ignore_heap_fetches => true);
@@ -1046,7 +1045,6 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 -------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=3 loops=1)
          namespaceName: mkpq_db.mkpq_ios
          indexName: country_city_1
@@ -1058,7 +1056,7 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 3)]
          ->  Index Scan using country_city_1 on blackboxdb_data.documents_13108 collection (actual rows=3 loops=1)
                Index Cond: (collection.document @= '{ "country" : "USA" }'::bson)
-(14 rows)
+(13 rows)
 
 set enable_indexonlyscan to on;
 -- --- H2: making the SAME index multi-key removes index-only-scan eligibility ---
@@ -1087,7 +1085,6 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 -------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Custom Scan (BlackboxDBApiExplainQueryScan) (actual rows=4 loops=1)
          namespaceName: mkpq_db.mkpq_ios
          indexName: country_city_1
@@ -1101,6 +1098,6 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
          scanKeyDetails: key 1: [(isInequality: true, estimatedEntryCount: 5)]
          ->  Index Scan using country_city_1 on blackboxdb_data.documents_13108 collection (actual rows=4 loops=1)
                Index Cond: (collection.document @= '{ "country" : "USA" }'::bson)
-(16 rows)
+(15 rows)
 
 reset blackboxdb.forceIndexOnlyScanIfAvailable;

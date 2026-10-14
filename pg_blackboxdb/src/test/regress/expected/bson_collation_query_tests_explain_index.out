@@ -2492,17 +2492,15 @@ $cmd$);
                Output: COALESCE(bson_array_agg((bson_repath_and_build('catCount'::text, blackboxdb_api_internal.bsoncount(1))), 'a'::text), '{ "a" : [  ] }'::bson)
                ->  Aggregate
                      Output: bson_repath_and_build('catCount'::text, blackboxdb_api_internal.bsoncount(1))
-                     Filter: int8gt(count(*), '0'::bigint)
                      ->  CTE Scan on facet_base_0_0 facetsub_stage_1
                            Filter: (facetsub_stage_1.document #= '{ "a.b" : "cat", "collation" : "en-u-ks-level1" }'::bsonquery)
          ->  Aggregate
                Output: COALESCE(bson_array_agg((bson_repath_and_build('dogCount'::text, blackboxdb_api_internal.bsoncount(1))), 'b'::text), '{ "b" : [  ] }'::bson)
                ->  Aggregate
                      Output: bson_repath_and_build('dogCount'::text, blackboxdb_api_internal.bsoncount(1))
-                     Filter: int8gt(count(*), '0'::bigint)
                      ->  CTE Scan on facet_base_0_0 facetsub_stage_2
                            Filter: (facetsub_stage_2.document #= '{ "a.b" : "dog", "collation" : "en-u-ks-level1" }'::bsonquery)
-(20 rows)
+(18 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($cmd$
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('coll_q_db', '{ "aggregate": "coll_lookup", "pipeline": [ { "$unionWith": { "coll": "coll_lookup", "pipeline" : [ { "$match": { "a.b": "cat" }}] } }], "cursor": {}, "collation": { "locale": "en", "strength" : 1} }')

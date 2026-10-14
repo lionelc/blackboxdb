@@ -553,7 +553,6 @@ EXPlAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                Output: COALESCE(bson_array_agg((bson_repath_and_build('d'::text, blackboxdb_api_internal.bsoncount(1))), 'b'::text), '{ "b" : [  ] }'::bson)
                ->  Aggregate
                      Output: bson_repath_and_build('d'::text, blackboxdb_api_internal.bsoncount(1))
-                     Filter: int8gt(count(*), '0'::bigint)
                      ->  CTE Scan on facet_base_0_0 facetsub_stage_2
          ->  Aggregate
                Output: COALESCE(bson_array_agg((bson_dollar_unwind(facetsub_stage_3.document, '$a.b'::text)), 'c'::text), '{ "c" : [  ] }'::bson)
@@ -561,7 +560,7 @@ EXPlAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                      Output: bson_dollar_unwind(facetsub_stage_3.document, '$a.b'::text)
                      ->  CTE Scan on facet_base_0_0 facetsub_stage_3
                            Output: facetsub_stage_3.document
-(22 rows)
+(21 rows)
 
 -- facet with parent transform:
 SELECT document FROM bson_aggregation_pipeline('db', 
@@ -1171,12 +1170,11 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
                            Output: COALESCE(bson_array_agg((bson_repath_and_build('efe'::text, blackboxdb_api_internal.bsoncount(1))), 'matched_docs'::text), '{ "matched_docs" : [  ] }'::bson)
                            ->  Aggregate
                                  Output: bson_repath_and_build('efe'::text, blackboxdb_api_internal.bsoncount(1))
-                                 Filter: int8gt(count(*), '0'::bigint)
                                  ->  Seq Scan on blackboxdb_data.documents_3503 collection_0_1
                                        Output: collection_0_1.shard_key_value, collection_0_1.object_id, collection_0_1.document
                      ->  Seq Scan on blackboxdb_data.documents_3502 collection
                            Output: collection.shard_key_value, collection.object_id, collection.document
-(18 rows)
+(17 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('db', 
     '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "agg_pipeline_movie_catalog", "as": "matched_docs", "localField": "title", "foreignField": "title", "pipeline": [ { "$count": "efe" } ] } } ], "cursor": {} }');
@@ -1198,23 +1196,22 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
            Output: COALESCE(bson_array_agg((bson_repath_and_build('efe'::text, blackboxdb_api_internal.bsoncount(1))), 'matched_docs'::text), '{ "matched_docs" : [  ] }'::bson)
            ->  Aggregate
                  Output: bson_repath_and_build('efe'::text, blackboxdb_api_internal.bsoncount(1))
-                 Filter: int8gt(count(*), '0'::bigint)
                  ->  Function Scan on blackboxdb_api_catalog.bson_lookup_unwind lookup_subpipeline_substage_0
                        Output: lookup_subpipeline_substage_0.lookup_unwind
                        Function Call: bson_lookup_unwind(lookup_non_inlined_stage_1."right", 'matched_docs'::text)
-(20 rows)
+(19 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
     '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "coll_dne", "as": "matched_docs", "localField": "title", "foreignField": "title", "pipeline": [ { "$count": "efe" } ] } } ], "cursor": {} }');
-                                                                                                              document                                                                                                              
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [  ] }
- { "_id" : { "$numberInt" : "2" }, "movie_title" : "Inception", "ticket_price" : { "$numberInt" : "13" }, "tickets_sold" : { "$numberInt" : "100" }, "matched_docs" : [  ] }
- { "_id" : { "$numberInt" : "3" }, "movie_title" : "Dune", "ticket_price" : { "$numberInt" : "18" }, "tickets_sold" : { "$numberInt" : "95" }, "matched_docs" : [  ] }
- { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [  ] }
- { "_id" : { "$numberInt" : "5" }, "matched_docs" : [  ] }
- { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [  ] }
- { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [  ] }
+                                                                                                                               document                                                                                                                               
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "2" }, "movie_title" : "Inception", "ticket_price" : { "$numberInt" : "13" }, "tickets_sold" : { "$numberInt" : "100" }, "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "3" }, "movie_title" : "Dune", "ticket_price" : { "$numberInt" : "18" }, "tickets_sold" : { "$numberInt" : "95" }, "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "5" }, "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
 (7 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
@@ -1430,15 +1427,15 @@ SELECT document FROM bson_aggregation_pipeline('db',
 
 SELECT document FROM bson_aggregation_pipeline('db', 
     '{ "aggregate": "agg_pipeline_movie_screenings", "pipeline": [ { "$lookup": { "from": "coll_dne", "as": "matched_docs", "localField": "title", "foreignField": "title", "pipeline": [ { "$count": "efe" } ] } } ], "cursor": {} }');
-                                                                                                              document                                                                                                              
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [  ] }
- { "_id" : { "$numberInt" : "2" }, "movie_title" : "Inception", "ticket_price" : { "$numberInt" : "13" }, "tickets_sold" : { "$numberInt" : "100" }, "matched_docs" : [  ] }
- { "_id" : { "$numberInt" : "3" }, "movie_title" : "Dune", "ticket_price" : { "$numberInt" : "18" }, "tickets_sold" : { "$numberInt" : "95" }, "matched_docs" : [  ] }
- { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [  ] }
- { "_id" : { "$numberInt" : "5" }, "matched_docs" : [  ] }
- { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [  ] }
- { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [  ] }
+                                                                                                                               document                                                                                                                               
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "movie_title" : "Interstellar", "ticket_price" : { "$numberInt" : "15" }, "tickets_sold" : { "$numberInt" : "120" }, "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "2" }, "movie_title" : "Inception", "ticket_price" : { "$numberInt" : "13" }, "tickets_sold" : { "$numberInt" : "100" }, "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "3" }, "movie_title" : "Dune", "ticket_price" : { "$numberInt" : "18" }, "tickets_sold" : { "$numberInt" : "95" }, "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "4" }, "movie_title" : [ "Interstellar", "Dune", "Inception" ], "ticket_price" : { "$numberInt" : "14" }, "tickets_sold" : { "$numberInt" : "250" }, "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "5" }, "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "6" }, "movie_title" : { "a" : "v", "b" : { "$numberInt" : "2" }, "c" : [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ] }, "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "7" }, "movie_title" : [ { "a" : { "b" : { "$numberInt" : "2" } } }, [ { "$numberInt" : "5" }, { "$numberInt" : "6" }, { "$numberInt" : "7" } ], { "$numberInt" : "9" }, "z" ], "matched_docs" : [ { "efe" : { "$numberInt" : "0" } } ] }
 (7 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', 
@@ -1615,24 +1612,23 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "agg
                      QUERY PLAN                     
 ----------------------------------------------------
  Aggregate
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Seq Scan on documents_3505 collection
          Filter: (random() < '1'::double precision)
-(4 rows)
+(3 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": 0 } }, {"$count": "count"} ], "cursor": {} }');
- document 
-----------
-(0 rows)
+               document               
+--------------------------------------
+ { "count" : { "$numberInt" : "0" } }
+(1 row)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": 0 } }, {"$count": "count"} ], "cursor": {} }');
                      QUERY PLAN                     
 ----------------------------------------------------
  Aggregate
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Seq Scan on documents_3505 collection
          Filter: (random() < '0'::double precision)
-(4 rows)
+(3 rows)
 
 /* sampleRate will random select document, use greater than 0 to make sure slice of documents is selected */
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": 0.5 } }, { "$count": "numMatches" }, { "$addFields": { "gtZero": { "$gt": ["$numMatches", 0] } } }, {"$project": { "_id": 0, "gtZero": 1 } }], "cursor": {} }');
@@ -1646,10 +1642,9 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "agg
 ------------------------------------------------------------
  Subquery Scan on agg_stage_2
    ->  Aggregate
-         Filter: int8gt(count(*), '0'::bigint)
          ->  Seq Scan on documents_3505 collection
                Filter: (random() < '0.5'::double precision)
-(5 rows)
+(4 rows)
 
 /* test shard case */
 SELECT blackboxdb_api.shard_collection('db', 'agg_pipeline_samplerate', '{ "_id": "hashed" }', false);
@@ -1668,24 +1663,23 @@ EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "agg
                      QUERY PLAN                     
 ----------------------------------------------------
  Aggregate
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Seq Scan on documents_3505 collection
          Filter: (random() < '1'::double precision)
-(4 rows)
+(3 rows)
 
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": 0 } }, {"$count": "count"} ], "cursor": {} }');
- document 
-----------
-(0 rows)
+               document               
+--------------------------------------
+ { "count" : { "$numberInt" : "0" } }
+(1 row)
 
 EXPLAIN (COSTS OFF) SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": 0 } }, {"$count": "count"} ], "cursor": {} }');
                      QUERY PLAN                     
 ----------------------------------------------------
  Aggregate
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Seq Scan on documents_3505 collection
          Filter: (random() < '0'::double precision)
-(4 rows)
+(3 rows)
 
 /* sampleRate will random select document, use greater than 0 to make sure slice of documents is selected */
 SELECT document FROM bson_aggregation_pipeline('db', '{ "aggregate": "agg_pipeline_samplerate", "pipeline": [ { "$match": { "$sampleRate": 0.5 } }, { "$count": "numMatches" }, { "$addFields": { "gtZero": { "$gt": ["$numMatches", 0] } } }, {"$project": { "_id": 0, "gtZero": 1 } }], "cursor": {} }');

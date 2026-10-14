@@ -118,60 +118,55 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 ------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Only Scan using country_1 on blackboxdb_data.documents_9101 collection (actual rows=4 loops=1)
          Output: collection.document
          Index Cond: (collection.document @= '{ "country" : "USA" }'::bson)
          Heap Fetches: xxx
-(7 rows)
+(6 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$gt": "Mexico"}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
                                             run_explain_and_trim                                            
 ------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Only Scan using country_1 on blackboxdb_data.documents_9101 collection (actual rows=5 loops=1)
          Output: collection.document
          Index Cond: (collection.document @> '{ "country" : "Mexico" }'::bson)
          Heap Fetches: xxx
-(7 rows)
+(6 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$gte": "Mexico"}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
                                             run_explain_and_trim                                            
 ------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Only Scan using country_1 on blackboxdb_data.documents_9101 collection (actual rows=9 loops=1)
          Output: collection.document
          Index Cond: (collection.document @>= '{ "country" : "Mexico" }'::bson)
          Heap Fetches: xxx
-(7 rows)
+(6 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
                                             run_explain_and_trim                                            
 ------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Only Scan using country_1 on blackboxdb_data.documents_9101 collection (actual rows=7 loops=1)
          Output: collection.document
          Index Cond: (collection.document @< '{ "country" : "Mexico" }'::bson)
          Heap Fetches: xxx
-(7 rows)
+(6 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$lte": "Mexico"}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
                                             run_explain_and_trim                                             
 -------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Only Scan using country_1 on blackboxdb_data.documents_9101 collection (actual rows=11 loops=1)
          Output: collection.document
          Index Cond: (collection.document @<= '{ "country" : "Mexico" }'::bson)
          Heap Fetches: xxx
-(7 rows)
+(6 rows)
 
 -- composite index only scan with $group $sum: 1 (count-like accumulator)
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$gte": "Brazil"}} }, { "$group" : { "_id" : "1", "n" : { "$sum" : 1 } } }]}') $$, p_ignore_heap_fetches => true);
@@ -191,12 +186,11 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 -----------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Only Scan using country_1 on blackboxdb_data.documents_9101 collection (actual rows=5 loops=1)
          Output: collection.document
          Index Cond: ((collection.document @> '{ "country" : "Brazil" }'::bson) AND (collection.document @< '{ "country" : "Mexico" }'::bson))
          Heap Fetches: xxx
-(7 rows)
+(6 rows)
 
 -- count with match + limit uses index only scan
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{"$match": { "country": {"$gt": "Brazil", "$lt": "Mexico"} }}, { "$limit": 10 }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
@@ -204,14 +198,13 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 -----------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Limit (actual rows=5 loops=1)
          Output: NULL::bson
          ->  Index Only Scan using country_1 on blackboxdb_data.documents_9101 collection (actual rows=5 loops=1)
                Output: NULL::bson
                Index Cond: ((collection.document @> '{ "country" : "Brazil" }'::bson) AND (collection.document @< '{ "country" : "Mexico" }'::bson))
                Heap Fetches: xxx
-(9 rows)
+(8 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{"$match": { "country": {"$gt": "Brazil", "$lt": "Mexico"} }}, { "$limit": 10 }, { "$group": { "_id": 1, "c": { "$sum": 1 } } }]}') $$, p_ignore_heap_fetches => true);
                                                                               run_explain_and_trim                                                                               
@@ -279,12 +272,11 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 ---------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Only Scan using country_provider_1 on blackboxdb_data.documents_9101 collection (actual rows=3 loops=1)
          Output: collection.document
          Index Cond: ((collection.document @= '{ "country" : "Mexico" }'::bson) AND (collection.document @= '{ "provider" : "AWS" }'::bson))
          Heap Fetches: xxx
-(7 rows)
+(6 rows)
 
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$eq": "Mexico"}, "provider": {"$eq": "AWS"}} }, { "$count": "count" }]}');
                document               
@@ -297,12 +289,11 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 ---------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Only Scan using country_provider_1 on blackboxdb_data.documents_9101 collection (actual rows=1 loops=1)
          Output: collection.document
          Index Cond: ((collection.document @= '{ "country" : "Mexico" }'::bson) AND (collection.document @= '{ "provider" : "GCP" }'::bson))
          Heap Fetches: xxx
-(7 rows)
+(6 rows)
 
 SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$eq": "Mexico"}, "provider": {"$eq": "GCP"}} }, { "$count": "count" }]}');
                document               
@@ -316,12 +307,11 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 ---------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Seq Scan on blackboxdb_data.documents_9101 collection (actual rows=6 loops=1)
          Output: collection.shard_key_value, collection.object_id, collection.document
          Filter: (collection.document @= '{ "provider" : "AWS" }'::bson)
          Rows Removed by Filter: 10
-(7 rows)
+(6 rows)
 
 -- Unsupported operators because need runtime recheck
 -- $ne, $type, $size, $elemMatch should not use index only scan
@@ -330,96 +320,84 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 --------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Scan using country_1 on blackboxdb_data.documents_9101 collection (actual rows=12 loops=1)
          Output: collection.shard_key_value, collection.object_id, collection.document
          Index Cond: (collection.document @!= '{ "country" : "Mexico" }'::bson)
-(6 rows)
+(5 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$type": "string"}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
                                           run_explain_and_trim                                          
 --------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Scan using country_1 on blackboxdb_data.documents_9101 collection (actual rows=16 loops=1)
          Output: collection.shard_key_value, collection.object_id, collection.document
          Index Cond: (collection.document @# '{ "country" : "string" }'::bson)
-(6 rows)
+(5 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$size": 2}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
                                          run_explain_and_trim                                          
 -------------------------------------------------------------------------------------------------------
- Aggregate (actual rows=0 loops=1)
+ Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
-   Rows Removed by Filter: 1
    ->  Index Scan using country_1 on blackboxdb_data.documents_9101 collection (actual rows=0 loops=1)
          Output: collection.shard_key_value, collection.object_id, collection.document
          Index Cond: (collection.document @@# '{ "country" : { "$numberInt" : "2" } }'::bson)
          Rows Removed by Index Recheck: 16
-(8 rows)
+(6 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$elemMatch": {"$eq": "Mexico"}}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
                                                                              run_explain_and_trim                                                                              
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Aggregate (actual rows=0 loops=1)
+ Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
-   Rows Removed by Filter: 1
    ->  Index Scan using country_1 on blackboxdb_data.documents_9101 collection (actual rows=0 loops=1)
          Output: collection.shard_key_value, collection.object_id, collection.document
          Index Cond: (collection.document @<> '{ "country" : { "elemMatchIndexOp" : [ { "op" : { "$numberInt" : "1" }, "value" : "Mexico", "isTopLevel" : true } ] } }'::bson)
          Filter: (collection.document @#? '{ "country" : { "$eq" : "Mexico" } }'::bson)
          Rows Removed by Filter: 4
-(9 rows)
+(7 rows)
 
 -- null/empty array and mixed $in predicates need runtime recheck and should not use index only scan
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$eq": null}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
                                          run_explain_and_trim                                          
 -------------------------------------------------------------------------------------------------------
- Aggregate (actual rows=0 loops=1)
+ Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
-   Rows Removed by Filter: 1
    ->  Index Scan using country_1 on blackboxdb_data.documents_9101 collection (actual rows=0 loops=1)
          Output: collection.shard_key_value, collection.object_id, collection.document
          Index Cond: (collection.document @= '{ "country" : null }'::bson)
-(7 rows)
+(5 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$eq": []}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
                                          run_explain_and_trim                                          
 -------------------------------------------------------------------------------------------------------
- Aggregate (actual rows=0 loops=1)
+ Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
-   Rows Removed by Filter: 1
    ->  Index Scan using country_1 on blackboxdb_data.documents_9101 collection (actual rows=0 loops=1)
          Output: collection.shard_key_value, collection.object_id, collection.document
          Index Cond: (collection.document @= '{ "country" : [  ] }'::bson)
-(7 rows)
+(5 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$in": ["USA", null]}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
                                          run_explain_and_trim                                          
 -------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Scan using country_1 on blackboxdb_data.documents_9101 collection (actual rows=4 loops=1)
          Output: collection.shard_key_value, collection.object_id, collection.document
          Index Cond: (collection.document @*= '{ "country" : [ "USA", null ] }'::bson)
-(6 rows)
+(5 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$in": ["USA", []]}} }, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
                                          run_explain_and_trim                                          
 -------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Scan using country_1 on blackboxdb_data.documents_9101 collection (actual rows=4 loops=1)
          Output: collection.shard_key_value, collection.object_id, collection.document
          Index Cond: (collection.document @*= '{ "country" : [ "USA", [  ] ] }'::bson)
-(6 rows)
+(5 rows)
 
 -- turning off index only scan should prevent index only scan
 set enable_indexonlyscan to off;
@@ -428,11 +406,10 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 -------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Scan using country_1 on blackboxdb_data.documents_9101 collection (actual rows=7 loops=1)
          Output: collection.shard_key_value, collection.object_id, collection.document
          Index Cond: (collection.document @< '{ "country" : "Mexico" }'::bson)
-(6 rows)
+(5 rows)
 
 set enable_indexonlyscan to on;
 -- turning off enableIndexOnlyScanForCoveredAggregateTargets should keep count IOS enabled,
@@ -443,12 +420,11 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 ------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Only Scan using country_1 on blackboxdb_data.documents_9101 collection (actual rows=7 loops=1)
          Output: collection.document
          Index Cond: (collection.document @< '{ "country" : "Mexico" }'::bson)
          Heap Fetches: xxx
-(7 rows)
+(6 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$gte": "Mexico"}} }, { "$group" : { "_id" : "$country", "n" : { "$sum" : 1 } } }]}') $$, p_ignore_heap_fetches => true);
                                                                                                                                                                                                               run_explain_and_trim                                                                                                                                                                                                               
@@ -472,12 +448,11 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Only Scan using country_1 on blackboxdb_data.documents_9101 collection (actual rows=16 loops=1)
          Output: collection.document
          Index Cond: (collection.document @< '{ "country" : "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }'::bson)
          Heap Fetches: xxx
-(7 rows)
+(6 rows)
 
 -- force index only scan via GUC
 set blackboxdb.forceIndexOnlyScanIfAvailable to on;
@@ -486,12 +461,11 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 ------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Only Scan using country_1 on blackboxdb_data.documents_9101 collection (actual rows=7 loops=1)
          Output: collection.document
          Index Cond: (collection.document @< '{ "country" : "Mexico" }'::bson)
          Heap Fetches: xxx
-(7 rows)
+(6 rows)
 
 -- forceIndexOnlyScan + uncovered accumulator (provider not in country_1): should NOT use IOS
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum', '{ "aggregate" : "iosc_comp", "pipeline" : [{ "$match" : {"country": {"$lt": "Mexico"}} }, { "$group" : { "_id" : 1, "maxProvider" : { "$max" : "$provider" } } }]}') $$, p_ignore_heap_fetches => true);
@@ -517,12 +491,11 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 --------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Scan using country_provider_1 on blackboxdb_data.documents_9101 collection (actual rows=1 loops=1)
          Output: collection.shard_key_value, collection.object_id, collection.document
          Index Cond: ((collection.document @= '{ "country" : "Mexico" }'::bson) AND (collection.document @= '{ "provider" : [ "AWS", "GCP" ] }'::bson))
          Rows Removed by Index Recheck: 3
-(7 rows)
+(6 rows)
 
 -- Once the compound index becomes multi-key, even scalar predicates that used to be
 -- IOS candidates should fall back to Index Scan.
@@ -531,11 +504,10 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 --------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Scan using country_provider_1 on blackboxdb_data.documents_9101 collection (actual rows=3 loops=1)
          Output: collection.shard_key_value, collection.object_id, collection.document
          Index Cond: ((collection.document @= '{ "country" : "USA" }'::bson) AND (collection.document @= '{ "provider" : "Cloud" }'::bson))
-(6 rows)
+(5 rows)
 
 CALL blackboxdb_api.drop_indexes('iosdb_rum', '{ "dropIndexes": "iosc_comp", "index": "country_provider_1" }');
                           retval                          
@@ -555,11 +527,10 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 -------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Scan using country_1 on blackboxdb_data.documents_9101 collection (actual rows=5 loops=1)
          Output: collection.shard_key_value, collection.object_id, collection.document
          Index Cond: (collection.document @= '{ "country" : "Mexico" }'::bson)
-(6 rows)
+(5 rows)
 
 -- Test index only scan for numeric fields
 SELECT blackboxdb_api.insert_one('iosdb_rum_numeric', 'rent_data', '{"_id": 1, "city": "NYC", "sqft": 300, "rent": 3000}');
@@ -698,12 +669,11 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 -----------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Only Scan using city_rent_1 on blackboxdb_data.documents_9103 collection (actual rows=4 loops=1)
          Output: collection.document
          Index Cond: ((collection.document @= '{ "city" : "Seattle" }'::bson) AND (collection.document @> '{ "rent" : { "$numberInt" : "4000" } }'::bson))
          Heap Fetches: xxx
-(7 rows)
+(6 rows)
 
 -- SORT + COUNT (no group by) — tests that sort field coverage is checked, not just aggregates
 -- $match + $sort on (city, rent) + $count: both fields in index, should use index only scan
@@ -712,13 +682,12 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('total'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Only Scan using city_rent_1 on blackboxdb_data.documents_9103 collection (actual rows=20 loops=1)
          Output: NULL::bson, bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "rent" : { "$numberInt" : "1" } }'::bson)
          Index Cond: (collection.document @>= '{ "city" : "A" }'::bson)
          Order By: ((collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson) AND (collection.document |-<> '{ "rent" : { "$numberInt" : "1" } }'::bson))
          Heap Fetches: xxx
-(8 rows)
+(7 rows)
 
 -- $match + $sort on (city, sqft) + $count: sqft NOT in index, should NOT use index only scan
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "pipeline" : [{ "$match" : {"city": {"$gte": "A"}} }, { "$sort": {"city": 1, "sqft": 1} }, { "$count": "total" }]}') $$, p_ignore_heap_fetches => true);
@@ -726,7 +695,6 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('total'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Incremental Sort (actual rows=20 loops=1)
          Output: NULL::bson, (bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson)), (bson_orderby(collection.document, '{ "sqft" : { "$numberInt" : "1" } }'::bson))
          Sort Key: (bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(collection.document, '{ "sqft" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
@@ -736,7 +704,7 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                Output: NULL::bson, bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "sqft" : { "$numberInt" : "1" } }'::bson)
                Index Cond: (collection.document @>= '{ "city" : "A" }'::bson)
                Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
-(12 rows)
+(11 rows)
 
 -- CONSTANT GROUP (aggregate without a grouping key)
 -- where city is Seattle and rent > 4000 with a constant-group count should use index only scan
@@ -817,12 +785,11 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 -----------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Only Scan using city_rent_1 on blackboxdb_data.documents_9103 collection (actual rows=4 loops=1)
          Output: collection.document
          Index Cond: ((collection.document @= '{ "city" : "Seattle" }'::bson) AND (collection.document @> '{ "rent" : { "$numberInt" : "4000" } }'::bson))
          Heap Fetches: xxx
-(7 rows)
+(6 rows)
 
 -- hint by key document + $match + $count: same behavior as hint by name
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : { "city" : 1, "rent" : 1 }, "pipeline" : [{ "$match" : {"city": {"$eq": "Seattle"}, "rent": {"$gt": 4000} }}, { "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
@@ -830,12 +797,11 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 -----------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Only Scan using city_rent_1 on blackboxdb_data.documents_9103 collection (actual rows=4 loops=1)
          Output: collection.document
          Index Cond: ((collection.document @= '{ "city" : "Seattle" }'::bson) AND (collection.document @> '{ "rent" : { "$numberInt" : "4000" } }'::bson))
          Heap Fetches: xxx
-(7 rows)
+(6 rows)
 
 -- hint + no match + $count: fullScan on index should use IOS
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
@@ -843,12 +809,11 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 ---------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Only Scan using city_rent_1 on blackboxdb_data.documents_9103 collection (actual rows=20 loops=1)
          Output: collection.document
          Index Cond: (collection.document @<> '{ "city" : { "fullScan" : true } }'::bson)
          Heap Fetches: xxx
-(7 rows)
+(6 rows)
 
 -- turning off enableIndexOnlyScanForRangeMatch should keep hinted count IOS enabled
 -- when standard quals are used, but disable the new fullScan range-match IOS path
@@ -858,23 +823,21 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 -----------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Only Scan using city_rent_1 on blackboxdb_data.documents_9103 collection (actual rows=4 loops=1)
          Output: collection.document
          Index Cond: ((collection.document @= '{ "city" : "Seattle" }'::bson) AND (collection.document @> '{ "rent" : { "$numberInt" : "4000" } }'::bson))
          Heap Fetches: xxx
-(7 rows)
+(6 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$count": "count" }]}') $$, p_ignore_heap_fetches => true);
                                            run_explain_and_trim                                           
 ----------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Scan using city_rent_1 on blackboxdb_data.documents_9103 collection (actual rows=20 loops=1)
          Output: collection.shard_key_value, collection.object_id, collection.document
          Index Cond: (collection.document @<> '{ "city" : { "fullScan" : true } }'::bson)
-(6 rows)
+(5 rows)
 
 set blackboxdb.enableIndexOnlyScanForRangeMatch to on;
 -- hint + $match + covered sort + $count: should use IOS
@@ -883,13 +846,12 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('total'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Only Scan using city_rent_1 on blackboxdb_data.documents_9103 collection (actual rows=20 loops=1)
          Output: NULL::bson, bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "rent" : { "$numberInt" : "1" } }'::bson)
          Index Cond: (collection.document @>= '{ "city" : "A" }'::bson)
          Order By: ((collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson) AND (collection.document |-<> '{ "rent" : { "$numberInt" : "1" } }'::bson))
          Heap Fetches: xxx
-(8 rows)
+(7 rows)
 
 -- hint + $match + uncovered sort (sqft) + $count: should NOT use IOS
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$match" : {"city": {"$gte": "A"}} }, { "$sort": {"city": 1, "sqft": 1} }, { "$count": "total" }]}') $$, p_ignore_heap_fetches => true);
@@ -897,7 +859,6 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('total'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Incremental Sort (actual rows=20 loops=1)
          Output: NULL::bson, (bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson)), (bson_orderby(collection.document, '{ "sqft" : { "$numberInt" : "1" } }'::bson))
          Sort Key: (bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST, (bson_orderby(collection.document, '{ "sqft" : { "$numberInt" : "1" } }'::bson)) NULLS FIRST
@@ -907,7 +868,7 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
                Output: NULL::bson, bson_orderby(collection.document, '{ "city" : { "$numberInt" : "1" } }'::bson), bson_orderby(collection.document, '{ "sqft" : { "$numberInt" : "1" } }'::bson)
                Index Cond: (collection.document @>= '{ "city" : "A" }'::bson)
                Order By: (collection.document |-<> '{ "city" : { "$numberInt" : "1" } }'::bson)
-(12 rows)
+(11 rows)
 
 -- hint + $match + constant-group $count: should use IOS
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb_rum_numeric', '{ "aggregate" : "rent_data", "hint" : "city_rent_1", "pipeline" : [{ "$match" : {"city": {"$eq": "Seattle"}, "rent": {"$gt": 4000} }}, { "$group" : { "_id" : 1, "cnt" : { "$count" : {} } } }]}') $$, p_ignore_heap_fetches => true);

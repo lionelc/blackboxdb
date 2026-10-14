@@ -336,10 +336,6 @@ bool EnableDateTruncExactBins = DEFAULT_ENABLE_DATETRUNC_EXACT_BINS;
 bool EnableUnwindIndexFieldPathCheck = DEFAULT_ENABLE_UNWIND_INDEX_FIELD_PATH_CHECK;
 
 /* Added in v116, enabled in v116, remove after v118 */
-#define DEFAULT_ENABLE_COUNT_STAGE_EMPTY_INPUT true
-bool EnableCountStageEmptyInput = DEFAULT_ENABLE_COUNT_STAGE_EMPTY_INPUT;
-
-/* Added in v116, enabled in v116, remove after v118 */
 #define DEFAULT_ENABLE_LET_RAND_ONCE true
 bool EnableLetRandOnce = DEFAULT_ENABLE_LET_RAND_ONCE;
 
@@ -890,15 +886,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"starting with '$' (other than $id, $ref, $db and $sortKey) or NUL character."),
 		NULL, &EnableUnwindIndexFieldPathCheck,
 		DEFAULT_ENABLE_UNWIND_INDEX_FIELD_PATH_CHECK,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enable_count_stage_empty_input", newGucPrefix),
-		gettext_noop(
-			"Whether a $count stage over an empty input returns no document, as MongoDB "
-			"does, instead of a document with a count of 0. The count command is not affected."),
-		NULL, &EnableCountStageEmptyInput,
-		DEFAULT_ENABLE_COUNT_STAGE_EMPTY_INPUT,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

@@ -15,36 +15,33 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Only Scan using _id_ on blackboxdb_data.documents_301 collection (actual rows=15 loops=1)
          Output: collection.shard_key_value, collection.object_id
          Index Cond: ((collection.shard_key_value = '301'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "5" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
          Heap Fetches: 0
-(7 rows)
+(6 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb', '{ "aggregate" : "iosc", "pipeline" : [{ "$match" : {"_id": {"$gt": 5, "$lt": 8 }} }, { "$count": "count" }]}') $$);
                                                                                                                                                                              run_explain_and_trim                                                                                                                                                                              
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Only Scan using _id_ on blackboxdb_data.documents_301 collection (actual rows=2 loops=1)
          Output: collection.shard_key_value, collection.object_id
          Index Cond: ((collection.shard_key_value = '301'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "5" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
          Heap Fetches: 0
-(7 rows)
+(6 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb', '{ "aggregate" : "iosc", "pipeline" : [{ "$match" : {"_id": 5 } }, { "$count": "count" }]}') $$);
                                                           run_explain_and_trim                                                           
 -----------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Only Scan using _id_ on blackboxdb_data.documents_301 collection (actual rows=1 loops=1)
          Output: collection.shard_key_value, collection.object_id
          Index Cond: ((collection.shard_key_value = '301'::bigint) AND (collection.object_id = '{ "" : { "$numberInt" : "5" } }'::bson))
          Heap Fetches: 0
-(7 rows)
+(6 rows)
 
 -- does not work with other filters.
 set blackboxdb.forceIndexOnlyScanIfAvailable to on;
@@ -53,26 +50,23 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Scan using _id_ on blackboxdb_data.documents_301 collection (actual rows=2 loops=1)
          Output: collection.shard_key_value, collection.object_id, collection.document
          Index Cond: ((collection.shard_key_value = '301'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "5" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
          Filter: ((collection.document @< '{ "a" : { "$maxKey" : 1 } }'::bson) OR (collection.document @= '{ "a" : null }'::bson))
-(7 rows)
+(6 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb', '{ "aggregate" : "iosc", "pipeline" : [{ "$match" : {"_id": {"$gt": 5, "$lt": 8 }, "_id": { "$size": 5 }} }, { "$count": "count" }]}') $$);
                                                                                                                                                                              run_explain_and_trim                                                                                                                                                                              
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Aggregate (actual rows=0 loops=1)
+ Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-   Filter: int8gt(count(*), '0'::bigint)
-   Rows Removed by Filter: 1
    ->  Index Scan using _id_ on blackboxdb_data.documents_301 collection (actual rows=0 loops=1)
          Output: collection.shard_key_value, collection.object_id, collection.document
          Index Cond: ((collection.shard_key_value = '301'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "5" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
          Filter: (collection.document @@# '{ "_id" : { "$numberInt" : "5" } }'::bson)
          Rows Removed by Filter: 2
-(9 rows)
+(7 rows)
 
 -- parallel index only scan is possible now.
 SELECT CASE WHEN SUBSTRING(VERSION(), 11, 3)::int >= 16 THEN set_config('debug_parallel_query', 'on', false) ELSE set_config('force_parallel_mode', 'on', false) END;
@@ -91,14 +85,13 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    Single Copy: true
    ->  Aggregate (actual rows=1 loops=1)
          Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-         Filter: int8gt(count(*), '0'::bigint)
          Worker 0:  actual rows=1 loops=1
          ->  Index Only Scan using _id_ on blackboxdb_data.documents_301 collection (actual rows=15 loops=1)
                Output: collection.shard_key_value, collection.object_id
                Index Cond: ((collection.shard_key_value = '301'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "5" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson))
                Heap Fetches: 0
                Worker 0:  actual rows=15 loops=1
-(14 rows)
+(13 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb', '{ "aggregate" : "iosc", "pipeline" : [{ "$match" : {"_id": {"$gt": 5, "$lt": 8 }} }, { "$count": "count" }]}') $$);
                                                                                                                                                                                 run_explain_and_trim                                                                                                                                                                                 
@@ -110,14 +103,13 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    Single Copy: true
    ->  Aggregate (actual rows=1 loops=1)
          Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-         Filter: int8gt(count(*), '0'::bigint)
          Worker 0:  actual rows=1 loops=1
          ->  Index Only Scan using _id_ on blackboxdb_data.documents_301 collection (actual rows=2 loops=1)
                Output: collection.shard_key_value, collection.object_id
                Index Cond: ((collection.shard_key_value = '301'::bigint) AND (collection.object_id > '{ "" : { "$numberInt" : "5" } }'::bson) AND (collection.object_id <= '{ "" : { "$numberDouble" : "Infinity" } }'::bson) AND (collection.object_id < '{ "" : { "$numberInt" : "8" } }'::bson) AND (collection.object_id >= '{ "" : { "$numberDouble" : "-Infinity" } }'::bson))
                Heap Fetches: 0
                Worker 0:  actual rows=2 loops=1
-(14 rows)
+(13 rows)
 
 SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COSTS OFF, BUFFERS OFF, VERBOSE ON, TIMING OFF, SUMMARY OFF) SELECT document FROM bson_aggregation_pipeline('iosdb', '{ "aggregate" : "iosc", "pipeline" : [{ "$match" : {"_id": 5 } }, { "$count": "count" }]}') $$);
                                                              run_explain_and_trim                                                              
@@ -129,12 +121,11 @@ SELECT blackboxdb_test_helpers.run_explain_and_trim($$ EXPLAIN (ANALYZE ON, COST
    Single Copy: true
    ->  Aggregate (actual rows=1 loops=1)
          Output: bson_repath_and_build('count'::text, blackboxdb_api_internal.bsoncount(1))
-         Filter: int8gt(count(*), '0'::bigint)
          Worker 0:  actual rows=1 loops=1
          ->  Index Only Scan using _id_ on blackboxdb_data.documents_301 collection (actual rows=1 loops=1)
                Output: collection.shard_key_value, collection.object_id
                Index Cond: ((collection.shard_key_value = '301'::bigint) AND (collection.object_id = '{ "" : { "$numberInt" : "5" } }'::bson))
                Heap Fetches: 0
                Worker 0:  actual rows=1 loops=1
-(14 rows)
+(13 rows)
 
