@@ -58,3 +58,5 @@ test: bson_query_minmaxkey_missing_field_tests
 test: bson_query_elemmatch_exists_false_index_tests
 test: bson_dollar_datetrunc_exact_bins_tests
 test: bson_aggregation_unwind_index_name_tests
+test: bson_aggregation_count_empty_input_tests
+test: bson_aggregation_volatile_cursor_tests

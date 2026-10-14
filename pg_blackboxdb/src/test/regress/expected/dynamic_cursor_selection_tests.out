@@ -1088,9 +1088,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 ---------------------------------------------------------------------------------------
  Aggregate
    Output: bson_repath_and_build('total'::text, blackboxdb_api_internal.bsoncount(1))
+   Filter: int8gt(count(*), '0'::bigint)
    ->  Seq Scan on blackboxdb_data.documents_2601 collection
          Output: collection.shard_key_value, collection.object_id, collection.document
-(4 rows)
+(5 rows)
 
 SET blackboxdb.enableDynamicCursors TO off;
 EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('dyncurdb', '{ "aggregate": "dyncoll", "pipeline": [{ "$count": "total" }], "cursor": {} }');
@@ -1098,9 +1099,10 @@ EXPLAIN (COSTS OFF, VERBOSE ON) SELECT document FROM bson_aggregation_pipeline('
 ---------------------------------------------------------------------------------------
  Aggregate
    Output: bson_repath_and_build('total'::text, blackboxdb_api_internal.bsoncount(1))
+   Filter: int8gt(count(*), '0'::bigint)
    ->  Seq Scan on blackboxdb_data.documents_2601 collection
          Output: collection.shard_key_value, collection.object_id, collection.document
-(4 rows)
+(5 rows)
 
 -- Stage: $facet (non-streamable - RequiresPersistentCursorTrue)
 SET blackboxdb.enableDynamicCursors TO on;

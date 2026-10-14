@@ -1,0 +1,238 @@
+SET search_path TO blackboxdb_api, blackboxdb_core, blackboxdb_api_catalog;
+SET blackboxdb.next_collection_id TO 27100000;
+SET blackboxdb.next_collection_index_id TO 27100000;
+-- MongoDB's $count stage is a $group on null followed by a $project, so over an empty input it returns no
+-- document; an aggregate without GROUP BY returns one row. With blackboxdb.enable_count_stage_empty_input off
+-- the stage returns { n: 0 } over an empty input (an empty match, a missing or empty collection, an $unwind with
+-- nothing to unwind), also inside $facet and $lookup sub-pipelines; with it on it returns no document, as MongoDB
+-- 8.0.32 does. Non-empty inputs, $group on null and the count command (n: 0 over an empty input) are unchanged.
+SELECT blackboxdb_api.insert_one('cntempty', 'c', '{"_id": 1, "g": 1}');
+NOTICE:  creating collection
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('cntempty', 'c', '{"_id": 2, "g": 0}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('cntempty', 'c', '{"_id": 3, "g": 1}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('cntempty', 'c', '{"_id": 4, "g": 0}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.insert_one('cntempty', 'c', '{"_id": 5, "g": 1}');
+                              insert_one                              
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "1" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT blackboxdb_api.create_collection('cntempty', 'e');
+NOTICE:  creating collection
+ create_collection 
+-------------------
+ t
+(1 row)
+
+SET blackboxdb.enable_count_stage_empty_input TO off;
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$match": {"_id": -1}}, {"$count": "n"}], "cursor": {}}');
+             document             
+----------------------------------
+ { "n" : { "$numberInt" : "0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "m", "pipeline": [{"$count": "n"}], "cursor": {}}');
+             document             
+----------------------------------
+ { "n" : { "$numberInt" : "0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "e", "pipeline": [{"$count": "n"}], "cursor": {}}');
+             document             
+----------------------------------
+ { "n" : { "$numberInt" : "0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$count": "n"}], "cursor": {}}');
+             document             
+----------------------------------
+ { "n" : { "$numberInt" : "5" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$facet": {"a": [{"$match": {"_id": -1}}, {"$count": "n"}], "b": [{"$count": "n"}]}}], "cursor": {}}');
+                                          document                                          
+--------------------------------------------------------------------------------------------
+ { "a" : [ { "n" : { "$numberInt" : "0" } } ], "b" : [ { "n" : { "$numberInt" : "5" } } ] }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$lookup": {"from": "c", "pipeline": [{"$match": {"_id": -1}}, {"$count": "n"}], "as": "k"}}, {"$project": {"k": 1}}, {"$sort": {"_id": 1}}], "cursor": {}}');
+                                    document                                    
+--------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "k" : [ { "n" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "2" }, "k" : [ { "n" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "3" }, "k" : [ { "n" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "4" }, "k" : [ { "n" : { "$numberInt" : "0" } } ] }
+ { "_id" : { "$numberInt" : "5" }, "k" : [ { "n" : { "$numberInt" : "0" } } ] }
+(5 rows)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$match": {"_id": -1}}, {"$count": "n"}, {"$project": {"m": "$n"}}], "cursor": {}}');
+             document             
+----------------------------------
+ { "m" : { "$numberInt" : "0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$unwind": "$nothing"}, {"$count": "n"}], "cursor": {}}');
+             document             
+----------------------------------
+ { "n" : { "$numberInt" : "0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$match": {"_id": {"$lt": 3}}}, {"$count": "cnt"}], "cursor": {}}');
+              document              
+------------------------------------
+ { "cnt" : { "$numberInt" : "2" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$match": {"_id": 1}}, {"$count": "n"}], "cursor": {}}');
+             document             
+----------------------------------
+ { "n" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$lookup": {"from": "c", "pipeline": [{"$count": "n"}], "as": "k"}}, {"$project": {"k": 1}}, {"$sort": {"_id": 1}}], "cursor": {}}');
+                                    document                                    
+--------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "k" : [ { "n" : { "$numberInt" : "5" } } ] }
+ { "_id" : { "$numberInt" : "2" }, "k" : [ { "n" : { "$numberInt" : "5" } } ] }
+ { "_id" : { "$numberInt" : "3" }, "k" : [ { "n" : { "$numberInt" : "5" } } ] }
+ { "_id" : { "$numberInt" : "4" }, "k" : [ { "n" : { "$numberInt" : "5" } } ] }
+ { "_id" : { "$numberInt" : "5" }, "k" : [ { "n" : { "$numberInt" : "5" } } ] }
+(5 rows)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$match": {"_id": -1}}, {"$group": {"_id": null, "n": {"$sum": 1}}}], "cursor": {}}');
+ document 
+----------
+(0 rows)
+
+SELECT document FROM bson_aggregation_count('cntempty', '{"count": "c", "query": {"_id": -1}}');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_count('cntempty', '{"count": "m"}');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_count('cntempty', '{"count": "c", "query": {"g": 1}}');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "3" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SET blackboxdb.enable_count_stage_empty_input TO on;
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$match": {"_id": -1}}, {"$count": "n"}], "cursor": {}}');
+ document 
+----------
+(0 rows)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "m", "pipeline": [{"$count": "n"}], "cursor": {}}');
+ document 
+----------
+(0 rows)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "e", "pipeline": [{"$count": "n"}], "cursor": {}}');
+ document 
+----------
+(0 rows)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$count": "n"}], "cursor": {}}');
+             document             
+----------------------------------
+ { "n" : { "$numberInt" : "5" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$facet": {"a": [{"$match": {"_id": -1}}, {"$count": "n"}], "b": [{"$count": "n"}]}}], "cursor": {}}');
+                          document                          
+------------------------------------------------------------
+ { "a" : [  ], "b" : [ { "n" : { "$numberInt" : "5" } } ] }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$lookup": {"from": "c", "pipeline": [{"$match": {"_id": -1}}, {"$count": "n"}], "as": "k"}}, {"$project": {"k": 1}}, {"$sort": {"_id": 1}}], "cursor": {}}');
+                    document                    
+------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "k" : [  ] }
+ { "_id" : { "$numberInt" : "2" }, "k" : [  ] }
+ { "_id" : { "$numberInt" : "3" }, "k" : [  ] }
+ { "_id" : { "$numberInt" : "4" }, "k" : [  ] }
+ { "_id" : { "$numberInt" : "5" }, "k" : [  ] }
+(5 rows)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$match": {"_id": -1}}, {"$count": "n"}, {"$project": {"m": "$n"}}], "cursor": {}}');
+ document 
+----------
+(0 rows)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$unwind": "$nothing"}, {"$count": "n"}], "cursor": {}}');
+ document 
+----------
+(0 rows)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$match": {"_id": {"$lt": 3}}}, {"$count": "cnt"}], "cursor": {}}');
+              document              
+------------------------------------
+ { "cnt" : { "$numberInt" : "2" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$match": {"_id": 1}}, {"$count": "n"}], "cursor": {}}');
+             document             
+----------------------------------
+ { "n" : { "$numberInt" : "1" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$lookup": {"from": "c", "pipeline": [{"$count": "n"}], "as": "k"}}, {"$project": {"k": 1}}, {"$sort": {"_id": 1}}], "cursor": {}}');
+                                    document                                    
+--------------------------------------------------------------------------------
+ { "_id" : { "$numberInt" : "1" }, "k" : [ { "n" : { "$numberInt" : "5" } } ] }
+ { "_id" : { "$numberInt" : "2" }, "k" : [ { "n" : { "$numberInt" : "5" } } ] }
+ { "_id" : { "$numberInt" : "3" }, "k" : [ { "n" : { "$numberInt" : "5" } } ] }
+ { "_id" : { "$numberInt" : "4" }, "k" : [ { "n" : { "$numberInt" : "5" } } ] }
+ { "_id" : { "$numberInt" : "5" }, "k" : [ { "n" : { "$numberInt" : "5" } } ] }
+(5 rows)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$match": {"_id": -1}}, {"$group": {"_id": null, "n": {"$sum": 1}}}], "cursor": {}}');
+ document 
+----------
+(0 rows)
+
+SELECT document FROM bson_aggregation_count('cntempty', '{"count": "c", "query": {"_id": -1}}');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_count('cntempty', '{"count": "m"}');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "0" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_count('cntempty', '{"count": "c", "query": {"g": 1}}');
+                               document                               
+----------------------------------------------------------------------
+ { "n" : { "$numberInt" : "3" }, "ok" : { "$numberDouble" : "1.0" } }
+(1 row)
+
+RESET blackboxdb.enable_count_stage_empty_input;

@@ -1837,11 +1837,12 @@ $Q$, p_ignore_heap_fetches := true);
 ---------------------------------------------------------------------------------------------------------
  Aggregate (actual rows=1 loops=1)
    Output: bson_repath_and_build('n'::text, bsoncount(1))
+   Filter: int8gt(count(*), '0'::bigint)
    ->  Index Only Scan using idx_x on blackboxdb_data.documents_20002 collection (actual rows=8 loops=1)
          Output: collection.document
          Index Cond: (collection.document @<> '{ "x" : { "fullScan" : true } }'::bson)
          Heap Fetches: xxx
-(6 rows)
+(7 rows)
 
 ROLLBACK;
 -- ------------------------------------------------------------

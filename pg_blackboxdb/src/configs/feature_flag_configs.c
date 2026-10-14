@@ -315,6 +315,10 @@ bool EnableValueNullMissingFieldMatch = DEFAULT_ENABLE_VALUE_NULL_MISSING_FIELD_
 bool EnableMinMaxKeyMissingPathMatch = DEFAULT_ENABLE_MINMAXKEY_MISSING_PATH_MATCH;
 
 /* Added in v116, enabled in v116, remove after v118 */
+#define DEFAULT_ENABLE_VOLATILE_CURSOR_MATERIALIZE true
+bool EnableVolatileCursorMaterialize = DEFAULT_ENABLE_VOLATILE_CURSOR_MATERIALIZE;
+
+/* Added in v116, enabled in v116, remove after v118 */
 #define DEFAULT_ENABLE_ELEMMATCH_EXISTS_FALSE_NULL_BOUNDS true
 bool EnableElemMatchExistsFalseNullBounds =
 	DEFAULT_ENABLE_ELEMMATCH_EXISTS_FALSE_NULL_BOUNDS;
@@ -326,6 +330,10 @@ bool EnableDateTruncExactBins = DEFAULT_ENABLE_DATETRUNC_EXACT_BINS;
 /* Added in v116, enabled in v116, remove after v118 */
 #define DEFAULT_ENABLE_UNWIND_INDEX_FIELD_PATH_CHECK true
 bool EnableUnwindIndexFieldPathCheck = DEFAULT_ENABLE_UNWIND_INDEX_FIELD_PATH_CHECK;
+
+/* Added in v116, enabled in v116, remove after v118 */
+#define DEFAULT_ENABLE_COUNT_STAGE_EMPTY_INPUT true
+bool EnableCountStageEmptyInput = DEFAULT_ENABLE_COUNT_STAGE_EMPTY_INPUT;
 
 /* Added in v115, enabled in v115, remove after v117 */
 #define DEFAULT_ENABLE_PG_PRNG_CURSOR_ID true
@@ -836,6 +844,16 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
+		psprintf("%s.enable_volatile_cursor_materialize", newGucPrefix),
+		gettext_noop(
+			"Whether a persisted cursor whose query draws random values ($rand, $sampleRate) "
+			"keeps the rows it has produced in a Material node, so that holding the cursor "
+			"does not run the query again and later batches come from the same evaluation."),
+		NULL, &EnableVolatileCursorMaterialize,
+		DEFAULT_ENABLE_VOLATILE_CURSOR_MATERIALIZE,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
 		psprintf("%s.enable_datetrunc_exact_bins", newGucPrefix),
 		gettext_noop(
 			"Whether $dateTrunc with unit day, week, month, quarter or year counts its "
@@ -854,6 +872,15 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"starting with '$' (other than $id, $ref, $db and $sortKey) or NUL character."),
 		NULL, &EnableUnwindIndexFieldPathCheck,
 		DEFAULT_ENABLE_UNWIND_INDEX_FIELD_PATH_CHECK,
+		PGC_USERSET, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+		psprintf("%s.enable_count_stage_empty_input", newGucPrefix),
+		gettext_noop(
+			"Whether a $count stage over an empty input returns no document, as MongoDB "
+			"does, instead of a document with a count of 0. The count command is not affected."),
+		NULL, &EnableCountStageEmptyInput,
+		DEFAULT_ENABLE_COUNT_STAGE_EMPTY_INPUT,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
