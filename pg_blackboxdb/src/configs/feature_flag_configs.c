@@ -335,8 +335,8 @@ bool EnableUnwindIndexFieldPathCheck = DEFAULT_ENABLE_UNWIND_INDEX_FIELD_PATH_CH
 #define DEFAULT_ENABLE_COUNT_STAGE_EMPTY_INPUT true
 bool EnableCountStageEmptyInput = DEFAULT_ENABLE_COUNT_STAGE_EMPTY_INPUT;
 
-/* Added in v116, remove after v118 */
-#define DEFAULT_ENABLE_LET_RAND_ONCE false
+/* Added in v116, enabled in v116, remove after v118 */
+#define DEFAULT_ENABLE_LET_RAND_ONCE true
 bool EnableLetRandOnce = DEFAULT_ENABLE_LET_RAND_ONCE;
 
 /* Added in v115, enabled in v115, remove after v117 */
