@@ -23,6 +23,8 @@ SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "p
 SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"x": {"$multiply": [{"$rand": {}}, 10]}}, "in": {"$eq": ["$$x", "$$x"]}}}}}, {"$match": {"v": false}}, {"$count": "n"}], "cursor": {}}');
 -- a $rand variable that reads a variable of an enclosing $let (no document when it holds)
 SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"o": 5}, "in": {"$let": {"vars": {"x": {"$add": ["$$o", {"$rand": {}}]}}, "in": {"$eq": ["$$x", "$$x"]}}}}}}}, {"$match": {"v": false}}, {"$count": "n"}], "cursor": {}}');
+-- a $rand variable next to an operator variable without $rand (no document when it holds)
+SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"x": {"$rand": {}}, "y": {"$add": [1, 2]}}, "in": {"$and": [{"$eq": ["$$x", "$$x"]}, {"$eq": ["$$y", 3]}]}}}}}, {"$match": {"v": false}}, {"$count": "n"}], "cursor": {}}');
 -- control: a variable without $rand (no document when it holds)
 SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"x": "$_id"}, "in": {"$eq": ["$$x", "$$x"]}}}}}, {"$match": {"v": false}}, {"$count": "n"}], "cursor": {}}');
 -- a constant in: no variable is evaluated (1 in every document) (no document when it holds)
@@ -43,6 +45,8 @@ SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "p
 SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"x": {"$multiply": [{"$rand": {}}, 10]}}, "in": {"$eq": ["$$x", "$$x"]}}}}}, {"$match": {"v": false}}, {"$count": "n"}], "cursor": {}}');
 -- a $rand variable that reads a variable of an enclosing $let (no document when it holds)
 SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"o": 5}, "in": {"$let": {"vars": {"x": {"$add": ["$$o", {"$rand": {}}]}}, "in": {"$eq": ["$$x", "$$x"]}}}}}}}, {"$match": {"v": false}}, {"$count": "n"}], "cursor": {}}');
+-- a $rand variable next to an operator variable without $rand (no document when it holds)
+SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"x": {"$rand": {}}, "y": {"$add": [1, 2]}}, "in": {"$and": [{"$eq": ["$$x", "$$x"]}, {"$eq": ["$$y", 3]}]}}}}}, {"$match": {"v": false}}, {"$count": "n"}], "cursor": {}}');
 -- control: a variable without $rand (no document when it holds)
 SELECT document FROM bson_aggregation_pipeline('letrand', '{"aggregate": "c", "pipeline": [{"$project": {"v": {"$let": {"vars": {"x": "$_id"}, "in": {"$eq": ["$$x", "$$x"]}}}}}, {"$match": {"v": false}}, {"$count": "n"}], "cursor": {}}');
 -- a constant in: no variable is evaluated (1 in every document) (no document when it holds)
