@@ -105,6 +105,7 @@ extern bool EnableDistinctExistsFilterPushdown;
 extern bool EnableSubqueryPushdownForMatch;
 extern bool EnableDollarSampleReservoirScan;
 extern bool EnableUnwindIndexFieldPathCheck;
+extern bool EnableCountStageEmptyInput;
 
 /* GUC to config tdigest compression */
 extern int TdigestCompressionAccuracy;
@@ -5743,6 +5744,36 @@ CreateMultiArgAggregate(Oid aggregateFunctionId, List *args, List *argTypes,
 
 
 /*
+ * Returns count(*) > 0, a HAVING qual that keeps the single row of an aggregate
+ * without GROUP BY only when its input has at least one row.
+ */
+static Expr *
+CreateNonEmptyInputHavingQual(ParseState *parseState)
+{
+	Aggref *countStar = makeNode(Aggref);
+	countStar->aggfnoid = F_COUNT_;
+	countStar->aggtype = INT8OID;
+	countStar->aggtranstype = InvalidOid; /* set by planner later */
+	countStar->aggdirectargs = NIL;
+	countStar->aggstar = true;
+	countStar->aggkind = AGGKIND_NORMAL;
+	countStar->aggsplit = AGGSPLIT_SIMPLE;
+	countStar->aggno = -1;     /* planner will set aggno and aggtransno */
+	countStar->aggtransno = -1;
+	countStar->location = -1;
+	countStar->aggargtypes = NIL;
+
+	bool aggDistinct = false;
+	transformAggregateCall(parseState, countStar, NIL, NIL, aggDistinct);
+
+	Const *zero = makeConst(INT8OID, -1, InvalidOid, sizeof(int64),
+							Int64GetDatum(0), false, true);
+	return (Expr *) makeFuncExpr(F_INT8GT, BOOLOID, list_make2(countStar, zero),
+								 InvalidOid, InvalidOid, COERCE_EXPLICIT_CALL);
+}
+
+
+/*
  * Handles the $count stage. Injects an aggregate of
  * bsoncommandcount(*) or bsoncount(*) in the case it needs to repath the count field.
  * First moves existing query to a subquery.
@@ -5818,6 +5849,16 @@ HandleCountCore(const bson_value_t *existingValue, Query *query,
 											args, InvalidOid, InvalidOid,
 											COERCE_EXPLICIT_CALL);
 		firstEntry->expr = (Expr *) expression;
+	}
+
+	/*
+	 * MongoDB's $count stage is a $group on null followed by a $project, so it
+	 * returns no document over an empty input, while an aggregate without
+	 * GROUP BY returns one row. The count command returns n: 0 in both.
+	 */
+	if (!isCountCommand && EnableCountStageEmptyInput)
+	{
+		query->havingQual = (Node *) CreateNonEmptyInputHavingQual(parseState);
 	}
 
 	pfree(parseState);
