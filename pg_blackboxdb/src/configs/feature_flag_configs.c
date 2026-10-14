@@ -314,8 +314,8 @@ bool EnableValueNullMissingFieldMatch = DEFAULT_ENABLE_VALUE_NULL_MISSING_FIELD_
 #define DEFAULT_ENABLE_MINMAXKEY_MISSING_PATH_MATCH true
 bool EnableMinMaxKeyMissingPathMatch = DEFAULT_ENABLE_MINMAXKEY_MISSING_PATH_MATCH;
 
-/* Added in v116, remove after v118 */
-#define DEFAULT_ENABLE_VOLATILE_CURSOR_MATERIALIZE false
+/* Added in v116, enabled in v116, remove after v118 */
+#define DEFAULT_ENABLE_VOLATILE_CURSOR_MATERIALIZE true
 bool EnableVolatileCursorMaterialize = DEFAULT_ENABLE_VOLATILE_CURSOR_MATERIALIZE;
 
 /* Added in v116, enabled in v116, remove after v118 */
