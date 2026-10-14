@@ -40,6 +40,20 @@ SELECT (SELECT count(*) FROM first_batch) AS first_batch, (SELECT count(*) FROM 
 DROP TABLE vc_first;
 DROP TABLE vc_more;
 
+-- control: a filter without random values, then $skip
+SELECT setseed(0.5);
+CREATE TEMP TABLE vc_first AS SELECT cursorPage, continuation FROM aggregate_cursor_first_page(database => 'volcursor',
+    commandSpec => '{ "aggregate": "c", "pipeline": [ { "$match": { "_id": { "$gte": 2 } } }, { "$skip": 1 } ], "cursor": { "batchSize": 101 } }', cursorId => 4294967294);
+SELECT continuation AS vc_continuation FROM vc_first \gset
+CREATE TEMP TABLE vc_more AS SELECT cursorPage FROM cursor_get_more(database => 'volcursor',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967294" }, "collection": "c", "batchSize": 500 }'::bson,
+    continuationSpec => :'vc_continuation');
+WITH first_batch AS (SELECT (regexp_matches(cursorPage::text, '"_id" : \{ "\$numberInt" : "(\d+)" \}', 'g'))[1]::int AS id FROM vc_first), next_batch AS (SELECT (regexp_matches(cursorPage::text, '"_id" : \{ "\$numberInt" : "(\d+)" \}', 'g'))[1]::int AS id FROM vc_more)
+SELECT (SELECT count(*) FROM first_batch) AS first_batch, (SELECT count(*) FROM next_batch) AS next_batch,
+       (SELECT count(*) FROM first_batch JOIN next_batch USING (id)) AS repeated_in_next_batch;
+DROP TABLE vc_first;
+DROP TABLE vc_more;
+
 SET blackboxdb.enable_volatile_cursor_materialize TO on;
 -- a $rand filter, then $skip
 SELECT setseed(0.5);
@@ -59,6 +73,20 @@ DROP TABLE vc_more;
 SELECT setseed(0.5);
 CREATE TEMP TABLE vc_first AS SELECT cursorPage, continuation FROM aggregate_cursor_first_page(database => 'volcursor',
     commandSpec => '{ "aggregate": "c", "pipeline": [ { "$match": { "$sampleRate": 0.9 } }, { "$skip": 1 } ], "cursor": { "batchSize": 101 } }', cursorId => 4294967294);
+SELECT continuation AS vc_continuation FROM vc_first \gset
+CREATE TEMP TABLE vc_more AS SELECT cursorPage FROM cursor_get_more(database => 'volcursor',
+    getMoreSpec => '{ "getMore": { "$numberLong": "4294967294" }, "collection": "c", "batchSize": 500 }'::bson,
+    continuationSpec => :'vc_continuation');
+WITH first_batch AS (SELECT (regexp_matches(cursorPage::text, '"_id" : \{ "\$numberInt" : "(\d+)" \}', 'g'))[1]::int AS id FROM vc_first), next_batch AS (SELECT (regexp_matches(cursorPage::text, '"_id" : \{ "\$numberInt" : "(\d+)" \}', 'g'))[1]::int AS id FROM vc_more)
+SELECT (SELECT count(*) FROM first_batch) AS first_batch, (SELECT count(*) FROM next_batch) AS next_batch,
+       (SELECT count(*) FROM first_batch JOIN next_batch USING (id)) AS repeated_in_next_batch;
+DROP TABLE vc_first;
+DROP TABLE vc_more;
+
+-- control: a filter without random values, then $skip
+SELECT setseed(0.5);
+CREATE TEMP TABLE vc_first AS SELECT cursorPage, continuation FROM aggregate_cursor_first_page(database => 'volcursor',
+    commandSpec => '{ "aggregate": "c", "pipeline": [ { "$match": { "_id": { "$gte": 2 } } }, { "$skip": 1 } ], "cursor": { "batchSize": 101 } }', cursorId => 4294967294);
 SELECT continuation AS vc_continuation FROM vc_first \gset
 CREATE TEMP TABLE vc_more AS SELECT cursorPage FROM cursor_get_more(database => 'volcursor',
     getMoreSpec => '{ "getMore": { "$numberLong": "4294967294" }, "collection": "c", "batchSize": 500 }'::bson,
