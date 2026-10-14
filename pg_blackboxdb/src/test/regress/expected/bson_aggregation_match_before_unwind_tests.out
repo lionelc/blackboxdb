@@ -800,18 +800,10 @@ SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orde
 ERROR:  FieldPath field names cannot begin with the symbol '$'.
 SET blackboxdb.enable_match_before_unwind_extended TO off;
 SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": ".pos" } }, { "$match": { "state": "won" } }, { "$count": "rows" } ], "cursor": {} }');
-               document               
---------------------------------------
- { "rows" : { "$numberInt" : "19" } }
-(1 row)
-
+ERROR:  FieldPath field names may not be empty strings.
 SET blackboxdb.enable_match_before_unwind_extended TO on;
 SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": { "path": "$items", "includeArrayIndex": ".pos" } }, { "$match": { "state": "won" } }, { "$count": "rows" } ], "cursor": {} }');
-               document               
---------------------------------------
- { "rows" : { "$numberInt" : "19" } }
-(1 row)
-
+ERROR:  FieldPath field names may not be empty strings.
 SET blackboxdb.enable_match_before_unwind_extended TO off;
 SELECT document FROM bson_aggregation_pipeline('unwinddb', '{ "aggregate": "orders", "pipeline": [ { "$unwind": "$.items" }, { "$match": { "state": "won" } }, { "$count": "rows" } ], "cursor": {} }');
               document               
