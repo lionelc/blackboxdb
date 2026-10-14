@@ -103,6 +103,12 @@ SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "
  { "cnt" : { "$numberInt" : "2" } }
 (1 row)
 
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$match": {"_id": 1}}, {"$count": "n"}], "cursor": {}}');
+             document             
+----------------------------------
+ { "n" : { "$numberInt" : "1" } }
+(1 row)
+
 SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$lookup": {"from": "c", "pipeline": [{"$count": "n"}], "as": "k"}}, {"$project": {"k": 1}}, {"$sort": {"_id": 1}}], "cursor": {}}');
                                     document                                    
 --------------------------------------------------------------------------------
@@ -188,6 +194,12 @@ SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "
               document              
 ------------------------------------
  { "cnt" : { "$numberInt" : "2" } }
+(1 row)
+
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$match": {"_id": 1}}, {"$count": "n"}], "cursor": {}}');
+             document             
+----------------------------------
+ { "n" : { "$numberInt" : "1" } }
 (1 row)
 
 SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$lookup": {"from": "c", "pipeline": [{"$count": "n"}], "as": "k"}}, {"$project": {"k": 1}}, {"$sort": {"_id": 1}}], "cursor": {}}');

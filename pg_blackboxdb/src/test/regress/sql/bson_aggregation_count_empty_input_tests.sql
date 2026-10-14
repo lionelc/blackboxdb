@@ -25,6 +25,7 @@ SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "
 SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$match": {"_id": -1}}, {"$count": "n"}, {"$project": {"m": "$n"}}], "cursor": {}}');
 SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$unwind": "$nothing"}, {"$count": "n"}], "cursor": {}}');
 SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$match": {"_id": {"$lt": 3}}}, {"$count": "cnt"}], "cursor": {}}');
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$match": {"_id": 1}}, {"$count": "n"}], "cursor": {}}');
 SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$lookup": {"from": "c", "pipeline": [{"$count": "n"}], "as": "k"}}, {"$project": {"k": 1}}, {"$sort": {"_id": 1}}], "cursor": {}}');
 SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$match": {"_id": -1}}, {"$group": {"_id": null, "n": {"$sum": 1}}}], "cursor": {}}');
 SELECT document FROM bson_aggregation_count('cntempty', '{"count": "c", "query": {"_id": -1}}');
@@ -41,6 +42,7 @@ SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "
 SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$match": {"_id": -1}}, {"$count": "n"}, {"$project": {"m": "$n"}}], "cursor": {}}');
 SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$unwind": "$nothing"}, {"$count": "n"}], "cursor": {}}');
 SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$match": {"_id": {"$lt": 3}}}, {"$count": "cnt"}], "cursor": {}}');
+SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$match": {"_id": 1}}, {"$count": "n"}], "cursor": {}}');
 SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$lookup": {"from": "c", "pipeline": [{"$count": "n"}], "as": "k"}}, {"$project": {"k": 1}}, {"$sort": {"_id": 1}}], "cursor": {}}');
 SELECT document FROM bson_aggregation_pipeline('cntempty', '{"aggregate": "c", "pipeline": [{"$match": {"_id": -1}}, {"$group": {"_id": null, "n": {"$sum": 1}}}], "cursor": {}}');
 SELECT document FROM bson_aggregation_count('cntempty', '{"count": "c", "query": {"_id": -1}}');
