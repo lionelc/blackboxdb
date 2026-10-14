@@ -98,6 +98,7 @@ extern bool EnableProjectPushUpBeforeUnwindWithGroup;
 extern bool EnableSkipLimitSwap;
 extern bool EnableMatchBeforeUnwind;
 extern bool EnableMatchBeforeUnwindExtended;
+extern bool EnableRandProjectionFence;
 extern bool EnableSortPushToAccumulatorWithPrefix;
 extern bool EnableSampleScanFixOnSharded;
 extern bool EnableDistinctIndexPushdown;
@@ -3287,6 +3288,70 @@ CanInlineLookupPipeline(const bson_value_t *pipeline,
 
 
 /*
+ * Whether a stage specification contains a $rand operator anywhere: a "$rand"
+ * key in any document of the specification, at any depth.
+ */
+static bool
+BsonValueContainsDollarRand(const bson_value_t *value)
+{
+	if (value->value_type != BSON_TYPE_DOCUMENT &&
+		value->value_type != BSON_TYPE_ARRAY)
+	{
+		return false;
+	}
+
+	check_stack_depth();
+
+	bson_iter_t iter;
+	BsonValueInitIterator(value, &iter);
+	while (bson_iter_next(&iter))
+	{
+		if (value->value_type == BSON_TYPE_DOCUMENT &&
+			strcmp(bson_iter_key(&iter), "$rand") == 0)
+		{
+			return true;
+		}
+
+		if (BsonValueContainsDollarRand(bson_iter_value(&iter)))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+
+/*
+ * The projection functions are immutable, so the planner copies a projection
+ * into every later expression that reads the document (filters, sort keys,
+ * group keys, window arguments, output) and evaluates each copy. With a $rand
+ * in the specification each copy draws its own number, and later stages see
+ * different values of the same field. Such a projection is kept in a subquery
+ * that the planner cannot pull up (OFFSET 0, as for $match), so that it is
+ * evaluated once per document.
+ */
+static Query *
+FenceProjectionWithRand(Query *query, const bson_value_t *projectionSpec,
+						AggregationPipelineBuildContext *context)
+{
+	if (!EnableRandProjectionFence || !BsonValueContainsDollarRand(projectionSpec))
+	{
+		return query;
+	}
+
+	if (query->limitOffset == NULL && query->limitCount == NULL)
+	{
+		query->limitOffset = (Node *) makeConst(INT8OID, -1, InvalidOid,
+												sizeof(int64_t), Int64GetDatum(0),
+												false, true);
+	}
+
+	return MigrateQueryToSubQuery(query, context);
+}
+
+
+/*
  * Processes simple projections (dollar_project, dollar_add_fields etc).
  * This just updates the targetEntry with the new projector.
  * functionOidWithLet can be NULL if the stage doesn't support let
@@ -3313,7 +3378,7 @@ HandleSimpleProjectionStage(const bson_value_t *existingValue, Query *query,
 	/* Projection followed by projection - try to inline */
 	if (TryInlineProjection((Node *) currentProjection, functionOid, existingValue))
 	{
-		return query;
+		return FenceProjectionWithRand(query, existingValue, context);
 	}
 
 	pgbson *docBson = PgbsonInitFromBuffer(
@@ -3359,7 +3424,7 @@ HandleSimpleProjectionStage(const bson_value_t *existingValue, Query *query,
 		InvalidOid, COERCE_EXPLICIT_CALL);
 
 	firstEntry->expr = (Expr *) resultExpr;
-	return query;
+	return FenceProjectionWithRand(query, existingValue, context);
 }
 
 
