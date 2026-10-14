@@ -101,9 +101,10 @@ SELECT setseed(0.5);
 (1 row)
 
 SELECT document FROM bson_aggregation_pipeline('randonce', '{ "aggregate": "c", "pipeline": [ { "$set": { "r": { "$rand": {} } } }, { "$project": { "in_range": { "$and": [ { "$gte": [ "$r", 0 ] }, { "$lt": [ "$r", 1 ] } ] } } }, { "$match": { "in_range": false } }, { "$count": "rows_out_of_range" } ], "cursor": {} }');
- document 
-----------
-(0 rows)
+                     document                     
+--------------------------------------------------
+ { "rows_out_of_range" : { "$numberInt" : "0" } }
+(1 row)
 
 SET blackboxdb.enable_rand_projection_fence TO on;
 -- a $match on the $rand field: no r of 0.5 or more comes out
@@ -153,9 +154,10 @@ SELECT setseed(0.5);
 (1 row)
 
 SELECT document FROM bson_aggregation_pipeline('randonce', '{ "aggregate": "c", "pipeline": [ { "$set": { "r": { "$rand": {} } } }, { "$setWindowFields": { "sortBy": { "r": 1 }, "output": { "prev": { "$shift": { "output": "$r", "by": -1 } } } } }, { "$match": { "$expr": { "$lt": [ "$r", "$prev" ] } } }, { "$count": "rows_after_a_larger_r" } ], "cursor": {} }');
- document 
-----------
-(0 rows)
+                       document                       
+------------------------------------------------------
+ { "rows_after_a_larger_r" : { "$numberInt" : "0" } }
+(1 row)
 
 -- an exclusion $project merged with a following $set of $rand: no r of 0.5 or more comes out of the $match
 SELECT setseed(0.5);
@@ -191,8 +193,9 @@ SELECT setseed(0.5);
 (1 row)
 
 SELECT document FROM bson_aggregation_pipeline('randonce', '{ "aggregate": "c", "pipeline": [ { "$set": { "r": { "$rand": {} } } }, { "$project": { "in_range": { "$and": [ { "$gte": [ "$r", 0 ] }, { "$lt": [ "$r", 1 ] } ] } } }, { "$match": { "in_range": false } }, { "$count": "rows_out_of_range" } ], "cursor": {} }');
- document 
-----------
-(0 rows)
+                     document                     
+--------------------------------------------------
+ { "rows_out_of_range" : { "$numberInt" : "0" } }
+(1 row)
 
 RESET blackboxdb.enable_rand_projection_fence;
