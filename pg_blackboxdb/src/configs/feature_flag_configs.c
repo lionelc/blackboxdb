@@ -835,9 +835,9 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 		psprintf("%s.enable_datetrunc_exact_bins", newGucPrefix),
 		gettext_noop(
 			"Whether $dateTrunc with unit day, week, month, quarter or year counts its "
-			"bins from the reference date with exact calendar arithmetic, rather than "
-			"from age(), which approximates months and years and rounds a negative "
-			"difference toward zero."),
+			"bins on the local calendar of the requested time zone with exact calendar "
+			"arithmetic, rather than on the UTC calendar with age(), which approximates "
+			"months and years and rounds a negative difference toward zero."),
 		NULL, &EnableDateTruncExactBins,
 		DEFAULT_ENABLE_DATETRUNC_EXACT_BINS,
 		PGC_USERSET, 0, NULL, NULL, NULL);

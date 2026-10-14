@@ -4494,8 +4494,20 @@ SetResultValueForDollarDateTrunc(DateTruncUnit dateTruncUnit, WeekDay weekDay,
 											  timezoneToApply,
 											  binSize->value.v_int64,
 											  dateTruncUnit, result);
+		return;
 	}
-	else if (dateTruncUnit == DateTruncUnit_Day)
+
+	/*
+	 * Units of a day or more bin on the calendar of the requested time zone: the local
+	 * wall-clock timestamp, not the UTC one. The result is converted back from local time.
+	 */
+	if (EnableDateTruncExactBins)
+	{
+		datePgTimestamp = GetPgTimestampFromEpochWithTimezone(dateValueInMs,
+															  timezoneToApply);
+	}
+
+	if (dateTruncUnit == DateTruncUnit_Day)
 	{
 		SetResultValueForDayUnitDateTrunc(datePgTimestamp,
 										  timezoneToApply,
