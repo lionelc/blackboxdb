@@ -327,10 +327,6 @@ bool EnableElemMatchExistsFalseNullBounds =
 #define DEFAULT_ENABLE_RAND_PROJECTION_FENCE true
 bool EnableRandProjectionFence = DEFAULT_ENABLE_RAND_PROJECTION_FENCE;
 
-/* Added in v116, enabled in v116, remove after v118 */
-#define DEFAULT_ENABLE_DATETRUNC_EXACT_BINS true
-bool EnableDateTruncExactBins = DEFAULT_ENABLE_DATETRUNC_EXACT_BINS;
-
 /* Added in v115, enabled in v115, remove after v117 */
 #define DEFAULT_ENABLE_PG_PRNG_CURSOR_ID true
 bool EnablePGPrngCursorId = DEFAULT_ENABLE_PG_PRNG_CURSOR_ID;
@@ -857,17 +853,6 @@ InitializeFeatureFlagConfigurations(const char *prefix, const char *newGucPrefix
 			"so that later stages read one value per document, as in MongoDB."),
 		NULL, &EnableRandProjectionFence,
 		DEFAULT_ENABLE_RAND_PROJECTION_FENCE,
-		PGC_USERSET, 0, NULL, NULL, NULL);
-
-	DefineCustomBoolVariable(
-		psprintf("%s.enable_datetrunc_exact_bins", newGucPrefix),
-		gettext_noop(
-			"Whether $dateTrunc with unit day, week, month, quarter or year counts its "
-			"bins on the local calendar of the requested time zone with exact calendar "
-			"arithmetic, rather than on the UTC calendar with age(), which approximates "
-			"months and years and rounds a negative difference toward zero."),
-		NULL, &EnableDateTruncExactBins,
-		DEFAULT_ENABLE_DATETRUNC_EXACT_BINS,
 		PGC_USERSET, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(

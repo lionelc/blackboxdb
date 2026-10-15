@@ -39,9 +39,6 @@
 #define DATE_FROM_PART_START_DATE_MS -62135596800000L
 #define DATE_TRUNC_TIMESTAMP_MS 946684800000L
 #define SECONDS_IN_DAY 86400
-
-extern bool EnableDateTruncExactBins;
-
 #define CONDITIONAL_EREPORT(isOnErrorPresent, ereportCall) \
 	if (!isOnErrorPresent) { \
 		ereportCall; \
@@ -4361,62 +4358,6 @@ SetResultValueForDateTruncFromDateBin(Datum pgTimestamp, Datum referenceTimestam
 }
 
 
-/*
- * The interval from the reference to a timestamp, for the day and week bins of $dateTrunc.
- * Both are local wall-clock timestamps. age() gives a symbolic interval of years, months and
- * days whose epoch counts a month as 30 days and a year as 365.25 days, so with
- * enable_datetrunc_exact_bins the exact difference is taken instead.
- */
-static Datum
-GetIntervalFromDateTruncReference(Datum pgTimestamp, Datum referenceTimestamp)
-{
-	if (EnableDateTruncExactBins)
-	{
-		return DirectFunctionCall2(timestamp_mi, pgTimestamp, referenceTimestamp);
-	}
-
-	return OidFunctionCall2(PostgresAgeBetweenTimestamp(), pgTimestamp,
-							referenceTimestamp);
-}
-
-
-/* Integer division rounding toward negative infinity */
-static int64
-FloorDivideInt64(int64 dividend, int64 divisor)
-{
-	int64 quotient = dividend / divisor;
-	if (dividend % divisor != 0 && ((dividend < 0) != (divisor < 0)))
-	{
-		quotient--;
-	}
-
-	return quotient;
-}
-
-
-/*
- * The calendar months from the month of the reference to the month of a timestamp, negative
- * before the reference. Both are local wall-clock timestamps. The bin index taken from it
- * rounds toward negative infinity, so that a date before the reference falls into the bin that
- * contains it (the year and month fields of age() round a negative interval toward zero).
- */
-static int64
-GetCalendarMonthsFromDateTruncReference(Datum pgTimestamp, Datum referenceTimestamp)
-{
-	int year, month, day, referenceYear, referenceMonth, referenceDay;
-
-	/* timestamps count microseconds from 2000-01-01: floor them to Julian days */
-	int64 days = FloorDivideInt64(DatumGetTimestamp(pgTimestamp), USECS_PER_DAY);
-	int64 referenceDays = FloorDivideInt64(DatumGetTimestamp(referenceTimestamp),
-										   USECS_PER_DAY);
-	j2date((int) (days + POSTGRES_EPOCH_JDATE), &year, &month, &day);
-	j2date((int) (referenceDays + POSTGRES_EPOCH_JDATE), &referenceYear, &referenceMonth,
-		   &referenceDay);
-
-	return ((int64) year - referenceYear) * MONTHS_PER_YEAR + (month - referenceMonth);
-}
-
-
 /* This function calculates the date bin for unit type day.
  * Firstly, this calculates interval difference between start and end timestamp.
  * Converts, that difference interval to number of days.
@@ -4432,9 +4373,9 @@ SetResultValueForDayUnitDateTrunc(Datum pgTimestamp,
 	Datum defaultReferenceTimestamp = GetPgTimestampFromUnixEpoch(
 		DATE_TRUNC_TIMESTAMP_MS);
 
-	/* The interval between the 2 timestamps. */
-	Datum intervalDifference = GetIntervalFromDateTruncReference(pgTimestamp,
-																 defaultReferenceTimestamp);
+	/* Calls Age function to determine the interval between 2 timestamps. */
+	Datum intervalDifference = OidFunctionCall2(PostgresAgeBetweenTimestamp(),
+												pgTimestamp, defaultReferenceTimestamp);
 
 	/* calculates the total number of seconds between the target date and the reference date */
 	Datum datePartFromInverval = OidFunctionCall2(PostgresDatePartFromInterval(),
@@ -4494,20 +4435,8 @@ SetResultValueForDollarDateTrunc(DateTruncUnit dateTruncUnit, WeekDay weekDay,
 											  timezoneToApply,
 											  binSize->value.v_int64,
 											  dateTruncUnit, result);
-		return;
 	}
-
-	/*
-	 * Units of a day or more bin on the calendar of the requested time zone: the local
-	 * wall-clock timestamp, not the UTC one. The result is converted back from local time.
-	 */
-	if (EnableDateTruncExactBins)
-	{
-		datePgTimestamp = GetPgTimestampFromEpochWithTimezone(dateValueInMs,
-															  timezoneToApply);
-	}
-
-	if (dateTruncUnit == DateTruncUnit_Day)
+	else if (dateTruncUnit == DateTruncUnit_Day)
 	{
 		SetResultValueForDayUnitDateTrunc(datePgTimestamp,
 										  timezoneToApply,
@@ -4559,39 +4488,36 @@ SetResultValueForMonthUnitDateTrunc(Datum pgTimestamp, ExtensionTimezone
 	Datum defaultReferenceTimestamp = GetPgTimestampFromUnixEpoch(
 		DATE_TRUNC_TIMESTAMP_MS);
 
+	/* Calls Age function to determine the interval between 2 timestamps. */
+	Datum intervalDifference = OidFunctionCall2(PostgresAgeBetweenTimestamp(),
+												pgTimestamp, defaultReferenceTimestamp);
+
+	/* calculates the total number of years between the target date and the reference date */
+	Datum datePartYearFromInverval = OidFunctionCall2(PostgresDatePartFromInterval(),
+													  CStringGetTextDatum("year"),
+													  intervalDifference);
+
+	/* elog(NOTICE, "year interval from date part is %f", DatumGetFloat8(datePartYearFromInverval)); */
+
+	/* calculates the total number of months between the target date and the reference date */
+	Datum datePartMonthFromInverval = OidFunctionCall2(PostgresDatePartFromInterval(),
+													   CStringGetTextDatum("month"),
+													   intervalDifference);
+
+	/* elog(NOTICE, "month interval from date part is %f", DatumGetFloat8(datePartMonthFromInverval)); */
+
+
+	float8 intervalDiffAdjustedToMonths = DatumGetFloat8(datePartYearFromInverval) *
+										  MONTHS_PER_YEAR +
+										  DatumGetFloat8(datePartMonthFromInverval);
+
+	/* elog(NOTICE, "interval diff adjusted to months %f", intervalDiffAdjustedToMonths); */
+
 	/* Making sure that for quarters the binsize for months is * 3 by default. */
-	int64 monthsPerBin = binSize * (dateTruncUnit == DateTruncUnit_Quarter ? 3 : 1);
-	int64 monthInterval;
-	if (EnableDateTruncExactBins)
-	{
-		monthInterval = FloorDivideInt64(GetCalendarMonthsFromDateTruncReference(
-											 pgTimestamp, defaultReferenceTimestamp),
-										 monthsPerBin);
-	}
-	else
-	{
-		/* Calls Age function to determine the interval between 2 timestamps. */
-		Datum intervalDifference = OidFunctionCall2(PostgresAgeBetweenTimestamp(),
-													pgTimestamp,
-													defaultReferenceTimestamp);
-
-		/* calculates the total number of years between the target date and the reference date */
-		Datum datePartYearFromInverval = OidFunctionCall2(PostgresDatePartFromInterval(),
-														  CStringGetTextDatum("year"),
-														  intervalDifference);
-
-		/* calculates the total number of months between the target date and the reference date */
-		Datum datePartMonthFromInverval = OidFunctionCall2(
-			PostgresDatePartFromInterval(),
-			CStringGetTextDatum("month"),
-			intervalDifference);
-
-		float8 intervalDiffAdjustedToMonths = DatumGetFloat8(datePartYearFromInverval) *
-											  MONTHS_PER_YEAR +
-											  DatumGetFloat8(datePartMonthFromInverval);
-
-		monthInterval = floor(intervalDiffAdjustedToMonths / monthsPerBin);
-	}
+	int64 monthInterval = floor(intervalDiffAdjustedToMonths / (binSize *
+																(dateTruncUnit ==
+																 DateTruncUnit_Quarter
+																 ? 3 : 1)));
 
 	/* Make intervals from int64 . Not multiplying *3 here as this function takes care of differencing between months and quarters. */
 	Datum intervalMonthSinceRef = GetIntervalFromBinSize(monthInterval * binSize,
@@ -4649,9 +4575,10 @@ SetResultValueForWeekUnitDateTrunc(Datum pgTimestamp, ExtensionTimezone
 															   pgTimestamp,
 															   daysIntervalToAdjust);
 
-	/* The interval between the 2 timestamps. */
-	Datum intervalDifference = GetIntervalFromDateTruncReference(
-		timestampAdjustedToStartOfWeek, defaultReferenceTimestamp);
+	/* Calls Age function to determine the interval between 2 timestamps. */
+	Datum intervalDifference = OidFunctionCall2(PostgresAgeBetweenTimestamp(),
+												timestampAdjustedToStartOfWeek,
+												defaultReferenceTimestamp);
 
 	/* calculates the total number of seconds between the target date and the reference date */
 	Datum datePartFromInverval = OidFunctionCall2(PostgresDatePartFromInterval(),
@@ -4713,27 +4640,16 @@ SetResultValueForYearUnitDateTrunc(Datum pgTimestamp, ExtensionTimezone
 	Datum defaultReferenceTimestamp = GetPgTimestampFromUnixEpoch(
 		DATE_TRUNC_TIMESTAMP_MS);
 
-	int64 yearInterval;
-	if (EnableDateTruncExactBins)
-	{
-		yearInterval = FloorDivideInt64(GetCalendarMonthsFromDateTruncReference(
-											pgTimestamp, defaultReferenceTimestamp),
-										MONTHS_PER_YEAR * binSize);
-	}
-	else
-	{
-		/* Calls Age function to determine the interval between 2 timestamps. */
-		Datum intervalDifference = OidFunctionCall2(PostgresAgeBetweenTimestamp(),
-													pgTimestamp,
-													defaultReferenceTimestamp);
+	/* Calls Age function to determine the interval between 2 timestamps. */
+	Datum intervalDifference = OidFunctionCall2(PostgresAgeBetweenTimestamp(),
+												pgTimestamp, defaultReferenceTimestamp);
 
-		/* calculates the total number of years between the target date and the reference date */
-		Datum datePartYearFromInverval = OidFunctionCall2(PostgresDatePartFromInterval(),
-														  CStringGetTextDatum("year"),
-														  intervalDifference);
+	/* calculates the total number of years between the target date and the reference date */
+	Datum datePartYearFromInverval = OidFunctionCall2(PostgresDatePartFromInterval(),
+													  CStringGetTextDatum("year"),
+													  intervalDifference);
 
-		yearInterval = floor(DatumGetFloat8(datePartYearFromInverval) / binSize);
-	}
+	int64 yearInterval = floor(DatumGetFloat8(datePartYearFromInverval) / binSize);
 
 	/* Make intervals from int64 .*/
 	Datum intervalYearsSinceRef = GetIntervalFromBinSize(yearInterval * binSize,
