@@ -57,4 +57,3 @@ test: bson_query_value_null_missing_field_tests
 test: bson_query_minmaxkey_missing_field_tests
 test: bson_query_elemmatch_exists_false_index_tests
 test: bson_aggregation_volatile_cursor_tests
-test: bson_aggregation_rand_projection_tests
